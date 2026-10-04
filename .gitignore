@@ -1,0 +1,35 @@
+# Source-only milestone: dependencies, assets and machine state stay local.
+/*
+!/.gitignore
+!/README.md
+!/MILESTONE.md
+!/CHECKPOINT.md
+!/run-*.sh
+!/vr/
+!/benchmark/
+/vr/*
+!/vr/*.c
+!/vr/*.h
+!/vr/*.hlsl
+!/vr/*.py
+!/vr/*.sh
+!/vr/*.md
+!/vr/tests/
+/vr/tests/*
+!/vr/tests/*.c
+/benchmark/*
+!/benchmark/*.py
+!/benchmark/RESULTS.md
+# Never commit executable runtimes, archives, models or credentials.
+*.dll
+*.exe
+*.pdb
+*.zip
+*.glb
+*.blend
+*.bin
+*.npy
+*.png
+*.ppm
+__pycache__/
+.env*
