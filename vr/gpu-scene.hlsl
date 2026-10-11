@@ -6,7 +6,7 @@ RWTexture2D<float4> NeuralOutput : register(u3);
 RWTexture2D<float4> Presented : register(u4);
 cbuffer Scene : register(b0) {
  uint Eye; uint Frame; uint Width; uint Height;
- uint Tracked; uint Neural; uint Pad0; uint Pad1; // Pad0: room=1, spatial AA=2.
+ uint Tracked; uint Neural; uint Pad0; uint Pad1; // Pad0: room=1, spatial AA=2, city=4.
  float4 Rotation; float4 Position;
  float4 PreviousRotation; float4 PreviousPosition;
  float4 Tangents; float4 PreviousTangents;
@@ -58,7 +58,7 @@ void compose(uint3 id : SV_DispatchThreadID) {
  float3 decoded=float3(encoded.x<=0.04045?encoded.x/12.92:pow((encoded.x+0.055)/1.055,2.4),
                        encoded.y<=0.04045?encoded.y/12.92:pow((encoded.y+0.055)/1.055,2.4),
                        encoded.z<=0.04045?encoded.z/12.92:pow((encoded.z+0.055)/1.055,2.4));
- if ((Pad0&1)!=0) {
+ if ((Pad0&1)!=0 && (Pad0&4)==0) {
      float3 origin=Tracked!=0?Position.xyz:float3(cameraX(Frame),1.4,0);
      decoded=roomStatus(decoded,origin,normalize(pixelRay(float2(id.xy))),float2(id.xy));
  }
@@ -271,15 +271,34 @@ void main(uint3 id : SV_DispatchThreadID) {
         origin=Position.xyz;
         direction=rotateVector(Rotation,localRay);
     }
+    bool citySky=false;
     float distance; float3 normal, albedo, hitPosition, linearColour;
-    if ((Pad0&1)!=0) {
+    if ((Pad0&4)!=0) {
+        // Distant sky and fallback ground; imported city surfaces win the depth test.
+        citySky=true;
+        distance=100/max(.0001,Tracked!=0?-inverseRotate(Rotation,direction).z:direction.z); normal=float3(0,1,0);
+        linearColour=lerp(float3(0.62,0.74,0.88),float3(0.18,0.4,0.72),saturate(direction.y));
+        if (Pad1!=0) { linearColour=lerp(float3(0.85,0.66,0.45),float3(0.28,0.4,0.63),saturate(direction.y)); }
+        if (direction.y < -0.0001 && (Pad0&8)==0) {
+            // Slightly below imported street geometry, avoiding coplanar flicker.
+            float t=(-0.02-origin.y)/direction.y;
+            if (t>0.1 && t<distance) {
+                citySky=false; distance=t; float3 p=origin+direction*t;
+                albedo=abs(p.x)<4?float3(0.075,0.08,0.09):float3(0.32,0.33,0.34);
+                if (abs(p.x)<0.06 && frac((p.z+1000)/6)<0.5) { albedo=float3(0.82,0.79,0.62); }
+                if (abs(abs(p.x)-3.7)<0.05) { albedo=float3(0.85,0.85,0.8); }
+                linearColour=albedo*(Pad1==0?float3(0.95,1.05,1.18):float3(1.25,1.0,0.75));
+            }
+        }
+        hitPosition=origin+direction*distance;
+    } else if ((Pad0&1)!=0) {
         RoomHit room=renderRoom(origin,direction,float2(id.xy));
         distance=room.distance; normal=room.normal; hitPosition=room.position; linearColour=room.colour;
     } else {
     distance = direction.z>0.0001 ? (6-origin.z)/direction.z : 20;
     if (distance<0.1) { distance=20; }
     normal = float3(0,0,-1); albedo = float3(0.38,0.4,0.42);
-    if (direction.y < -0.0001) {
+    if (direction.y < -0.0001 && (Pad0&8)==0) {
         float t = -origin.y/direction.y;
         if (t>0.1 && t < distance) {
             distance=t; normal=float3(0,1,0);
@@ -329,6 +348,6 @@ void main(uint3 id : SV_DispatchThreadID) {
           (previous.y/max(0.1,-previous.z)-PreviousTangents.z)/(PreviousTangents.w-PreviousTangents.z)*Height)-0.5;
         motion=previousPixel-float2(id.xy);
     }
-    Depth[id.xy]=saturate(20/19.9-2/(19.9*viewZ));
+    Depth[id.xy]=citySky?1.0:(Pad0&4)!=0?saturate(100/99.9-10/(99.9*viewZ)):saturate(20/19.9-2/(19.9*viewZ));
     Motion[id.xy]=motion;
 }

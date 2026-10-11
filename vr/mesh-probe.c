@@ -20,6 +20,10 @@ static int __cdecl probe_allocate(void** result) {
     *object = table; *result = object; return 1;
 }
 
+static int probe_city = 0;
+static int probe_supplied = 0;
+static int probe_automotive = 0;
+
 typedef struct ProbeImage { unsigned char* data[3]; } ProbeImage;
 static void probe_free_image(ProbeImage* image) {
     for (unsigned int i = 0; i < 3; ++i) { free(image->data[i]); image->data[i] = NULL; }
@@ -65,7 +69,7 @@ static int probe_ppm(const char* path, const ProbeImage* image, const EyeInputs*
 static void probe_constants(GpuScene* gpu, float camera_x) {
     unsigned int* c = gpu->constants[0];
     memset(c, 0, 32 * sizeof(*c));
-    c[2] = PROBE_SIZE; c[3] = PROBE_SIZE; c[4] = 1; c[6] = 1;
+    c[2] = PROBE_SIZE; c[3] = PROBE_SIZE; c[4] = 1; c[6] = probe_city ? 4 : 1;
     // 180 degrees about Y: local -Z looks along world +Z, local +X is -X.
     const float f[24] = {0, 1, 0, 0, camera_x, 1.4f, 1, 0,
                         0, 1, 0, 0, 0, 1.4f, 1, 0,
@@ -109,7 +113,8 @@ static int probe_validate(const char* label, const ProbeImage* baseline, const P
             // Reconstruct current pixel's world point, then project into previous
             // camera (X=0). Rotation 180Y means +.1 world camera X gives NEGATIVE
             // previous-minus-current pixel X, unlike the untracked +Z camera.
-            float z = (2.0f / 19.9f) / (20.0f / 19.9f - depth);
+            float far_plane = probe_city ? 100.0f : 20.0f;
+            float z = (.1f * far_plane / (far_plane - .1f)) / (far_plane / (far_plane - .1f) - depth);
             float local_x = (2 * ((float)x + .5f) / PROBE_SIZE - 1) * z;
             float local_y = (1 - 2 * ((float)y + .5f) / PROBE_SIZE) * z;
             float world_x = camera_x - local_x, world_y = 1.4f + local_y;
@@ -163,8 +168,16 @@ static int probe_triangle(ID3D12Resource* vertices, float z, float alpha, int ov
 }
 
 int main(int argc, char** argv) {
-    int skip_mesh = argc == 2 && strcmp(argv[1], "--skip-mesh") == 0;
-    if (argc > 1 && !skip_mesh) { fprintf(stderr, "Usage: mesh-probe.exe [--skip-mesh]\n"); return 1; }
+    int skip_mesh = 0,skip_glass=0;
+    for (int i = 1; i < argc; ++i) {
+        if (!strcmp(argv[i], "--automotive")) { probe_city = 1; probe_supplied = 1; probe_automotive = 1; }
+        else if (!strcmp(argv[i], "--supplied-city")) { probe_city = 1; probe_supplied = 1; }
+        else if (!strcmp(argv[i], "--city")) { probe_city = 1; }
+        else if (!strcmp(argv[i], "--skip-glass")) { skip_glass=1; }
+        else if (!strcmp(argv[i], "--skip-mesh")) { skip_mesh = 1; }
+        else { fprintf(stderr, "Unknown mesh probe option\n"); return 1; }
+    }
+    if (argc > 3) { fprintf(stderr, "Usage: mesh-probe.exe [--skip-mesh]\n"); return 1; }
     EyeInputs eyes[2] = {0}; GpuScene gpu = {0}; MeshRender mesh = {0};
     ProbeImage baseline = {{0}}, moving_baseline = {{0}}, image = {{0}};
     ID3D12Device* device = NULL; ID3D12CommandQueue* queue = NULL;
@@ -186,7 +199,7 @@ int main(int argc, char** argv) {
     for (unsigned int e = 0; e < 2; ++e) { if (!prepare_eye(device, &eyes[e], e, probe_allocate)) { goto cleanup; } }
     if (!prepare_gpu_scene(device, eyes, &gpu)) { goto cleanup; }
     // prepare_mesh reports possibly in-flight setup work through mesh_pending.
-    if (!prepare_mesh(device, queue, eyes, &mesh, &mesh_pending)) { goto cleanup; }
+    if (!prepare_mesh_file(device, queue, eyes, &mesh, &mesh_pending, probe_automotive ? "automotive.bin" : probe_supplied ? "supplied-city.bin" : probe_city ? "city.bin" : "model.bin")) { goto cleanup; }
     if (!create_buffer(device, D3D12_HEAP_TYPE_UPLOAD, 6 * 64, &test_vertices)) { goto cleanup; }
     // Independent opaque white atlas avoids depending on the imported model's
     // centre texel (which can legitimately be an alpha-cutout texel).
@@ -206,17 +219,61 @@ int main(int argc, char** argv) {
     ID3D12Resource_Unmap(test_upload, 0, NULL);
     D3D12_VERTEX_BUFFER_VIEW model_view = mesh.vertex_view;
     unsigned int model_count = mesh.vertex_count;
+    UINT opaque_count=mesh.opaque_count,glass_count=mesh.glass_count;
+    float opaque_colour[3]={0};
     // 0/1 stationary baseline/model; 2/3 moving baseline/model; 4 near triangle;
     // 5 alpha discard; 6 behind-room occlusion; 7 near/far mesh depth ordering.
-    for (unsigned int frame = 0; frame < 8; ++frame) {
+    for (unsigned int frame = 0; frame < (probe_supplied ? 4u : probe_city ? 14u : 8u); ++frame) {
         float camera_x = frame == 2 || frame == 3 ? .1f : 0;
         probe_constants(&gpu, camera_x);
+        if (probe_supplied && frame < 4) {
+            float* constants=(float*)(gpu.constants[0]+8);
+            constants[4]+=probe_automotive?0.f:10.f; constants[12]+=probe_automotive?0.f:10.f;
+        }
+        if (frame == 10) { gpu.constants[0][6]=12; }
         mesh.vertex_view = model_view; mesh.vertex_count = model_count;
+        mesh.opaque_count=opaque_count; mesh.glass_count=glass_count;
         if (frame >= 4) {
-            if (!probe_triangle(test_vertices, frame == 6 ? 9 : 2, frame == 5 ? 0 : 1, frame == 7)) { goto cleanup; }
+            if (!probe_triangle(test_vertices, frame == 6 ? (probe_city ? 110 : 9) : 2, frame == 5 ? 0 : 1, frame == 7)) { goto cleanup; }
             mesh.vertex_view.BufferLocation = ID3D12Resource_GetGPUVirtualAddress(test_vertices);
             mesh.vertex_view.SizeInBytes = 6 * 64; mesh.vertex_view.StrideInBytes = 64;
             mesh.vertex_count = frame == 7 ? 6 : 3;
+            mesh.opaque_count=mesh.vertex_count; mesh.glass_count=0;
+        }
+        if (frame == 8) {
+            float data[3][16] = {{0}};
+            const float xy[3][2] = {{-65,35},{-55,35},{-60,45}};
+            for (unsigned int i=0;i<3;++i) {
+                data[i][0]=xy[i][0]; data[i][1]=xy[i][1]; data[i][2]=81;
+                data[i][5]=-1; data[i][6]=data[i][7]=.5f; data[i][8]=.8f;
+                data[i][12]=data[i][13]=data[i][14]=data[i][15]=1;
+            }
+            void* mapped=NULL; D3D12_RANGE no_read={0,0};
+            CHECK_HR(ID3D12Resource_Map(test_vertices,0,&no_read,&mapped));
+            memcpy(mapped,data,sizeof(data)); ID3D12Resource_Unmap(test_vertices,0,NULL);
+        }
+        if (frame == 9 || frame == 10) {
+            // Visible in-frustum triangle below fallback ground: must be rejected
+            // by procedural-depth comparison, not by the 100m raster far plane.
+            float data[3][16]={{0}}; const float xy[3][2]={{-3,-1},{3,-1},{0,-3}};
+            for(unsigned int i=0;i<3;++i){ data[i][0]=xy[i][0];data[i][1]=xy[i][1];data[i][2]=9;
+                data[i][5]=-1;data[i][6]=data[i][7]=.5f;data[i][8]=.8f;data[i][12]=data[i][13]=data[i][14]=data[i][15]=1; }
+            void* mapped=NULL; D3D12_RANGE no_read={0,0}; CHECK_HR(ID3D12Resource_Map(test_vertices,0,&no_read,&mapped));
+            memcpy(mapped,data,sizeof(data)); ID3D12Resource_Unmap(test_vertices,0,NULL);
+        }
+        if(frame>=11) {
+            float data[3][16]={{0}};
+            const float xy[3][2]={{-.6f,.8f},{0,2},{.6f,.8f}};
+            for(UINT i=0;i<3;++i) {
+                data[i][0]=xy[i][0];data[i][1]=xy[i][1];data[i][2]=2;
+                data[i][5]=-1;data[i][6]=data[i][7]=.5f;data[i][8]=.8f;data[i][10]=-1;
+                data[i][12]=data[i][13]=data[i][14]=1;data[i][15]=frame==11?0:frame==12?.25f:1;
+            }
+            void* mapped=NULL;D3D12_RANGE empty={0,0};
+            CHECK_HR(ID3D12Resource_Map(test_vertices,0,&empty,&mapped));memcpy(mapped,data,sizeof(data));ID3D12Resource_Unmap(test_vertices,0,NULL);
+            mesh.opaque_count=0;mesh.glass_count=skip_glass?0:1;
+            mesh.glass[0].vertex=0;
+            mesh.glass[0].centre[0]=0;mesh.glass[0].centre[1]=1.2f;mesh.glass[0].centre[2]=2;
         }
         CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
         CHECK_HR(ID3D12GraphicsCommandList_Reset(list, allocator, NULL));
@@ -256,14 +313,42 @@ int main(int argc, char** argv) {
         if (frame == 3) {
             if (!probe_ppm("mesh-moving.ppm", target, &eyes[0]) || !probe_validate("moving", &moving_baseline, target, &eyes[0], .1f)) { goto cleanup; }
         }
+        if(frame==4) { const uint16_t* p=(const uint16_t*)probe_pixel(target,&eyes[0],0,PROBE_SIZE/2,PROBE_SIZE/2);for(UINT c=0;c<3;++c) { opaque_colour[c]=half_float(p[c]); } }
         if (frame == 4 || frame == 7) {
             if (!probe_validate(frame == 4 ? "synthetic-opaque" : "mesh-depth-order", &baseline, target, &eyes[0], 0)) { goto cleanup; }
             float centre = *(const float*)probe_pixel(target, &eyes[0], 1, PROBE_SIZE / 2, PROBE_SIZE / 2);
-            float expected = 20.0f / 19.9f - 2.0f / 19.9f; // world Z=2, camera Z=1.
+            float far_plane = probe_city ? 100.0f : 20.0f;
+            float expected = far_plane / (far_plane - .1f) - .1f * far_plane / (far_plane - .1f); // world Z=2, camera Z=1.
             if (fabsf(centre - expected) > .00001f) { fprintf(stderr, "REJECT: synthetic near depth %.7f expected %.7f\n", centre, expected); goto cleanup; }
         }
+        if(frame>=11) {
+            unsigned x=PROBE_SIZE/2,y=PROBE_SIZE/2;
+            const uint16_t* colour=(const uint16_t*)probe_pixel(target,&eyes[0],0,x,y);
+            const uint16_t* back=(const uint16_t*)probe_pixel(&baseline,&eyes[0],0,x,y);
+            float alpha=frame==11?0:frame==12?.25f:1,change=0;
+            for(UINT c=0;c<3;++c) {
+                float actual=half_float(colour[c]),background=half_float(back[c]),foreground=opaque_colour[c];
+                float linear_back=background<=.04045f?background/12.92f:powf((background+.055f)/1.055f,2.4f);
+                float linear_front=foreground<=.04045f?foreground/12.92f:powf((foreground+.055f)/1.055f,2.4f);
+                float linear=linear_back*(1-alpha)+linear_front*alpha;
+                float expected=linear<=.0031308f?linear*12.92f:1.055f*powf(linear,1/2.4f)-.055f;
+                change+=fabsf(opaque_colour[c]-half_float(back[c]));
+                if(!isfinite(actual)||fabsf(actual-expected)>.003f) { fprintf(stderr,"REJECT: glass blend frame=%u actual=%.5f expected=%.5f\n",frame,actual,expected);goto cleanup; }
+            }
+            if(change<.05f || memcmp(probe_pixel(target,&eyes[0],1,x,y),probe_pixel(&baseline,&eyes[0],1,x,y),4) || memcmp(probe_pixel(target,&eyes[0],2,x,y),probe_pixel(&baseline,&eyes[0],2,x,y),4)) { fprintf(stderr,"REJECT: glass depth/motion or ineffective reference\n");goto cleanup; }
+            printf("Mesh probe glass alpha=%.2f blend/depth/motion verified\n",alpha);
+        }
+        if (frame == 9 && !probe_unchanged("behind-procedural-ground", &baseline, target, &eyes[0])) { goto cleanup; }
+        if (frame == 10) {
+            unsigned int y=PROBE_SIZE*11/16;
+            float actual=*(const float*)probe_pixel(target,&eyes[0],1,PROBE_SIZE/2,y);
+            float expected=100.f/99.9f-10.f/(99.9f*8.f);
+            printf("Mesh probe behind-ground-positive: depth=%.7f expected=%.7f\n",actual,expected);
+            if(fabsf(actual-expected)>.00001f){fprintf(stderr,"REJECT: occluded triangle positive control missing\n");goto cleanup;}
+        }
+        if (frame == 8 && !probe_validate("off-axis-far-geometry", &baseline, target, &eyes[0], 0)) { goto cleanup; }
         if (frame == 5 && !probe_unchanged("alpha-discard", &baseline, target, &eyes[0])) { goto cleanup; }
-        if (frame == 6 && !probe_unchanged("procedural-occlusion", &baseline, target, &eyes[0])) { goto cleanup; }
+        if (frame == 6 && !probe_unchanged(probe_city?"far-plane-clipping":"procedural-occlusion", &baseline, target, &eyes[0])) { goto cleanup; }
     }
     exit_code = 0;
 cleanup:
@@ -285,7 +370,11 @@ cleanup:
     if (queue) { ID3D12CommandQueue_Release(queue); }
     if (device) { ID3D12Device_Release(device); }
     if (!exit_code) {
-        printf("PASS: offscreen mesh colour/depth/motion, static/moving camera, alpha discard, procedural occlusion and mesh depth ordering. No NGX/OpenXR; NOT headset quality.\n");
+        if (probe_supplied) {
+            printf("PASS: offscreen mesh colour/depth/motion, supplied city static/moving views. No NGX/OpenXR; NOT headset quality.\n");
+        } else {
+            printf("PASS: offscreen mesh colour/depth/motion, static/moving camera, alpha discard, procedural occlusion and mesh depth ordering. No NGX/OpenXR; NOT headset quality.\n");
+        }
     }
     return exit_code;
 }

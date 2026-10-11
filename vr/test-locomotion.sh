@@ -15,5 +15,5 @@ if test.count(marker) != 1:
     raise SystemExit('Test insertion marker missing or ambiguous')
 (output / 'test.c').write_text(test.replace(marker, functions))
 PY
-"${CC:-cc}" -std=c11 -Wall -Wextra -Werror "$temp/test.c" -lm -o "$temp/test"
+"${CC:-cc}" -std=c11 -Wall -Wextra -Werror -I"$ROOT/vr" "$temp/test.c" -lm -o "$temp/test"
 "$temp/test"

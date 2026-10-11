@@ -6,7 +6,7 @@ Launch with WiVRn connected and headset worn:
 bash vr/run-xr-scene.sh on 1080 model
 ```
 
-Left stick: head-relative horizontal movement, maximum 1 m/s. Right stick left/right: 30 degree snap turn, centre to rearm. Right stick up/down: vertical inspection movement at up to 0.5 m/s, eye height bounded 0.25–2.95 m. Either trigger: neural toggle for both eyes. A/X: lighting. Bounds only, no furniture collision. Keep a clear physical play space; stop if uncomfortable. Existing sphere/room modes remain available.
+Left stick: head-relative horizontal movement, maximum 1 m/s. Right stick left/right: continuous head-centred turning, up to 60 degrees/s. Right stick up/down: vertical inspection movement at up to 0.5 m/s, eye height bounded 0.25–2.95 m. Either trigger: neural toggle for both eyes. A/X: lighting. Bounds only, no furniture collision. Keep a clear physical play space; stop if uncomfortable. Existing sphere/room modes remain available.
 
 Test.glb imported read-only in fresh Blender with automatic scripts disabled. Evaluated meshes bake current armature/morph pose; no animation. Skipped unmaterialled Icosphere helper. 83,773 triangles, 24 materials, 4096 RGBA atlas. Character placed with feet at floor, centred x=0,z=2.35, clear of table, height1.835m. GLB and original blend unchanged. Conversion scripts export-model.py and pack-model.py, assets under assets/test-model, runtime probe/model.bin. Unique nonempty glTF material names required; unsupported mappings rejected. Base-colour factors and alpha modes sourced directly from GLB metadata. Texture sampler repeat/clamp/mirror respected. Unused materials skipped.
 

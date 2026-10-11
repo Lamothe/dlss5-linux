@@ -4,6 +4,10 @@
 
 Prepared 03/10/2026 for Linux/Wayland, RTX 4070 Ti SUPER, NVIDIA 615.71.09. The desktop experiment uses a Windows DirectX12 NVIDIA sample under Proton. The standalone VR prototype now renders neural stereo through Proton/OpenXR/WiVRn; neither is native Linux neural rendering. See `vr/ROOM.md` for the interactive demonstration room and `vr/TIMING-1080-RESULTS.md` for the earlier sphere benchmark.
 
+## City street test
+
+See [vr/CITY.md](vr/CITY.md) for the static city scene, free asset attribution, preparation, controls and validation limits. With dependencies prepared: `bash vr/run-xr-scene.sh on 1440 city`.
+
 ## Run
 
 From a terminal in the graphical session:

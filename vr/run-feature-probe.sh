@@ -19,6 +19,13 @@ case "$mode" in
   aa-corrupt) command='aa-probe.exe --bad-aa-output > probe-output.txt 2>&1'; marker='^REJECT:' ;;
   aa) command='aa-probe.exe > probe-output.txt 2>&1'; marker='^PASS: offscreen composition AA' ;;
   aa-negative) command='aa-probe.exe --skip-aa > probe-output.txt 2>&1'; marker='^REJECT:' ;;
+  city-glass-negative) command='mesh-probe.exe --city --skip-glass > probe-output.txt 2>&1'; marker='^REJECT: glass blend' ;;
+  automotive) command='mesh-probe.exe --automotive > probe-output.txt 2>&1'; marker='^PASS: offscreen mesh colour/depth/motion,' ;;
+  automotive-negative) command='mesh-probe.exe --automotive --skip-mesh > probe-output.txt 2>&1'; marker='^REJECT: static coverage' ;;
+  supplied-city) command='mesh-probe.exe --supplied-city > probe-output.txt 2>&1'; marker='^PASS: offscreen mesh colour/depth/motion,' ;;
+  supplied-city-negative) command='mesh-probe.exe --supplied-city --skip-mesh > probe-output.txt 2>&1'; marker='^REJECT: static coverage' ;;
+  city) command='mesh-probe.exe --city > probe-output.txt 2>&1'; marker='^PASS: offscreen mesh colour/depth/motion,' ;;
+  city-negative) command='mesh-probe.exe --city --skip-mesh > probe-output.txt 2>&1'; marker='^REJECT: static coverage' ;;
   mesh) command='mesh-probe.exe > probe-output.txt 2>&1'; marker='^PASS: offscreen mesh colour/depth/motion,' ;;
   mesh-negative) command='mesh-probe.exe --skip-mesh > probe-output.txt 2>&1'; marker='^REJECT: static coverage' ;;
   create) command='feature-probe.exe > probe-output.txt 2>&1'; marker='^PASS: two distinct feature handles created and GPU initialization completed\.' ;;

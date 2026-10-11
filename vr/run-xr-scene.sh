@@ -21,20 +21,26 @@ fi
 mode="${1:-off}"
 resolution="${2:-720}"
 scene="${3:-spheres}"
-if (( $# > 3 )); then echo 'Usage: run-xr-scene.sh [off|on] [720|1080|1440] [spheres|room|room-smoke]' >&2; exit 1; fi
+if (( $# > 3 )); then echo 'Usage: run-xr-scene.sh [off|on] [720|1080|1440] [spheres|room|room-smoke|model|model-smoke|city|city-smoke|supplied-city|supplied-city-smoke|automotive|automotive-smoke]' >&2; exit 1; fi
 case "$resolution" in
   720) executable='xr-scene.exe' ;;
   1080|1440) executable="xr-scene-${resolution}.exe" ;;
   *) echo 'Resolution must be 720, 1080 or 1440 pixels per eye axis' >&2; exit 1 ;;
 esac
-case "$mode" in off) option='' ;; on) option='--neural' ;; *) echo 'Usage: run-xr-scene.sh [off|on] [720|1080|1440] [spheres|room|room-smoke]'  >&2; exit 1 ;; esac
+case "$mode" in off) option='' ;; on) option='--neural' ;; *) echo 'Usage: run-xr-scene.sh [off|on] [720|1080|1440] [spheres|room|room-smoke|model|model-smoke|city|city-smoke|supplied-city|supplied-city-smoke|automotive|automotive-smoke]'  >&2; exit 1 ;; esac
 case "$scene" in
   spheres) scene_option='' ;;
   room) scene_option='--room' ;;
   room-smoke) scene_option='--room-smoke' ;;
   model) scene_option='--room --model' ;;
   model-smoke) scene_option='--room-smoke --model' ;;
-  *) echo 'Scene must be spheres, room, room-smoke, model or model-smoke' >&2; exit 1 ;;
+  automotive) scene_option='--automotive' ;;
+  automotive-smoke) scene_option='--automotive-smoke' ;;
+  supplied-city) scene_option='--supplied-city' ;;
+  supplied-city-smoke) scene_option='--supplied-city-smoke' ;;
+  city) scene_option='--city' ;;
+  city-smoke) scene_option='--city-smoke' ;;
+  *) echo 'Scene must be spheres, room, room-smoke, model, model-smoke, city, city-smoke, supplied-city supplied-city-smoke, automotive or automotive-smoke' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
 export STEAM_COMPAT_DATA_PATH="$ROOT/vr/prefix"
@@ -54,7 +60,11 @@ mkdir -p "$ROOT/vr/logs"
 echo "XR test mode=$mode resolution=${resolution}x${resolution} per eye"
 rm -f xr-output.txt "$ROOT/vr/logs/steam-424244.log"
 status=0
-timeout --kill-after=5s 150s "$ROOT/runtime-copy/run" -- "$ROOT/proton-copy/proton" waitforexitandrun cmd /c "$executable $option $scene_option > xr-output.txt 2>&1" || status=$?
+runner=("$ROOT/runtime-copy/run" -- "$ROOT/proton-copy/proton" waitforexitandrun cmd /c "$executable $option $scene_option > xr-output.txt 2>&1")
+case "$scene" in
+ room|model|city|supplied-city|automotive) "${runner[@]}" || status=$? ;;
+ *) timeout --kill-after=5s 150s "${runner[@]}" || status=$? ;;
+esac
 if [[ -f xr-output.txt ]]; then cat xr-output.txt; fi
 if (( status != 0 )); then
   if (( status == 124 || status == 137 )); then echo "XR test timed out (status=$status)" >&2; else echo "XR test failed (status=$status)" >&2; fi
