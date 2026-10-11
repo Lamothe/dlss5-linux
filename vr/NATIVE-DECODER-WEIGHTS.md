@@ -1,0 +1,164 @@
+# Decoder weight influence map — 12/10/2026
+
+## Scope and result
+
+`native-decoder-weights-probe.py` is **stage one of pinning the decoder's dense
+matrix permutation** (the weight-binding gate in [NATIVE-DECODER-LAUNCH.md](NATIVE-DECODER-LAUNCH.md)).
+It launches the pinned SM89 `cc_dec_input_upsample_1024_512_fp8` through native
+Linux CUDA on the RTX 4070 Ti SUPER — no Windows code, DirectX or Proton — with
+a **single 16-byte FP8 main-input impulse** and **region-coded synthetic
+matrices** in the 524,288-byte slot-56 coefficient region.
+
+Two structural predictions are enforced:
+
+1. **Decoupling:** a matrix partition whose input partition is all zero cannot
+   change the output. Result must be bit-identical to the zero-matrix base.
+2. **Coupling:** each impulse's coupled matrix partition must change the output.
+
+Both held in every tested configuration, covering **every (matrix partition q,
+input partition p) cell, with every matrix partition appearing in both the
+coupled and decoupled roles**. This is an influence map with
+synthetic weights — **not learned-weight inference, not the recovered
+permutation and not a neural-rendered image**.
+
+## Method
+
+For each word-table variant (`f32-one`: `0x3F800000` words; `zeros`) and impulse
+partition (`p = 0..3`; one 16-byte main-input unit at byte `p*4096`, value +1.0
+E4M3, all other input zero):
+
+| Experiment | Coded matrix partition | Code byte |
+|---|---|---|
+| `base` | none (all zero) | `0x00` |
+| `coupled` | `p` (the impulse's partition) | `0x38` (+1.0) |
+| `negative` | `p` | `0xB8` (−1.0) |
+| `decoupled-qN` (three per group) | `N` (each `N ≠ p`) | `0x38` (+1.0) |
+
+Matrix partition `q` occupies bytes `[q*131072, (q+1)*131072)` of the slot-56
+region, per the recovered coefficient-read formula. Every matrix partition is
+coded as `coupled` once and as a `decoupled` variant under the three other
+impulse partitions: 8 groups × 6 experiments = 48 decoder launches. Skip and
+partial buffers are zero; geometry is the tested 8×8 → 16×16 contract; counters
+reset to −1 through `cc_cb_clear` before each launch.
+
+## Verified results (two runs, `decoder-weights-execute-pTSuyNDt`, `-aaHtBUZE`)
+
+Each run: **96 kernel launches, 384 readbacks**; both runs report identical
+values at every anchor.
+
+- **Decoupling held for all 24 decoupled cells** (3 per group × 8 groups):
+  every `decoupled-qN` output was bit-identical to `base` (enforced; the run
+  fails at the first differing byte otherwise). Combined with the coupled
+  results, every `(matrix q, input p)` cell behaves as the recovered model
+  predicts on the tested contract.
+- **Coupling held in all 8 groups** (enforced per group): `coupled` differed
+  from `base` with a **4,096-byte influence footprint** spanning `[0, 40827]`
+  in **512 distinct 16-byte units** (8 changed bytes per unit) — identical for
+  every impulse partition and both word-table variants.
+- **Sign symmetry in the matrix code**: `+1.0` produced `+8.0`, `−1.0`
+  produced `−8.0` at the sampled influenced bytes. Only these two magnitudes
+  were tested; magnitude linearity is not established. The observed gain of 8
+  under a single 16-byte impulse unit is recorded, not interpreted.
+- **Base output is all zero in the output extent** (enforced; `16×16×512 =
+  131072` bytes), with zero matrix and zero skip: no bias/offset contribution
+  was observed under either word-table variant, and the two variants produced
+  identical coupling values. This does not establish what the `+0x80000` word
+  tables mean.
+- Output writes were confined to the observed extent `[0, 131072)` in every
+  experiment (enforced; writes that equal the `0xA5` poison byte are
+  undetectable by design, as with the launch probe's canaries). Counters
+  finished at `[3]×8` everywhere (enforced); main, skip, weights and
+  census-unused out3/out2 stayed byte-identical (enforced); all guard zones
+  intact (enforced).
+
+The responding 4,096 bytes are 1/32 of the extent. Their structure (512 units ×
+8 bytes) is the raw material for the permutation: mapping these output positions
+onto output channels, and sweeping impulses/codes at finer granularity, is the
+next stage.
+
+## Controls
+
+- **`skip` mode** (`decoder-weights-skip-fWDJhitn`): reset kernel only, no
+  decoder launch — counters read `[−1]×8`, every buffer byte-identical to its
+  upload (including out0 poison), all guards intact on all seven regions; the
+  run enforces all of these and rejects a changed output.
+- **Comparator oracle** (CPU and GPU-captured data): identical buffers accepted,
+  one-byte perturbations rejected.
+- **Failure paths retain evidence**: the decoupling-rejection, per-group
+  coupling, extent and guard-violation paths serialise the accumulated
+  group/experiment measurements to stdout before failing, so a failed run
+  retains its diagnostics. Counter-protocol and counter-guard mismatches
+  report the observed values in the failure message.
+- **Self-test** (CPU, 2.4 s): launch-probe regression plus matrix-region tiling,
+  three experiment-plan known answers including full-cell coverage, 25 buffer
+  non-vacuity pairs (intended pairs differ exactly in the intended partition),
+  impulse placement known answers and isolation checks for all four partitions,
+  eight E4M3 decode known answers and two comparator oracle controls.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 vr/native-decoder-weights-probe.py self-test
+bash vr/run-native-decoder-weights-probe.sh skip
+bash vr/run-native-decoder-weights-probe.sh execute
+```
+
+## Retained failed / superseded runs
+
+- `decoder-weights-skip-LJvFJ98U` (exit 1): the reset-kernel argument block was
+  a `CounterArguments` temporary freed before `cuLaunchKernel` read it; counters
+  stayed at zero. Fixed by binding the struct to a local. Retained as failed
+  evidence.
+- `decoder-weights-execute-mKbNxMTn` (no exit status): stalled in a host-side
+  `bytes(ctypes-array-slice)` conversion that materialised 268 million Python
+  integers per 256 MiB readback; killed when the invoking command timed out.
+  Fixed with `ct.string_at`. No GPU processes remained afterwards; `nvidia-smi`
+  responded normally and subsequent runs complete in well under a minute.
+- `decoder-weights-skip-ldVLPbvB`, `-vUezRJha`, `-V8FyxMJu`;
+  `decoder-weights-execute-ZyRBWE2D`, `-yUpKzgGH`, `-dzMmJHTs`, `-dVnVPTt6`,
+  `-68GYXcVU` (all exit 0): superseded by later source corrections (host-side
+  slicing fix, influence-footprint reporting, then the review fixes:
+  full-coverage experiment plan, enforced per-group verdicts,
+  evidence-preserving failure paths, full skip-mode guard checks, strict-JSON
+  sample values and counter-failure routing). Re-run so evidence snapshots
+  match the current source exactly.
+- `decoder-weights-execute-hZkGgn8k` (no exit status): interrupted when the
+  invoking command's window closed mid-run (the probe's own 300 s bound was not
+  reached). No processes remained; the final pair was re-run afterwards.
+
+## What this establishes — and what it does not
+
+Established: on the tested contract, the matrix region couples to the output
+only through the matching input partition — validated by GPU-executed
+bit-identity across all 24 decoupled cells — and the response is symmetric in
+the matrix code's sign. A bounded, repeatable influence footprint is measurable
+through native Linux execution. The gate's coupling question is answered
+positively.
+
+Not established: which logical `(output channel, input channel)` pair each
+matrix byte serves (the permutation itself), the word-table semantics, the
+numeric upsample computation, magnitude linearity, learned-weight binding,
+exact vendor-instruction equivalence for the group selector, or any
+neural-rendering quality. **No learned weights were used; no neural-rendered
+image was produced.**
+
+## Next stage
+
+1. Fine-grained influence sweeps: code matrix sub-partitions (slab/warp/lane
+   groups from the coefficient-read formula) and sweep impulse positions to
+   resolve `(o, i)` per physical byte.
+2. Decode the output addressing (`index*4 + unit*16 + slot`) far enough to name
+   the influenced output channels.
+3. Then map the stored decoder-weight candidate record through the recovered
+   permutation, and capture Proton reference evaluations for numerical
+   comparison.
+
+The launcher retains the established containment (bubblewrap, no network, no
+home, pinned source snapshots, hash-verified DLL read as data, 300 s bound).
+Core dumps are disabled; swap, driver persistence and memory erasure remain
+uncontrolled. Proprietary reuse/publication rights remain unresolved. No
+proprietary payload files are deliberately created.
+
+Evidence: `research/native-linux/runs/decoder-weights-*`. Two independent
+review rounds drove the corrections listed above — the first found 3 must-fix
+and 4 advisory defects, the follow-up passed with 4 advisory notes, all
+addressed — and the evidence was re-run against the final source. Nothing
+committed or pushed at the time of writing.

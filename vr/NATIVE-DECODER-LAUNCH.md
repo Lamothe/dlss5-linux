@@ -135,6 +135,15 @@ an open neural backend?
 
 Assessment: **continue, one more bounded stage — the gate is not yet closed.**
 
+**Stage one outcome (12/10/2026):** the dense-matrix permutation probe now
+exists and its coupling question is answered positively — see
+[NATIVE-DECODER-WEIGHTS.md](NATIVE-DECODER-WEIGHTS.md). Across every tested
+(matrix q, input p) cell — four coupled and twelve decoupled pairs per
+word-table variant — matrix partitions couple to the output only through the
+matching input partition (GPU-executed bit-identity), with a consistent
+4,096-byte influence footprint. The permutation itself remains unrecovered;
+fine-grained sweeps are the next stage.
+
 What is known: the decoder reads weights from argument slot 56 — a 524,288-byte
 FP8 (E4M3) matrix (1024×512) with 4-byte word tables at `+0x80000`; the address
 formula is recovered and now executable (this launch). A stored decoder-weight
