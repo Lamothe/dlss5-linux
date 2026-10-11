@@ -7,7 +7,10 @@ matrix permutation** (the weight-binding gate in [NATIVE-DECODER-LAUNCH.md](NATI
 It launches the pinned SM89 `cc_dec_input_upsample_1024_512_fp8` through native
 Linux CUDA on the RTX 4070 Ti SUPER — no Windows code, DirectX or Proton — with
 a **single 16-byte FP8 main-input impulse** and **region-coded synthetic
-matrices** in the 524,288-byte slot-56 coefficient region.
+matrices** in the 524,288-byte slot-56 coefficient region. The probe retains
+the **full unit-offset list** of every measured footprint (bounded by
+`UNIT_LIST_BOUND`), which is what makes output-channel naming possible from
+retained evidence; see [NATIVE-DECODER-NAMING.md](NATIVE-DECODER-NAMING.md).
 
 Two structural predictions are enforced:
 
@@ -41,10 +44,13 @@ impulse partitions: 8 groups × 6 experiments = 48 decoder launches. Skip and
 partial buffers are zero; geometry is the tested 8×8 → 16×16 contract; counters
 reset to −1 through `cc_cb_clear` before each launch.
 
-## Verified results (two runs, `decoder-weights-execute-pTSuyNDt`, `-aaHtBUZE`)
+## Verified results (runs `decoder-weights-execute-IUvcUu7c`, `-JvrNtvNL`)
 
 Each run: **96 kernel launches, 384 readbacks**; both runs report identical
-values at every anchor.
+values at every anchor. (Earlier pairs `-pTSuyNDt`/`-aaHtBUZE` and
+`-52a9i4Ap`/`-azQk2Plh` are superseded: probe source changed — full unit-offset
+capture, then a field-semantics clarification — and evidence is always re-run
+against the current source.)
 
 - **Decoupling held for all 24 decoupled cells** (3 per group × 8 groups):
   every `decoupled-qN` output was bit-identical to `base` (enforced; the run
@@ -54,7 +60,9 @@ values at every anchor.
 - **Coupling held in all 8 groups** (enforced per group): `coupled` differed
   from `base` with a **4,096-byte influence footprint** spanning `[0, 40827]`
   in **512 distinct 16-byte units** (8 changed bytes per unit) — identical for
-  every impulse partition and both word-table variants.
+  every impulse partition and both word-table variants. The full 512-unit
+  offset list is retained in the evidence and matches across runs; its naming
+  is in [NATIVE-DECODER-NAMING.md](NATIVE-DECODER-NAMING.md).
 - **Sign symmetry in the matrix code**: `+1.0` produced `+8.0`, `−1.0`
   produced `−8.0` at the sampled influenced bytes. Only these two magnitudes
   were tested; magnitude linearity is not established. The observed gain of 8
@@ -78,7 +86,7 @@ next stage.
 
 ## Controls
 
-- **`skip` mode** (`decoder-weights-skip-fWDJhitn`): reset kernel only, no
+- **`skip` mode** (`decoder-weights-skip-VAbcjrLZ`): reset kernel only, no
   decoder launch — counters read `[−1]×8`, every buffer byte-identical to its
   upload (including out0 poison), all guards intact on all seven regions; the
   run enforces all of these and rejects a changed output.
@@ -89,11 +97,13 @@ next stage.
   group/experiment measurements to stdout before failing, so a failed run
   retains its diagnostics. Counter-protocol and counter-guard mismatches
   report the observed values in the failure message.
-- **Self-test** (CPU, 2.4 s): launch-probe regression plus matrix-region tiling,
+- **Self-test** (CPU): launch-probe regression plus matrix-region tiling,
   three experiment-plan known answers including full-cell coverage, 25 buffer
   non-vacuity pairs (intended pairs differ exactly in the intended partition),
   impulse placement known answers and isolation checks for all four partitions,
-  eight E4M3 decode known answers and two comparator oracle controls.
+  eight E4M3 decode known answers, four `changed_summary` unit-capture known
+  answers (full unit list, byte-pattern union, uniformity flag, retention
+  bound) and two comparator oracle controls.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 vr/native-decoder-weights-probe.py self-test
@@ -123,6 +133,15 @@ bash vr/run-native-decoder-weights-probe.sh execute
 - `decoder-weights-execute-hZkGgn8k` (no exit status): interrupted when the
   invoking command's window closed mid-run (the probe's own 300 s bound was not
   reached). No processes remained; the final pair was re-run afterwards.
+- `decoder-weights-execute-pTSuyNDt`, `-aaHtBUZE`, `-52a9i4Ap`, `-azQk2Plh`,
+  `decoder-weights-skip-fWDJhitn`, `-6WYUMpqb` (all exit 0): earlier evidence
+  pairs and skip controls, superseded as the probe source moved — full
+  unit-offset capture (`unit_offsets`, `unit_byte_offsets`,
+  `uniform_unit_pattern`, `unit_offsets_truncated`), then a field-semantics
+  clarification in `changed_summary`. Their anchors match the current runs,
+  but the pre-capture pair cannot support channel naming because it retained
+  only eight sample offsets per footprint. Current evidence:
+  `decoder-weights-execute-IUvcUu7c`/`-JvrNtvNL`, `decoder-weights-skip-VAbcjrLZ`.
 
 ## What this establishes — and what it does not
 
@@ -145,8 +164,12 @@ image was produced.**
 1. Fine-grained influence sweeps: code matrix sub-partitions (slab/warp/lane
    groups from the coefficient-read formula) and sweep impulse positions to
    resolve `(o, i)` per physical byte.
-2. Decode the output addressing (`index*4 + unit*16 + slot`) far enough to name
-   the influenced output channels.
+2. ~~Decode the output addressing (`index*4 + unit*16 + slot`) far enough to
+   name the influenced output channels.~~ **Done:** see
+   [NATIVE-DECODER-NAMING.md](NATIVE-DECODER-NAMING.md) — the influenced cells
+   name as rows `y ∈ {0, 4}` × all `x` × channel blocks `{0-7, 16-23}` under
+   the contiguous-channel hypothesis, locked by
+   `native-decoder-influence-names.py`.
 3. Then map the stored decoder-weight candidate record through the recovered
    permutation, and capture Proton reference evaluations for numerical
    comparison.
@@ -160,5 +183,6 @@ proprietary payload files are deliberately created.
 Evidence: `research/native-linux/runs/decoder-weights-*`. Two independent
 review rounds drove the corrections listed above — the first found 3 must-fix
 and 4 advisory defects, the follow-up passed with 4 advisory notes, all
-addressed — and the evidence was re-run against the final source. Nothing
-committed or pushed at the time of writing.
+addressed — and the evidence was re-run against the final source. The
+unit-capture extension and naming stage are reviewed in
+[NATIVE-DECODER-NAMING.md](NATIVE-DECODER-NAMING.md).

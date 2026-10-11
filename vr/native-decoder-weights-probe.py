@@ -57,6 +57,7 @@ PARTITION_BYTES = MATRIX_BYTES // 4         # Per CTAID.Z partition, from the ad
 MAIN_PARTITION_BYTES = 4_096                # Per-partition main-input slice, tile 0.
 MAIN_TILE_BYTES = 16_384                    # Main-input tile stride (unused tiles stay zero).
 IMPULSE_BYTES = 16                          # One 16-byte read unit (slab0/warp0/lane0).
+UNIT_LIST_BOUND = 65_536                    # Unit-offset retention bound (the extent holds 8192).
 PROTOCOL_FINAL = 3
 RESET_FINAL = -1
 EXTENT_BYTES = 16 * 16 * 512                # Observed output write extent: [0, 131072).
@@ -234,6 +235,52 @@ def self_test() -> dict[str, Any]:
     for byte, expected in answers.items():
         base.require(e4m3(byte) == expected, f"e4m3 known answer {byte:#04x}")
     base.require(e4m3(0x7F) != e4m3(0x7F), "e4m3 NaN encoding")
+    # changed_summary unit capture: known answers for the full unit-offset list,
+    # per-unit byte pattern union, uniformity flag and retention bound. Buffers
+    # must be scan_changes-aligned (8 MiB chunks); all edits sit in the first
+    # 1 MiB so the analysis spans stay small.
+    unit_known_answers = 0
+    chunk = launch.CHUNK
+    before = bytes(chunk)
+    uniform_after = bytearray(chunk)
+    for unit in (0, 5):
+        for offset in (0, 1, 2, 3, 8, 9, 10, 11):
+            uniform_after[unit * IMPULSE_BYTES + offset] = 0x38
+    summary = changed_summary(before, bytes(uniform_after))
+    base.require(summary["unit_offsets"] == [0, 5 * IMPULSE_BYTES], "unit offsets known answer")
+    base.require(summary["unit_byte_offsets"] == [0, 1, 2, 3, 8, 9, 10, 11],
+                 "unit byte offsets known answer")
+    base.require(summary["uniform_unit_pattern"] is True, "uniform pattern flag")
+    base.require(summary["unit_offsets_truncated"] is False, "unit truncation flag")
+    base.require(summary["changed_count"] == 16 and summary["changed_units16"] == 2
+                 and summary["changed_first"] == 0 and summary["changed_last"] == 5 * IMPULSE_BYTES + 11,
+                 "unit summary counts known answer")
+    unit_known_answers += 1
+    mixed_after = bytearray(chunk)
+    mixed_after[0], mixed_after[1] = 0x38, 0x38
+    mixed_after[IMPULSE_BYTES + 4] = 0x38
+    summary = changed_summary(before, bytes(mixed_after))
+    base.require(summary["uniform_unit_pattern"] is False, "non-uniform pattern rejected")
+    base.require(summary["unit_byte_offsets"] == [0, 1, 4], "mixed byte union known answer")
+    base.require(summary["unit_offsets"] == [0, IMPULSE_BYTES], "mixed unit offsets known answer")
+    unit_known_answers += 1
+    summary = changed_summary(before, before)
+    base.require(summary["unit_offsets"] == [] and summary["unit_byte_offsets"] == []
+                 and summary["uniform_unit_pattern"] is True
+                 and summary["unit_offsets_truncated"] is False,
+                 "unchanged buffer has empty unit capture")
+    unit_known_answers += 1
+    many_units = UNIT_LIST_BOUND + 1
+    base.require(many_units * IMPULSE_BYTES <= chunk, "bound fixture fits the scan chunk")
+    big_after = bytearray(before)
+    for unit in range(many_units):
+        big_after[unit * IMPULSE_BYTES] = 0x38
+    summary = changed_summary(before, bytes(big_after))
+    base.require(summary["unit_offsets"] == [] and summary["unit_offsets_truncated"] is True
+                 and summary["uniform_unit_pattern"] is False
+                 and summary["changed_units16"] == many_units,
+                 "unit retention bound enforced")
+    unit_known_answers += 1
     # Comparator oracle: identical accepted, perturbed rejected.
     require_same_output("oracle-identity", zero_weights[:4096], zero_weights[:4096])
     perturbed = bytearray(zero_weights[:4096])
@@ -247,6 +294,7 @@ def self_test() -> dict[str, Any]:
     return dict(launch_regression=regression, matrix_regions=4, plan_known_answers=3,
                 buffer_non_vacuity_pairs=non_vacuity_pairs, impulse_known_answers=3,
                 impulse_isolation_checks=len(IMPULSE_PARTITIONS), e4m3_known_answers=8,
+                unit_capture_known_answers=unit_known_answers,
                 comparator_oracle_controls=2, gpu_kernels_launched=0)
 
 
@@ -256,22 +304,49 @@ def finite(value: float) -> float | None:
 
 
 def changed_summary(before: bytes, after: bytes) -> dict[str, Any]:
-    """Change footprint of one output region; details bounded to a 4 MiB span."""
+    """Change footprint of one output region; details bounded to a 4 MiB span.
+
+    The full unit-offset list is retained (bounded by UNIT_LIST_BOUND) so the
+    influenced output positions/channels can be named downstream; the earlier
+    eight-sample truncation made naming impossible from retained evidence.
+
+    Field semantics: `uniform_unit_pattern` is True only when every retained
+    unit shares one within-unit byte pattern *and* the full unit set is
+    retained (vacuously True for an unchanged region). `unit_offsets_truncated`
+    means the full unit set is not retained — either the retention bound was
+    exceeded (list dropped, byte union kept) or the span analysis itself was
+    skipped above 4 MiB (all unit fields empty).
+    """
     first, last, chunks = scan_changes(before, after)
     if chunks == 0:
         return dict(changed=False, changed_count=0, changed_first=-1, changed_last=-1,
-                    changed_units16=0, sample_offsets=[], sample_values=[], truncated=False)
+                    changed_units16=0, sample_offsets=[], sample_values=[], truncated=False,
+                    unit_offsets=[], unit_byte_offsets=[], uniform_unit_pattern=True,
+                    unit_offsets_truncated=False)
     span = last - first + 1
     if span > 4 * 1024 * 1024:
         return dict(changed=True, changed_count=-1, changed_first=first, changed_last=last,
-                    changed_units16=-1, sample_offsets=[], sample_values=[], truncated=True)
+                    changed_units16=-1, sample_offsets=[], sample_values=[], truncated=True,
+                    unit_offsets=[], unit_byte_offsets=[], uniform_unit_pattern=False,
+                    unit_offsets_truncated=True)
     changed = [first + offset for offset in range(span)
                if before[first + offset] != after[first + offset]]
-    units = {index // IMPULSE_BYTES for index in changed}
+    patterns: dict[int, list[int]] = {}
+    for index in changed:
+        unit = index // IMPULSE_BYTES
+        patterns.setdefault(unit, []).append(index - unit * IMPULSE_BYTES)
+    unit_offsets = [unit * IMPULSE_BYTES for unit in sorted(patterns)]
+    unit_byte_offsets = sorted({offset for offsets in patterns.values() for offset in offsets})
+    uniform = len({tuple(offsets) for offsets in patterns.values()}) == 1
     sample = changed[:8]
+    truncated_units = len(unit_offsets) > UNIT_LIST_BOUND
     return dict(changed=True, changed_count=len(changed), changed_first=first, changed_last=last,
-                changed_units16=len(units), sample_offsets=sample,
-                sample_values=[finite(e4m3(after[index])) for index in sample], truncated=False)
+                changed_units16=len(patterns), sample_offsets=sample,
+                sample_values=[finite(e4m3(after[index])) for index in sample], truncated=False,
+                unit_offsets=[] if truncated_units else unit_offsets,
+                unit_byte_offsets=unit_byte_offsets,
+                uniform_unit_pattern=bool(uniform and not truncated_units),
+                unit_offsets_truncated=truncated_units)
 
 
 def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]:
