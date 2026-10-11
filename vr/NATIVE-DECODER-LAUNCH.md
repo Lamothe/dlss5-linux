@@ -127,9 +127,37 @@ vacuous-capable negative control, undersized out3/out2, three documentation
 overclaims, a missing counter-ABI assertion and a vestigial `objdump`
 dependency); all corrected above and re-verified.
 
-Next: the decision gate — assess whether the runtime's **learned weight binding**
-can be made concrete (which stored weight record feeds this kernel, in what
-packing). If yes, substitute real weights and compare one saved-input evaluation
-against the Proton reference; if bounded effort cannot establish the binding,
-stop reconstruction and pivot to an open neural backend with the recovered
-interface contract. Nothing committed or pushed.
+## Decision gate: weight-binding feasibility (11/10/2026)
+
+The gate question from the plan: can the runtime's **learned weight binding** be
+made concrete within bounded effort, or should reconstruction stop and pivot to
+an open neural backend?
+
+Assessment: **continue, one more bounded stage — the gate is not yet closed.**
+
+What is known: the decoder reads weights from argument slot 56 — a 524,288-byte
+FP8 (E4M3) matrix (1024×512) with 4-byte word tables at `+0x80000`; the address
+formula is recovered and now executable (this launch). A stored decoder-weight
+candidate exists in the DLL.
+
+What is missing and concrete:
+
+1. **Dense matrix permutation** — which stored bytes fill the slot-56 matrix, in
+   what element order. The FP8 projection work solved the analogous problem for
+   its kernel with one-hot channel probes; the same method applies here.
+2. **Word-table semantics** — the `+0x80000` words (scales/biases?) and their
+   interpretation.
+3. **Reference capture** — numerical comparison needs decoder input/output
+   evaluations from the working Proton VR PoC (instrument the runtime to record
+   the buffers), since no isolated reference exists yet.
+
+Each is an established-methods task, not an unknown-unknown. Pivot trigger: if
+the packing permutation cannot be pinned by one-hot/impulse probes within that
+stage, stop reconstruction and adopt an open neural backend using the recovered
+interface contract (argument slots, geometry, counter protocol, I/O extents —
+all now validated by execution).
+
+Strategic note: even a successful reconstruction reuses NVIDIA's proprietary
+kernels and weights — native execution removes Windows/Proton, not the
+proprietary dependency. The recovered contract is what transfers to an open
+backend either way.
