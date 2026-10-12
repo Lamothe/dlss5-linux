@@ -76,7 +76,12 @@ cat "$run/stderr.txt" >&2
 if [[ "$status" == 0 ]]; then
   # The probe reports on stdout; publish it into the evidence dir so the
   # independent CPU-only oracle pass can read it from the sandbox.
-  cp -- "$run/output.json" "$run/evidence/output.json"
+  if ! cp -- "$run/output.json" "$run/evidence/output.json"; then
+    status=1
+    printf '%s\n' "$status" >"$run/exit-status.txt"
+    printf 'Failed to publish output.json into the evidence directory\n' >&2
+    exit "$status"
+  fi
   # Independent CPU-only oracle pass over the same sandboxed sources and DLL.
   oracle_args=("${common[@]}"
     --ro-bind "$run/source/native-decoder-binding-oracle.py" /oracle.py)

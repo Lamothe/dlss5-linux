@@ -49,16 +49,18 @@ check with no rounding ambiguity. Zero-class weight bytes (`0x00`/`0x80`) and
 non-fed positions expect a zero encoding; `0x80` signed-zero variants are
 recorded as findings (none were observed).
 
-## Verified results (runs `decoder-binding-execute-SyBgpb9M`, `-GZf7wjFD`)
+## Verified results (runs `decoder-binding-execute-mGvAiGdR`, `-8udYFa7O`)
 
 Each run: **162 kernel launches** (81 decoder + 81 counter resets), **649
 readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
 **bit-identical** (oracle-pair, 81 entries) and oracle-valid.
 
 - **159,296 nonzero product-identity checks per run, all exact.** Predicted
-  counts per entry (1,964–2,016 of the 2,048 fed positions; the remainder are
+  counts per entry (1,960–2,020 of the 2,048 fed positions; the remainder are
   zero-class weight bytes) are independently re-derived by the oracle from the
-  hash-verified DLL.
+  hash-verified DLL; the oracle also pins the entry name plan (81/17 entries
+  per mode) and the launch/readback arithmetic (2 launches and 8 readbacks per
+  entry, +1 final full-region readback).
 - **Zero-class discipline:** every zero-class position held `0x00` (zero
   `0x80` signed-zero variants across all runs); the 4,096-byte poison margin
   stayed intact in every entry (enforced); counters `[3]×8` everywhere
@@ -71,26 +73,39 @@ readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
 
 ## Controls
 
-- **`skip`** (`decoder-binding-skip-B18PeYF1`): one counter-reset launch only
+- **`skip`** (`decoder-binding-skip-epwiOrtP`): one counter-reset launch only
   (`kernels_launched: 1`, `decoder_launches: 0`); counters `[−1]×8`, every
   buffer byte-identical to its upload, all guards intact (enforced).
-- **`wrong`** (`decoder-binding-wrong-7Zqk7dL5`): the matrix partitions are
+- **`wrong`** (`decoder-binding-wrong-SoDX5uAl`): the matrix partitions are
   rotated circularly **inwards by 1,024 bytes** (the record's alternative
   `k = 1,024` split). 17 entries: the run matches the rotated reference
   byte-identically **and** the intended `k = 0` result is rejected in every
-  entry (`intended_k0_rejected: true`). The rotation stays inside the NaN-free
-  matrix region, so classification remains well-defined.
-- **Oracle** (`native-decoder-binding-oracle.py`): re-derives the closed form
-  with inline arithmetic (no import of the probe or extension modules),
+  **impulse** entry (16 of the 17 — the zero-impulse base entry has no distinct
+  intended result), both prediction-level (`intended_k0_prediction_differs`)
+  and observationally (`intended_k0_observed_rejected`, zero-class tolerant).
+  The top-level `intended_k0_rejected` aggregates the impulse entries. The
+  control reports `rotated_control_passed: true` and
+  **`weight_record_binding_verified: false`** — only the byte-identical
+  execute runs claim binding. The rotation stays inside the NaN-free matrix
+  region, so classification remains well-defined. The oracle pins the upload
+  rotation to the mode (0 for execute, 1,024 for wrong) in every record.
+- **Oracle** (`native-decoder-binding-oracle.py`): verifies the DLL bytes
+  against the pinned SHA-256 before deriving anything, re-derives the closed
+  form with inline arithmetic (no import of the probe or extension modules),
   re-extracts the record, recomputes every entry's prediction digest and the
   metadata aggregates, and re-checks them against the evidence. Evidence
   equality is attested by SHA-256 over sorted `(offset, expected byte)` pairs —
-  **no stored weight byte values are written to evidence**
-  (`payload_byte_values_written_to_evidence: 0`). Oracle self-test: 8 model
-  known answers, 3 digest controls, **9 corruption controls rejected**, skip
-  variants rejected. Probe self-test: launch regression, 8 model known answers,
-  6 expected-map known answers, plan coverage (80 entries, 10 keys × 4 × 2),
-  digest controls.
+  **no stored weight byte values are written to evidence**, including failure
+  paths (mismatch messages report offsets only)
+  (`payload_byte_values_written_to_evidence: 0`, checked in every mode). The
+  oracle pins the mode and sign values to their allowed sets and the entry
+  name plan to the fixed experiment plan. Oracle self-test: 8 model
+  known answers, 3 digest controls, **31 corruption controls rejected**
+  (record fields, sign/mode claims, plan names, rotation claims, launch
+  arithmetic, metadata, skip and wrong-mode verdicts) over full-plan fixtures.
+  Probe self-test: launch regression, 8 model known answers, 6 expected-map
+  known answers, rotation sensitivity on a varied payload, plan coverage
+  (80 entries, 10 keys × 4 × 2), digest controls.
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 vr/native-decoder-binding-probe.py self-test
@@ -120,12 +135,45 @@ bash vr/run-native-decoder-binding-probe.sh wrong
   (period 256) made the 1,024-byte rotation invisible (1024 ≡ 0 mod 256), and
   a probe self-test distinctness check was vacuous for uniform payloads (keys
   sharing a fed set collide). Both fixed before the final runs.
-- Superseded evidence (report-field fix `decoder_launches`, then re-run so
-  evidence matches the current source exactly): `decoder-binding-execute-blGSZArx`,
-  `-1KM3rdSz`, `-EMSCTNbP`, `decoder-binding-skip-p8jNUZaQ`,
-  `decoder-binding-wrong-c6XWLKAW`. Current evidence: the two execute runs,
-  `-skip-B18PeYF1`, `-wrong-7Zqk7dL5`, each with `oracle.json`, plus
-  `oracle-pair.json` on the first execute run.
+- Superseded evidence (re-run so evidence matches the current source exactly):
+  cycle 1 (report-field fix `decoder_launches`):
+  `decoder-binding-execute-blGSZArx`, `-1KM3rdSz`, `-EMSCTNbP`,
+  `decoder-binding-skip-p8jNUZaQ`, `decoder-binding-wrong-c6XWLKAW`;
+  cycle 2 (review-1 fixes: offsets-only failure messages, mode-pinned
+  rotation, corrected verdict fields, oracle DLL-hash verification):
+  `decoder-binding-execute-SyBgpb9M`, `-GZf7wjFD`, `-skip-B18PeYF1`,
+  `-wrong-7Zqk7dL5`; cycle 3 (review-2 fixes: full-plan oracle fixtures,
+  mode/sign/plan pinning, containment check in every mode, metadata flag
+  rename): `decoder-binding-execute-RSsPk6kM`, `-5H242Ll0`,
+  `-skip-arbsHobv`, `-wrong-uufgbT1A`. Current evidence:
+  `decoder-binding-execute-mGvAiGdR`, `-8udYFa7O`, `-skip-epwiOrtP`,
+  `-wrong-SoDX5uAl`, each with `oracle.json`, plus `oracle-pair.json` on the
+  `mGvAiGdR` evidence directory.
+
+## Review
+
+Independent review round 1: **FAIL (3 must-fix, 7 advisory)** — the oracle did
+not hash-verify the DLL bytes it derived predictions from, the upload rotation
+was not pinned to the mode (leaving the byte-identical-upload claim
+unverified), and the per-entry count range was misstated. Advisory findings
+included weight byte values in failure-path messages (containment leak),
+prediction-vs-prediction `intended_k0_rejected` semantics, wrong mode claiming
+binding, an overstated skip-path `metadata_checked`, a misnamed helper, control
+gaps and doc/runner nits. All were addressed; the oracle self-test grew from 9
+to 23 corruption controls, and all evidence was re-run against the corrected
+source.
+
+Independent review round 2: **FAIL (1 must-fix, 4 advisory)** — all round-1
+findings verified resolved; the new findings were an overstated wrong-mode
+rejection claim (the zero-impulse base entry has no distinct intended result),
+the containment flag unchecked in skip mode, unpinned mode/sign values,
+self-referential launch pins (entry plan unpinned) and an evidence-internal
+flag contradiction (`learned_weights_used` true in metadata, false at report
+level). All addressed: the wrong-mode claim is scoped to the 16 impulse
+entries, the oracle pins mode/sign/plan and checks containment in every mode,
+the metadata flag was renamed `candidate_record_contains_learned_weights`,
+and the self-test fixtures now span the full experiment plan (31 corruption
+controls). All evidence was re-run against the corrected source.
 
 ## What this establishes — and what it does not
 

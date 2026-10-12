@@ -4,10 +4,11 @@
 Re-derives the (o, i) -> matrix-byte closed form of
 [NATIVE-DECODER-EXTENSION.md](NATIVE-DECODER-EXTENSION.md) with inline
 arithmetic (no import of the binding or extension probes), re-extracts the
-candidate weight record from the hash-verified DLL, recomputes every entry's
-nonzero product prediction and its SHA-256 digest, and checks them against the
-binding probe's evidence. The probe attests kernel equality in-sandbox; this
-oracle pins what "the prediction" means, independently.
+candidate weight record from the DLL — whose bytes are themselves verified
+against the pinned SHA-256 before any prediction is derived — recomputes every
+entry's nonzero product prediction and its SHA-256 digest, and checks them
+against the binding probe's evidence. The probe attests kernel equality
+in-sandbox; this oracle pins what "the prediction" means, independently.
 
 Modes:
 
@@ -62,8 +63,11 @@ MATRIX_SLOTS = 4 * PARTITION_BYTES
 SCALE_BYTES = 1024
 RECORD_PAYLOAD_BYTES = 525312
 CANDIDATE_RECORD = "block39.layer0.layer"
-E4M3_POS, E4M3_NEG = 0x38, 0xB8
 ZERO_CLASS = (0x00, 0x80)
+WRONG_ROTATION = 1024
+PLAN_KEYS = ((0, 1), (0, 2), (0, 3), (3, 5), (2, 15), (18, 0), (34, 9),
+             (100, 7), (200, 13), (255, 15))
+WRONG_MODE_KEYS = ((0, 1), (255, 15))
 
 
 def shuffle(output_offset: int) -> int:
@@ -178,6 +182,21 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
     cuda = report["cuda"]
     problems: list[str] = []
     mode = cuda["mode"]
+    if mode not in ("execute", "skip", "wrong"):
+        return dict(oracle_valid=False, mode=mode, entries_checked=0,
+                    metadata_checked=False, problems=[f"unknown mode {mode!r}"])
+    if cuda.get("payload_byte_values_written_to_evidence") != 0:
+        problems.append("evidence claims payload byte values were written")
+    # Metadata is checked in every mode (the skip report carries it too).
+    metadata = cuda.get("binding_metadata")
+    metadata_checked = isinstance(metadata, dict)
+    if not metadata_checked:
+        problems.append("missing binding metadata")
+    else:
+        expected_metadata = recompute_metadata(payload, meta)
+        for key, value in expected_metadata.items():
+            if metadata.get(key) != value:
+                problems.append(f"metadata mismatch for {key}")
     if mode == "skip":
         if cuda.get("out0_changed") is not False:
             problems.append("skip run reports a changed output")
@@ -186,23 +205,38 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
         if cuda.get("kernels_launched") != 1:
             problems.append("skip run must run exactly the counter reset")
         return dict(oracle_valid=not problems, mode=mode, entries_checked=0,
-                    metadata_checked=True, problems=problems)
-    if cuda.get("decoder_launches") != len(cuda["records"]):
+                    metadata_checked=metadata_checked, problems=problems)
+    records = cuda.get("records")
+    if not isinstance(records, list):
+        problems.append("missing records")
+        records = []
+    keys = WRONG_MODE_KEYS if mode == "wrong" else PLAN_KEYS
+    expected_names = ["base-real"] + [f"p{partition}-u{unit}-l{lane}-{sign}"
+                                      for unit, lane in keys
+                                      for partition in (0, 1, 2, 3)
+                                      for sign in ("pos", "neg")]
+    if [record.get("name") for record in records] != expected_names:
+        problems.append("entry names/order do not match the plan")
+    if cuda.get("decoder_launches") != len(records):
         problems.append("decoder launch count does not match the entries")
-    metadata = cuda["binding_metadata"]
-    expected_metadata = recompute_metadata(payload, meta)
-    for key, value in expected_metadata.items():
-        if metadata.get(key) != value:
-            problems.append(f"metadata mismatch for {key}")
+    if cuda.get("kernels_launched") != 2 * len(records):
+        problems.append("kernel launch count does not match the entries")
+    if cuda.get("readbacks") != 8 * len(records) + 1:
+        problems.append("readback count does not match the entries")
+    rotation_mode = WRONG_ROTATION if mode == "wrong" else 0
+    if cuda.get("matrix_upload_rotation") != rotation_mode:
+        problems.append("matrix upload rotation does not match the mode")
     entries_checked = 0
-    for record in cuda["records"]:
+    for record in records:
         partition, unit, lane = (record["impulse_partition"], record["impulse_unit"],
                                  record["impulse_lane"])
-        rotation = record["rotation"]
-        if partition is None:
-            expect: dict[int, int] = {}
-        else:
-            expect = predicted(payload, partition, unit, lane, record["sign"], rotation)
+        if record.get("sign") not in (None, "pos", "neg") or \
+                (partition is None) != (record.get("sign") is None):
+            problems.append(f"invalid sign/key combination ({record['name']})")
+        if type(record.get("rotation")) is not int or record["rotation"] != rotation_mode:
+            problems.append(f"record rotation does not match the mode ({record['name']})")
+        expect = (dict() if partition is None else
+                  predicted(payload, partition, unit, lane, record["sign"], rotation_mode))
         digest, count = nonzero_digest(expect)
         if record["expected_nonzero_sha256"] != digest:
             problems.append(f"digest mismatch ({record['name']})")
@@ -216,25 +250,31 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
             problems.append(f"margin not intact ({record['name']})")
         if record["counters_observed"] != [3] * 8:
             problems.append(f"counter protocol ({record['name']})")
-        if record.get("intended_k0_nonzero_sha256") is not None:
+        if mode == "wrong" and partition is not None:
             intended = predicted(payload, partition, unit, lane, record["sign"], 0)
-            if record["intended_k0_nonzero_sha256"] != nonzero_digest(intended)[0]:
-                problems.append(f"intended digest mismatch ({record['name']})")
-            if record["intended_k0_rejected"] is not True:
-                problems.append(f"intended result not rejected ({record['name']})")
+            expected_differs = digest != nonzero_digest(intended)[0]
+            differs_flag = record.get("intended_k0_prediction_differs")
+            if type(differs_flag) is not bool or differs_flag != expected_differs:
+                problems.append(f"intended prediction-differs flag mismatch ({record['name']})")
+            if record.get("intended_k0_observed_rejected") is not True:
+                problems.append(f"intended result not observationally rejected ({record['name']})")
         entries_checked += 1
     if mode == "execute":
         if cuda.get("weight_record_binding_verified") is not True:
             problems.append("binding verdict not true")
         if cuda.get("learned_weights_used") is not True:
             problems.append("learned-weights flag incorrect")
+        if cuda.get("intended_k0_rejected") is not None or cuda.get("rotated_control_passed") is not None:
+            problems.append("execute mode must not claim control verdicts")
     if mode == "wrong":
+        if cuda.get("weight_record_binding_verified") is not False:
+            problems.append("wrong mode must not claim binding")
+        if cuda.get("rotated_control_passed") is not True:
+            problems.append("rotated control not passed")
         if cuda.get("intended_k0_rejected") is not True:
             problems.append("wrong mode did not reject the intended k0 result")
-    if cuda.get("payload_byte_values_written_to_evidence") != 0:
-        problems.append("evidence claims payload byte values were written")
     return dict(oracle_valid=not problems, mode=mode, entries_checked=entries_checked,
-                metadata_checked=True, problems=problems)
+                metadata_checked=metadata_checked, problems=problems)
 
 
 def self_test() -> dict[str, Any]:
@@ -245,22 +285,11 @@ def self_test() -> dict[str, Any]:
         if not condition:
             problems.append(label)
 
-    def reject(action: Any, label: str) -> None:
-        nonlocal rejected
-        try:
-            action()
-        except (ValueError, TypeError, AssertionError, KeyError):
-            rejected += 1
-            return
-        problems.append(f"corrupt control accepted ({label})")
-
     # Inline model known answers.
     identity = fed_map(0, 0)
     check(len(identity) == 2048, "identity map size")
     check(all(matrix_byte == shuffle(offset) for offset, matrix_byte in identity.items()),
           "identity map is pure shuffle")
-    check(fed_map(0, 1)[min(fed_map(0, 1))] == 1 + shuffle(min(fed_map(0, 1))),
-          "bit-0 base effect")
     check(all(matrix_byte == 1 + shuffle(offset) for offset, matrix_byte in fed_map(0, 1).items()),
           "bit-0 map shifted by one")
     full = fed_map(255, 15)
@@ -282,84 +311,139 @@ def self_test() -> dict[str, Any]:
     varied = bytes(((g * 131 + 7) % 255) + 1 for g in range(RECORD_PAYLOAD_BYTES))
     check(predicted(varied, 0, 0, 1, "pos", 0) != predicted(varied, 0, 0, 2, "pos", 0),
           "distinct input bases give distinct predictions")
-    rotated = predicted(varied, 0, 0, 1, "pos", 1024)
-    check(rotated != predicted(varied, 0, 0, 1, "pos", 0), "rotation changes predictions")
+    check(predicted(varied, 0, 0, 1, "pos", WRONG_ROTATION)
+          != predicted(varied, 0, 0, 1, "pos", 0),
+          "rotation changes predictions")
     # Digest controls.
     digest_a = nonzero_digest({3: 0x01, 7: 0x38})[0]
     check(digest_a == nonzero_digest({7: 0x38, 3: 0x01})[0], "digest order stability")
     check(digest_a != nonzero_digest({3: 0x01, 7: 0x39})[0], "digest value sensitivity")
     check(offsets_digest([2, 1]) == offsets_digest([1, 2]), "offset digest order stability")
-    # Evidence checker controls with synthetic evidence.
+    # Evidence checker controls with synthetic evidence built over the FULL
+    # plan (plan pinning rejects any truncated report, so single-record
+    # fixtures would make every control vacuous).
     synthetic_meta = dict(tag=1, payload_bytes=RECORD_PAYLOAD_BYTES, dimensions=[262656])
-    good_record = dict(name="p0-u0-l1-pos", impulse_partition=0, impulse_unit=0,
-                       impulse_lane=1, sign="pos", rotation=0,
-                       expected_nonzero_sha256=nonzero_digest(
-                           predicted(varied, 0, 0, 1, "pos", 0))[0],
-                       expected_nonzero_count=len(predicted(varied, 0, 0, 1, "pos", 0)),
-                       zero_class_count=EXTENT_BYTES - len(predicted(varied, 0, 0, 1, "pos", 0)),
-                       product_identity_match=True, margin_poison_intact=True,
-                       counters_observed=[3] * 8)
-    good_report = dict(cuda=dict(mode="execute", records=[good_record],
-                                 binding_metadata=recompute_metadata(varied, synthetic_meta),
-                                 decoder_launches=1,
-                                 weight_record_binding_verified=True,
-                                 learned_weights_used=True,
-                                 payload_byte_values_written_to_evidence=0))
-    check(check_evidence(good_report, varied, synthetic_meta)["oracle_valid"],
-          "synthetic good evidence accepted")
-    mutations = (
-        lambda r: r.update(expected_nonzero_sha256="0" * 64),
-        lambda r: r.update(expected_nonzero_count=r["expected_nonzero_count"] + 1),
-        lambda r: r.update(zero_class_count=0),
-        lambda r: r.update(product_identity_match=False),
-        lambda r: r.update(margin_poison_intact=False),
-        lambda r: r.update(counters_observed=[3] * 7),
-        lambda r: r.update(sign="neg"),
-        lambda r: r.update(rotation=1024),
-    )
-    for index, mutate in enumerate(mutations):
-        record = dict(good_record)
-        record["expected_nonzero_sha256"] = good_record["expected_nonzero_sha256"]
-        try:
-            mutate(record)
-        except (TypeError, IndexError):
-            rejected += 1
-            continue
-        report = dict(cuda=dict(mode="execute", records=[record],
-                                binding_metadata=recompute_metadata(varied, synthetic_meta),
-                                decoder_launches=1,
-                                weight_record_binding_verified=True,
-                                learned_weights_used=True,
-                                payload_byte_values_written_to_evidence=0))
+    metadata_block = recompute_metadata(varied, synthetic_meta)
+
+    def build_records(payload_: bytes, mode: str) -> list[dict[str, Any]]:
+        keys = WRONG_MODE_KEYS if mode == "wrong" else PLAN_KEYS
+        rotation = WRONG_ROTATION if mode == "wrong" else 0
+        records = [dict(name="base-real", impulse_partition=None, impulse_unit=None,
+                        impulse_lane=None, sign=None, rotation=rotation,
+                        expected_nonzero_sha256=nonzero_digest({})[0],
+                        expected_nonzero_count=0, zero_class_count=EXTENT_BYTES,
+                        product_identity_match=True, margin_poison_intact=True,
+                        counters_observed=[3] * 8)]
+        for unit, lane in keys:
+            for partition in (0, 1, 2, 3):
+                for sign in ("pos", "neg"):
+                    expect = predicted(payload_, partition, unit, lane, sign, rotation)
+                    record = dict(name=f"p{partition}-u{unit}-l{lane}-{sign}",
+                                  impulse_partition=partition, impulse_unit=unit,
+                                  impulse_lane=lane, sign=sign, rotation=rotation,
+                                  expected_nonzero_sha256=nonzero_digest(expect)[0],
+                                  expected_nonzero_count=len(expect),
+                                  zero_class_count=EXTENT_BYTES - len(expect),
+                                  product_identity_match=True, margin_poison_intact=True,
+                                  counters_observed=[3] * 8)
+                    if mode == "wrong":
+                        intended = predicted(payload_, partition, unit, lane, sign, 0)
+                        record["intended_k0_prediction_differs"] = \
+                            nonzero_digest(expect)[0] != nonzero_digest(intended)[0]
+                        record["intended_k0_observed_rejected"] = True
+                    records.append(record)
+        return records
+
+    def must_reject(report: dict[str, Any], label: str) -> None:
+        nonlocal rejected
         verdict = check_evidence(report, varied, synthetic_meta)
         if verdict["oracle_valid"]:
-            problems.append(f"mutation {index} accepted")
+            problems.append(f"corrupt control accepted ({label})")
         else:
             rejected += 1
-    metadata_report = dict(cuda=dict(mode="execute", records=[dict(good_record)],
-                                     binding_metadata=dict(
-                                         recompute_metadata(varied, synthetic_meta),
-                                         matrix_e4m3_nan_bytes=1),
-                                     decoder_launches=1,
-                                     weight_record_binding_verified=True,
-                                     learned_weights_used=True,
-                                     payload_byte_values_written_to_evidence=0))
-    if check_evidence(metadata_report, varied, synthetic_meta)["oracle_valid"]:
-        problems.append("metadata mutation accepted")
-    else:
-        rejected += 1
-    skip_report = dict(cuda=dict(mode="skip", out0_changed=False,
-                                 kernels_launched=1, decoder_launches=0))
-    check(check_evidence(skip_report, varied, synthetic_meta)["oracle_valid"],
+
+    def execute_report(mutate: Any = None, **overrides: Any) -> dict[str, Any]:
+        records = build_records(varied, "execute")
+        if mutate is not None:
+            mutate(records[1])
+        cuda = dict(mode="execute", binding_metadata=metadata_block, records=records,
+                    decoder_launches=len(records), kernels_launched=2 * len(records),
+                    readbacks=8 * len(records) + 1, matrix_upload_rotation=0,
+                    weight_record_binding_verified=True, learned_weights_used=True,
+                    intended_k0_rejected=None, rotated_control_passed=None,
+                    payload_byte_values_written_to_evidence=0)
+        cuda.update(overrides)
+        return dict(cuda=cuda)
+
+    check(check_evidence(execute_report(), varied, synthetic_meta)["oracle_valid"],
+          "synthetic good evidence accepted")
+    mutations = (
+        ("digest", lambda r: r.update(expected_nonzero_sha256="0" * 64)),
+        ("count", lambda r: r.update(expected_nonzero_count=r["expected_nonzero_count"] + 1)),
+        ("zero-class count", lambda r: r.update(zero_class_count=0)),
+        ("identity flag", lambda r: r.update(product_identity_match=False)),
+        ("margin flag", lambda r: r.update(margin_poison_intact=False)),
+        ("counters", lambda r: r.update(counters_observed=[3] * 7)),
+        ("sign", lambda r: r.update(sign="neg")),
+        ("invalid sign", lambda r: r.update(sign="foo")),
+        ("record rotation", lambda r: r.update(rotation=WRONG_ROTATION)),
+        ("entry name", lambda r: r.update(name="bogus")),
+    )
+    for label, mutate in mutations:
+        must_reject(execute_report(mutate), label)
+    must_reject(execute_report(matrix_upload_rotation=WRONG_ROTATION),
+                "upload rotation claim")
+    must_reject(execute_report(decoder_launches=82), "decoder launch count")
+    must_reject(execute_report(kernels_launched=163), "kernel launch count")
+    must_reject(execute_report(readbacks=650), "readback count")
+    must_reject(execute_report(payload_byte_values_written_to_evidence=1),
+                "payload byte-value claim")
+    must_reject(execute_report(intended_k0_rejected=True),
+                "execute claims intended verdict")
+    must_reject(execute_report(rotated_control_passed=True),
+                "execute claims rotated verdict")
+    must_reject(execute_report(
+        binding_metadata=dict(metadata_block, matrix_e4m3_nan_bytes=1)),
+        "metadata mutation")
+    must_reject(dict(cuda=dict(execute_report()["cuda"], mode="bogus")), "unknown mode")
+    # Wrong-mode controls (rotation pinned to 1,024).
+    def wrong_report(mutate: Any = None, **overrides: Any) -> dict[str, Any]:
+        records = build_records(varied, "wrong")
+        if mutate is not None:
+            mutate(records[1])
+        cuda = dict(mode="wrong", binding_metadata=metadata_block, records=records,
+                    decoder_launches=len(records), kernels_launched=2 * len(records),
+                    readbacks=8 * len(records) + 1, matrix_upload_rotation=WRONG_ROTATION,
+                    weight_record_binding_verified=False, rotated_control_passed=True,
+                    intended_k0_rejected=True, learned_weights_used=True,
+                    payload_byte_values_written_to_evidence=0)
+        cuda.update(overrides)
+        return dict(cuda=cuda)
+
+    check(check_evidence(wrong_report(), varied, synthetic_meta)["oracle_valid"],
+          "synthetic wrong-mode evidence accepted")
+    must_reject(wrong_report(lambda r: r.update(intended_k0_prediction_differs=False)),
+                "wrong prediction-differs flag")
+    must_reject(wrong_report(lambda r: r.update(intended_k0_observed_rejected=False)),
+                "wrong observed-rejection flag")
+    must_reject(wrong_report(intended_k0_rejected=None), "wrong intended verdict missing")
+    must_reject(wrong_report(intended_k0_rejected=False), "wrong intended verdict false")
+    must_reject(wrong_report(weight_record_binding_verified=True), "wrong claims binding")
+    must_reject(wrong_report(rotated_control_passed=False), "wrong control not passed")
+    must_reject(wrong_report(matrix_upload_rotation=0), "wrong upload rotation claim")
+    # Skip controls (metadata present and checked).
+    skip_cuda = dict(mode="skip", out0_changed=False, kernels_launched=1,
+                     decoder_launches=0, binding_metadata=metadata_block,
+                     payload_byte_values_written_to_evidence=0)
+    check(check_evidence(dict(cuda=skip_cuda), varied, synthetic_meta)["oracle_valid"],
           "skip evidence accepted")
-    check(not check_evidence(dict(cuda=dict(mode="skip", out0_changed=True,
-                                           kernels_launched=1, decoder_launches=0)),
-                             varied, synthetic_meta)["oracle_valid"],
-          "skip-with-output-change evidence rejected")
-    check(not check_evidence(dict(cuda=dict(mode="skip", out0_changed=False,
-                                           kernels_launched=1, decoder_launches=1)),
-                             varied, synthetic_meta)["oracle_valid"],
-          "skip-with-decoder-launch evidence rejected")
+    must_reject(dict(cuda=dict(skip_cuda, out0_changed=True)), "skip with output change")
+    must_reject(dict(cuda=dict(skip_cuda, decoder_launches=1)), "skip with decoder launch")
+    must_reject(dict(cuda=dict(skip_cuda, kernels_launched=0)), "skip without reset")
+    must_reject(dict(cuda=dict(skip_cuda, payload_byte_values_written_to_evidence=1)),
+                "skip payload byte-value claim")
+    must_reject(dict(cuda=dict(skip_cuda, binding_metadata=dict(
+        metadata_block, matrix_zero_class_bytes=0))), "skip metadata mutation")
     return dict(model_known_answers=8, digest_controls=3,
                 corrupt_controls_rejected=rejected, problems=problems,
                 oracle_valid=not problems, gpu_kernels_launched=0)
@@ -367,6 +451,8 @@ def self_test() -> dict[str, Any]:
 
 def validate(dll: Path, evidence: Path) -> dict[str, Any]:
     data = dll.read_bytes()
+    require(hashlib.sha256(data).hexdigest() == runtime.PIN,
+            "DLL bytes do not match the pinned hash")
     report = json.loads(evidence.read_text())
     require(report.get("dll_sha256") == runtime.PIN,
             "evidence must pin the verified DLL hash")
@@ -384,18 +470,16 @@ def pair(first: Path, second: Path) -> dict[str, Any]:
     problems: list[str] = []
     if left["cuda"]["mode"] != right["cuda"]["mode"]:
         problems.append("mode mismatch")
-    anchors_left = [({k: r.get(k) for k in ("name", "expected_nonzero_sha256",
-                                            "expected_nonzero_count", "zero_class_count",
-                                            "zero_0x80_variant_count",
-                                            "zero_0x80_variant_offsets_sha256",
-                                            "counters_observed", "rotation", "sign")})
-                    for r in left["cuda"]["records"]]
-    anchors_right = [({k: r.get(k) for k in ("name", "expected_nonzero_sha256",
-                                             "expected_nonzero_count", "zero_class_count",
-                                             "zero_0x80_variant_count",
-                                             "zero_0x80_variant_offsets_sha256",
-                                             "counters_observed", "rotation", "sign")})
-                     for r in right["cuda"]["records"]]
+    anchor_keys = ("name", "expected_nonzero_sha256", "expected_nonzero_count",
+                   "zero_class_count", "zero_0x80_variant_count",
+                   "zero_0x80_variant_offsets_sha256", "counters_observed",
+                   "product_identity_match", "margin_poison_intact",
+                   "counters_guard_intact", "immutable_regions_intact",
+                   "guards_intact", "rotation", "sign")
+    anchors_left = [{k: r.get(k) for k in anchor_keys}
+                    for r in left["cuda"].get("records", [])]
+    anchors_right = [{k: r.get(k) for k in anchor_keys}
+                     for r in right["cuda"].get("records", [])]
     if anchors_left != anchors_right:
         problems.append("entry anchors differ")
     verdict = dict(oracle="binding-pair", pair_identical=not problems, problems=problems,

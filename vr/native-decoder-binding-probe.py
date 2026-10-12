@@ -219,7 +219,8 @@ def binding_metadata(payload: bytes, meta: dict[str, Any]) -> dict[str, Any]:
                                  "E4M3-NaN byte encodings, so it is not matrix data; the record "
                                  "dimensions count 262,144 matrix FP16-pairs + 512 FP16 scales"),
                 tail_semantics_verified=False,
-                learned_weights_used=True, native_image_inference=False,
+                candidate_record_contains_learned_weights=True,
+                native_image_inference=False,
                 deliberate_proprietary_payload_files_written=False,
                 payload_byte_values_written_to_evidence=0)
 
@@ -266,7 +267,8 @@ def expected_map(payload: bytes, partition: int, unit: int, lane: int,
     return out
 
 
-def zero_class_positions(unit: int, lane: int) -> set[int]:
+def nonfed_positions(unit: int, lane: int) -> set[int]:
+    """Output positions NOT fed by input byte (unit, lane) under the closed form."""
     fed = set(extension.model_map(BIT_EFFECTS, unit, lane))
     return (set(range(EXTENT_BYTES)) - fed)
 
@@ -359,10 +361,14 @@ def self_test() -> dict[str, Any]:
     check(len(zeroed) == 0, "zero payload predicts silence")
     rotated = expected_map(synthetic, 0, 0, 1, "pos", WRONG_ROTATION)
     check(rotated == full, "uniform payload rotation-invariant")
+    varied_p = bytes(((g * 131 + 7) % 255) + 1 for g in range(RECORD_PAYLOAD_BYTES))
+    check(expected_map(varied_p, 0, 0, 1, "pos", WRONG_ROTATION)
+          != expected_map(varied_p, 0, 0, 1, "pos", 0),
+          "rotation sensitivity on a varied payload")
     shifted = expected_map(bytes([0x38]) * MATRIX_SLOTS + bytes(SCALE_BYTES), 0, 0, 1, "pos", 0)
     check(shifted == full, "scale tail unused by predictions")
-    # Zero-class position accounting.
-    check(len(zero_class_positions(0, 1)) == EXTENT_BYTES - 2048, "zero-class position count")
+    # Non-fed position accounting.
+    check(len(nonfed_positions(0, 1)) == EXTENT_BYTES - 2048, "non-fed position count")
     return dict(launch_regression=regression, model_known_answers=len(known_effects) + 2,
                 plan_entries=len(plan), plan_keys=len(PLAN_KEYS),
                 digest_controls=4, corrupt_controls_rejected=rejected,
@@ -541,12 +547,13 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]
                 if out0_window[EXTENT_BYTES:] != poison_window[EXTENT_BYTES:]:
                     fail(f"write outside the extent ({name})")
                 # Nonzero-fed positions: strict byte identity with the prediction.
-                mismatches = [[offset, out0_window[offset], expected[offset]]
-                              for offset in sorted(expected)
-                              if out0_window[offset] != expected[offset]]
-                if mismatches:
+                # Failure paths report offsets only — never weight byte values.
+                mismatch_offsets = [offset for offset in sorted(expected)
+                                    if out0_window[offset] != expected[offset]]
+                if mismatch_offsets:
                     fail(f"product identity mismatch ({name}): "
-                         f"{len(mismatches)} of {len(expected)}; first {mismatches[:8]}")
+                         f"{len(mismatch_offsets)} of {len(expected)}; "
+                         f"first offsets {mismatch_offsets[:8]}")
                 # Zero-class positions: zero encodings accepted; 0x80 recorded.
                 zero_variants = [offset for offset in range(EXTENT_BYTES)
                                  if offset not in expected and out0_window[offset] == 0x80]
@@ -570,11 +577,16 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]
                               immutable_regions_intact=bool(immutable),
                               guards_intact=bool(guards_intact))
                 if intended is not None:
-                    record["intended_k0_nonzero_sha256"] = nonzero_digest(intended)[0]
-                    record["intended_k0_rejected"] = bool(nonzero_digest(intended)[0]
-                                                          != nonzero_digest(expected)[0])
-                    if out0_window[:EXTENT_BYTES] == b"".join(
-                            bytes([intended.get(offset, 0x00)]) for offset in range(EXTENT_BYTES)):
+                    # Prediction-level and observational rejection of the
+                    # intended k0 result (zero-class tolerance in the latter).
+                    record["intended_k0_prediction_differs"] = bool(
+                        nonzero_digest(intended)[0] != nonzero_digest(expected)[0])
+                    observed_matches_intended = all(
+                        (out0_window[offset] == intended[offset]) if offset in intended
+                        else (out0_window[offset] in (0x00, 0x80))
+                        for offset in range(EXTENT_BYTES))
+                    record["intended_k0_observed_rejected"] = bool(not observed_matches_intended)
+                    if observed_matches_intended:
                         fail(f"rotated run reproduced the intended k0 result ({name})")
                 return record
 
@@ -614,6 +626,7 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]
                             weight_record_binding_verified=False,
                             learned_weights_used=False, native_image_inference=False,
                             candidate_weight_payload_uploaded=True,
+                            payload_byte_values_written_to_evidence=0,
                             deliberate_proprietary_payload_files_written=False)
 
             # Entries: base (zero impulse) then the impulse plan. The initial
@@ -643,9 +656,17 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]
 
         identity_ok = all(record["product_identity_match"] for record in records)
         margin_ok = all(record["margin_poison_intact"] for record in records)
-        intended_rejected = (all(record.get("intended_k0_rejected", True) for record in records)
-                             if mode == "wrong" else True)
-        binding = bool(identity_ok and margin_ok and intended_rejected)
+        if mode == "wrong":
+            intended_rejected: bool | None = all(
+                record.get("intended_k0_prediction_differs", True)
+                and record.get("intended_k0_observed_rejected", True)
+                for record in records)
+            rotated_passed: bool | None = bool(identity_ok and margin_ok and intended_rejected)
+            binding: bool | None = False
+        else:
+            intended_rejected = None
+            rotated_passed = None
+            binding = bool(identity_ok and margin_ok)
         return dict(native=True, device="NVIDIA GeForce RTX 4070 Ti SUPER",
                     driver_api_version=version, mode=mode, kernel=NAME,
                     block=list(BLOCK), kernels_launched=launches,
@@ -656,7 +677,8 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str) -> dict[str, Any]
                     impulse_entries=len(entries_plan), base_entries=1,
                     product_identity_passed=bool(identity_ok),
                     margin_poison_passed=bool(margin_ok),
-                    intended_k0_rejected=bool(intended_rejected),
+                    intended_k0_rejected=intended_rejected,
+                    rotated_control_passed=rotated_passed,
                     zero_0x80_variant_total=sum(record["zero_0x80_variant_count"]
                                                 for record in records),
                     out0_full_region_final_check=True,
