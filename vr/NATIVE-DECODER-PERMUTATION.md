@@ -107,14 +107,16 @@ coverage of the other ~16,000 input bytes (extension of the measured structure
 is a hypothesis until validated), exact vendor-instruction equivalence of the
 decode assumptions beyond the tested domain, learned-weight binding, or any
 neural-rendering quality. **No learned weights were used; no neural-rendered
-image was produced.** `matrix_permutation_recovered` stays **false** until the
-extension is validated.
+image was produced.** `matrix_permutation_recovered` was **false** at this
+stage; the structural extension
+([NATIVE-DECODER-EXTENSION.md](NATIVE-DECODER-EXTENSION.md)) subsequently
+validated it.
 
 ## Next stage
 
-1. Validate the structural extension: predict (o, i) for unprobed input bytes
-   from findings 1–6 and verify on held-out bytes (the stage gate for the
-   `matrix_permutation_recovered` flag).
+1. ~~Validate the structural extension~~ — **done**:
+   [NATIVE-DECODER-EXTENSION.md](NATIVE-DECODER-EXTENSION.md) (`m = B(n) + S(o)`
+   closed form, 8 held-out columns exact, `matrix_permutation_recovered: true`).
 2. Bind the stored decoder-weight candidate record through this map.
 3. Capture Proton reference evaluations for numerical comparison.
 
