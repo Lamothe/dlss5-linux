@@ -83,8 +83,12 @@ failed runs retained).
 
 ## Next stage
 
-1. Bind the stored decoder-weight candidate record through this map (decode
-   stored weight bytes into the recovered (o, i) structure).
+1. ~~Bind the stored decoder-weight candidate record through this map (decode
+   stored weight bytes into the recovered (o, i) structure).~~ **Done:** see
+   [NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md) —
+   `block39.layer0.layer` uploaded byte-identically; 159,296 single-product
+   byte-identity checks per run against the stored weight bytes, rotated
+   control rejecting the alternative split.
 2. Capture Proton reference evaluations for numerical comparison of one native
    evaluation against the working VR PoC.
 

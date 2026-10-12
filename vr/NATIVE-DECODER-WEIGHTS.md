@@ -170,9 +170,12 @@ image was produced.**
    name as rows `y ∈ {0, 4}` × all `x` × channel blocks `{0-7, 16-23}` under
    the contiguous-channel hypothesis, locked by
    `native-decoder-influence-names.py`.
-3. Then map the stored decoder-weight candidate record through the recovered
+3. ~~Then map the stored decoder-weight candidate record through the recovered
    permutation, and capture Proton reference evaluations for numerical
-   comparison.
+   comparison.~~ **Partly done:** the stored record is bound through the
+   recovered permutation — see
+   [NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md). Proton reference
+   evaluations remain the next stage.
 
 The launcher retains the established containment (bubblewrap, no network, no
 home, pinned source snapshots, hash-verified DLL read as data, 300 s bound).
