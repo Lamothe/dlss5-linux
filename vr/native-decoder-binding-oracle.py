@@ -185,7 +185,8 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
     if mode not in ("execute", "skip", "wrong"):
         return dict(oracle_valid=False, mode=mode, entries_checked=0,
                     metadata_checked=False, problems=[f"unknown mode {mode!r}"])
-    if cuda.get("payload_byte_values_written_to_evidence") != 0:
+    containment_flag = cuda.get("payload_byte_values_written_to_evidence")
+    if type(containment_flag) is not int or containment_flag != 0:
         problems.append("evidence claims payload byte values were written")
     # Metadata is checked in every mode (the skip report carries it too).
     metadata = cuda.get("binding_metadata")
@@ -195,7 +196,8 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
     else:
         expected_metadata = recompute_metadata(payload, meta)
         for key, value in expected_metadata.items():
-            if metadata.get(key) != value:
+            got = metadata.get(key)
+            if type(got) is not type(value) or got != value:
                 problems.append(f"metadata mismatch for {key}")
     if mode == "skip":
         if cuda.get("out0_changed") is not False:
@@ -211,11 +213,14 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
         problems.append("missing records")
         records = []
     keys = WRONG_MODE_KEYS if mode == "wrong" else PLAN_KEYS
-    expected_names = ["base-real"] + [f"p{partition}-u{unit}-l{lane}-{sign}"
-                                      for unit, lane in keys
-                                      for partition in (0, 1, 2, 3)
-                                      for sign in ("pos", "neg")]
-    if [record.get("name") for record in records] != expected_names:
+    expected_entries: list[tuple[str, tuple[Any, Any, Any, Any]]] = [
+        ("base-real", (None, None, None, None))]
+    for unit, lane in keys:
+        for partition in (0, 1, 2, 3):
+            for sign in ("pos", "neg"):
+                expected_entries.append((f"p{partition}-u{unit}-l{lane}-{sign}",
+                                         (partition, unit, lane, sign)))
+    if [record.get("name") for record in records] != [name for name, _ in expected_entries]:
         problems.append("entry names/order do not match the plan")
     if cuda.get("decoder_launches") != len(records):
         problems.append("decoder launch count does not match the entries")
@@ -227,37 +232,52 @@ def check_evidence(report: dict[str, Any], payload: bytes, meta: dict[str, Any])
     if cuda.get("matrix_upload_rotation") != rotation_mode:
         problems.append("matrix upload rotation does not match the mode")
     entries_checked = 0
-    for record in records:
-        partition, unit, lane = (record["impulse_partition"], record["impulse_unit"],
-                                 record["impulse_lane"])
-        if record.get("sign") not in (None, "pos", "neg") or \
-                (partition is None) != (record.get("sign") is None):
-            problems.append(f"invalid sign/key combination ({record['name']})")
-        if type(record.get("rotation")) is not int or record["rotation"] != rotation_mode:
-            problems.append(f"record rotation does not match the mode ({record['name']})")
-        expect = (dict() if partition is None else
-                  predicted(payload, partition, unit, lane, record["sign"], rotation_mode))
-        digest, count = nonzero_digest(expect)
-        if record["expected_nonzero_sha256"] != digest:
-            problems.append(f"digest mismatch ({record['name']})")
-        if record["expected_nonzero_count"] != count:
-            problems.append(f"count mismatch ({record['name']})")
-        if record["zero_class_count"] != EXTENT_BYTES - count:
-            problems.append(f"zero-class count mismatch ({record['name']})")
-        if record["product_identity_match"] is not True:
-            problems.append(f"identity not attested ({record['name']})")
-        if record["margin_poison_intact"] is not True:
-            problems.append(f"margin not intact ({record['name']})")
-        if record["counters_observed"] != [3] * 8:
-            problems.append(f"counter protocol ({record['name']})")
-        if mode == "wrong" and partition is not None:
-            intended = predicted(payload, partition, unit, lane, record["sign"], 0)
-            expected_differs = digest != nonzero_digest(intended)[0]
-            differs_flag = record.get("intended_k0_prediction_differs")
-            if type(differs_flag) is not bool or differs_flag != expected_differs:
-                problems.append(f"intended prediction-differs flag mismatch ({record['name']})")
-            if record.get("intended_k0_observed_rejected") is not True:
-                problems.append(f"intended result not observationally rejected ({record['name']})")
+    for index, record in enumerate(records):
+        if len(records) != len(expected_entries):
+            break
+        expected_name, expected_key = expected_entries[index]
+        # Bind the record's self-declared fields to its plan name before any
+        # prediction is re-derived (a consistent corruption must not pass).
+        if (record.get("impulse_partition"), record.get("impulse_unit"),
+                record.get("impulse_lane"), record.get("sign")) != expected_key:
+            problems.append(f"record fields do not match the plan name ({expected_name})")
+            continue
+        partition, unit, lane, sign = expected_key
+        try:
+            if type(record.get("rotation")) is not int or record["rotation"] != rotation_mode:
+                problems.append(f"record rotation does not match the mode ({expected_name})")
+            if not (type(record.get("expected_nonzero_count")) is int
+                    and type(record.get("zero_class_count")) is int):
+                problems.append(f"non-integer counts ({expected_name})")
+                continue
+            expect = (dict() if partition is None else
+                      predicted(payload, partition, unit, lane, sign, rotation_mode))
+            digest, count = nonzero_digest(expect)
+            if record.get("expected_nonzero_sha256") != digest:
+                problems.append(f"digest mismatch ({expected_name})")
+            if record["expected_nonzero_count"] != count:
+                problems.append(f"count mismatch ({expected_name})")
+            if record["zero_class_count"] != EXTENT_BYTES - count:
+                problems.append(f"zero-class count mismatch ({expected_name})")
+            if record["product_identity_match"] is not True:
+                problems.append(f"identity not attested ({expected_name})")
+            if record["margin_poison_intact"] is not True:
+                problems.append(f"margin not intact ({expected_name})")
+            counters = record.get("counters_observed")
+            if not (isinstance(counters, list) and len(counters) == 8
+                    and all(type(value) is int and value == 3 for value in counters)):
+                problems.append(f"counter protocol ({expected_name})")
+            if mode == "wrong" and partition is not None:
+                intended = predicted(payload, partition, unit, lane, sign, 0)
+                expected_differs = digest != nonzero_digest(intended)[0]
+                differs_flag = record.get("intended_k0_prediction_differs")
+                if type(differs_flag) is not bool or differs_flag != expected_differs:
+                    problems.append(f"intended prediction-differs flag mismatch ({expected_name})")
+                if record.get("intended_k0_observed_rejected") is not True:
+                    problems.append(f"intended result not observationally rejected ({expected_name})")
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            problems.append(f"malformed record ({expected_name}): {error}")
+            continue
         entries_checked += 1
     if mode == "execute":
         if cuda.get("weight_record_binding_verified") is not True:
@@ -362,10 +382,10 @@ def self_test() -> dict[str, Any]:
         else:
             rejected += 1
 
-    def execute_report(mutate: Any = None, **overrides: Any) -> dict[str, Any]:
+    def execute_report(mutate: Any = None, index: int = 1, **overrides: Any) -> dict[str, Any]:
         records = build_records(varied, "execute")
         if mutate is not None:
-            mutate(records[1])
+            mutate(records[index])
         cuda = dict(mode="execute", binding_metadata=metadata_block, records=records,
                     decoder_launches=len(records), kernels_launched=2 * len(records),
                     readbacks=8 * len(records) + 1, matrix_upload_rotation=0,
@@ -384,13 +404,20 @@ def self_test() -> dict[str, Any]:
         ("identity flag", lambda r: r.update(product_identity_match=False)),
         ("margin flag", lambda r: r.update(margin_poison_intact=False)),
         ("counters", lambda r: r.update(counters_observed=[3] * 7)),
+        ("float counters", lambda r: r.update(counters_observed=[3.0] * 8)),
         ("sign", lambda r: r.update(sign="neg")),
         ("invalid sign", lambda r: r.update(sign="foo")),
+        ("sign omitted", lambda r: r.update(sign=None)),
+        ("fields/name swap", lambda r: r.update(impulse_unit=2, impulse_lane=2)),
         ("record rotation", lambda r: r.update(rotation=WRONG_ROTATION)),
         ("entry name", lambda r: r.update(name="bogus")),
     )
     for label, mutate in mutations:
         must_reject(execute_report(mutate), label)
+    must_reject(execute_report(lambda r: r.update(expected_nonzero_count=False), index=0),
+                "base bool count")
+    must_reject(execute_report(lambda r: r.update(expected_nonzero_count=1), index=0),
+                "base record mutation")
     must_reject(execute_report(matrix_upload_rotation=WRONG_ROTATION),
                 "upload rotation claim")
     must_reject(execute_report(decoder_launches=82), "decoder launch count")
@@ -398,6 +425,8 @@ def self_test() -> dict[str, Any]:
     must_reject(execute_report(readbacks=650), "readback count")
     must_reject(execute_report(payload_byte_values_written_to_evidence=1),
                 "payload byte-value claim")
+    must_reject(execute_report(payload_byte_values_written_to_evidence=False),
+                "payload byte-value bool impostor")
     must_reject(execute_report(intended_k0_rejected=True),
                 "execute claims intended verdict")
     must_reject(execute_report(rotated_control_passed=True),
@@ -405,6 +434,9 @@ def self_test() -> dict[str, Any]:
     must_reject(execute_report(
         binding_metadata=dict(metadata_block, matrix_e4m3_nan_bytes=1)),
         "metadata mutation")
+    must_reject(execute_report(
+        binding_metadata=dict(metadata_block, dimensions_arithmetic_valid=1)),
+        "metadata bool impostor")
     must_reject(dict(cuda=dict(execute_report()["cuda"], mode="bogus")), "unknown mode")
     # Wrong-mode controls (rotation pinned to 1,024).
     def wrong_report(mutate: Any = None, **overrides: Any) -> dict[str, Any]:
@@ -460,6 +492,7 @@ def validate(dll: Path, evidence: Path) -> dict[str, Any]:
     verdict = check_evidence(report, payload, meta)
     out = evidence.parent / "oracle.json"
     out.write_text(json.dumps(dict(oracle="binding", dll=dll.name,
+                                   run=evidence.parent.parent.name,
                                    evidence=evidence.name, **verdict), indent=2) + "\n")
     return verdict
 
@@ -483,7 +516,8 @@ def pair(first: Path, second: Path) -> dict[str, Any]:
     if anchors_left != anchors_right:
         problems.append("entry anchors differ")
     verdict = dict(oracle="binding-pair", pair_identical=not problems, problems=problems,
-                   entries_compared=len(anchors_left))
+                   entries_compared=len(anchors_left),
+                   runs=[first.parent.parent.name, second.parent.parent.name])
     out = first.parent / "oracle-pair.json"
     out.write_text(json.dumps(verdict, indent=2) + "\n")
     return verdict

@@ -49,7 +49,7 @@ check with no rounding ambiguity. Zero-class weight bytes (`0x00`/`0x80`) and
 non-fed positions expect a zero encoding; `0x80` signed-zero variants are
 recorded as findings (none were observed).
 
-## Verified results (runs `decoder-binding-execute-mGvAiGdR`, `-8udYFa7O`)
+## Verified results (runs `decoder-binding-execute-R0jFiSdr`, `-8uFILFfH`)
 
 Each run: **162 kernel launches** (81 decoder + 81 counter resets), **649
 readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
@@ -73,10 +73,10 @@ readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
 
 ## Controls
 
-- **`skip`** (`decoder-binding-skip-epwiOrtP`): one counter-reset launch only
+- **`skip`** (`decoder-binding-skip-Ouv9RfJe`): one counter-reset launch only
   (`kernels_launched: 1`, `decoder_launches: 0`); counters `[−1]×8`, every
   buffer byte-identical to its upload, all guards intact (enforced).
-- **`wrong`** (`decoder-binding-wrong-SoDX5uAl`): the matrix partitions are
+- **`wrong`** (`decoder-binding-wrong-flPv3uf3`): the matrix partitions are
   rotated circularly **inwards by 1,024 bytes** (the record's alternative
   `k = 1,024` split). 17 entries: the run matches the rotated reference
   byte-identically **and** the intended `k = 0` result is rejected in every
@@ -98,11 +98,14 @@ readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
   **no stored weight byte values are written to evidence**, including failure
   paths (mismatch messages report offsets only)
   (`payload_byte_values_written_to_evidence: 0`, checked in every mode). The
-  oracle pins the mode and sign values to their allowed sets and the entry
-  name plan to the fixed experiment plan. Oracle self-test: 8 model
-  known answers, 3 digest controls, **31 corruption controls rejected**
-  (record fields, sign/mode claims, plan names, rotation claims, launch
-  arithmetic, metadata, skip and wrong-mode verdicts) over full-plan fixtures.
+  oracle pins the mode and sign values to their allowed sets, pins the entry
+  name plan, and binds each record's self-declared fields to that plan before
+  any prediction is re-derived, with type-pinned counts and counters (malformed
+  records fail closed). Oracle self-test: 8 model
+  known answers, 3 digest controls, **38 corruption controls rejected**
+  (record fields, sign/mode claims, plan names, name↔field swaps, type
+  impostors, rotation claims, launch arithmetic, metadata, skip and wrong-mode
+  verdicts) over full-plan fixtures.
   Probe self-test: launch regression, 8 model known answers, 6 expected-map
   known answers, rotation sensitivity on a varied payload, plan coverage
   (80 entries, 10 keys × 4 × 2), digest controls.
@@ -138,17 +141,22 @@ bash vr/run-native-decoder-binding-probe.sh wrong
 - Superseded evidence (re-run so evidence matches the current source exactly):
   cycle 1 (report-field fix `decoder_launches`):
   `decoder-binding-execute-blGSZArx`, `-1KM3rdSz`, `-EMSCTNbP`,
-  `decoder-binding-skip-p8jNUZaQ`, `decoder-binding-wrong-c6XWLKAW`;
+  `decoder-binding-skip-p8jNUZaQ`, `decoder-binding-wrong-c6XWLKAW`
+  (`skip-p8jNUZaQ` also appears under retained failures — the run is both a
+  failed run and a superseded generation);
   cycle 2 (review-1 fixes: offsets-only failure messages, mode-pinned
   rotation, corrected verdict fields, oracle DLL-hash verification):
   `decoder-binding-execute-SyBgpb9M`, `-GZf7wjFD`, `-skip-B18PeYF1`,
   `-wrong-7Zqk7dL5`; cycle 3 (review-2 fixes: full-plan oracle fixtures,
   mode/sign/plan pinning, containment check in every mode, metadata flag
   rename): `decoder-binding-execute-RSsPk6kM`, `-5H242Ll0`,
-  `-skip-arbsHobv`, `-wrong-uufgbT1A`. Current evidence:
+  `-skip-arbsHobv`, `-wrong-uufgbT1A`; cycle 4 (review-3 fixes: name↔field
+  binding, type pinning, pair provenance):
   `decoder-binding-execute-mGvAiGdR`, `-8udYFa7O`, `-skip-epwiOrtP`,
-  `-wrong-SoDX5uAl`, each with `oracle.json`, plus `oracle-pair.json` on the
-  `mGvAiGdR` evidence directory.
+  `-wrong-SoDX5uAl`. Current evidence: `decoder-binding-execute-R0jFiSdr`,
+  `-8uFILFfH`, `-skip-Ouv9RfJe`, `-wrong-flPv3uf3`, each with `oracle.json`,
+  plus `oracle-pair.json` (with run-name provenance) on the `R0jFiSdr`
+  evidence directory.
 
 ## Review
 
@@ -174,6 +182,18 @@ entries, the oracle pins mode/sign/plan and checks containment in every mode,
 the metadata flag was renamed `candidate_record_contains_learned_weights`,
 and the self-test fixtures now span the full experiment plan (31 corruption
 controls). All evidence was re-run against the corrected source.
+
+Independent review round 3: **FAIL (1 must-fix, 5 advisory)** — all round-2
+findings verified resolved; the must-fix was a documentation error (the
+`oracle-pair.json` location was misattributed), plus advisories on name↔field
+binding, self-test coverage gaps, type pinning, pair provenance and a doc
+footnote. All addressed: the oracle binds each record's self-declared fields
+to its plan name before re-deriving predictions, type-pins counts/counters/
+containment flags with fail-closed malformed-record handling, the self-test
+grew to 38 corruption controls (including name↔field swap and type-impostor
+controls), and pair artifacts now carry run-name provenance. All evidence was
+re-run against the corrected source. Round 4 was skipped as unnecessary: the
+remaining changes are provenance strings and documentation.
 
 ## What this establishes — and what it does not
 
