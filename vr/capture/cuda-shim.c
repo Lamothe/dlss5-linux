@@ -9,7 +9,10 @@
  * The runtime looks up unsuffixed entry-point names (cuMemAlloc, cuMemcpy2D,
  * ...). cuda.h aliases several of these to *_v2 macros, so this shim undefines
  * the aliases and exports BOTH spellings, each forwarding to the same-named
- * real entry point first (identical calling convention).
+ * real entry point first. Note the historical ABI caveat: the unsuffixed
+ * driver symbols predate 64-bit sizes on some platforms, so logged sizes for
+ * those entry points can carry garbage upper register bits; forwarding is
+ * behaviour-preserving because the real callee reads the same width.
  *
  * Environment:
  *   DLSS_SHIM_REAL_LIBCUDA  absolute path of the real libcuda (auto-detected)
@@ -130,8 +133,11 @@ static pthread_mutex_t func_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ---- dedupe for memcpy dumps and snapshots ---- */
 #define MAX_DUMPS 1024
-static uint64_t dump_seen_key[MAX_DUMPS];
-static unsigned int dump_seen_count;
+typedef struct { uint64_t id; uint64_t off; } SnapshotKey;
+static SnapshotKey snapshot_seen[MAX_DUMPS];
+static unsigned int snapshot_seen_count;
+static uint64_t memcpy_seen_digest[MAX_DUMPS];
+static unsigned int memcpy_seen_count;
 static pthread_mutex_t dump_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void log_line(const char* fmt, ...) {
@@ -150,27 +156,52 @@ static void log_line(const char* fmt, ...) {
 
 static uint64_t fnv1a(const void* data, size_t size) {
     const unsigned char* p = (const unsigned char*)data;
-    uint64_t hash = 1469598103934665603ull;
+    uint64_t hash = 14695981039346656037ull;
     for (size_t i = 0; i < size; ++i) { hash ^= p[i]; hash *= 1099511628211ull; }
     return hash;
 }
 
-static int already_dumped(uint64_t key) {
+/* Returns 1 = seen before, -1 = newly recorded, 0 = table full. */
+static int snapshot_key_seen(uint64_t id, uint64_t off) {
     int found = 0;
     pthread_mutex_lock(&dump_lock);
-    for (unsigned int i = 0; i < dump_seen_count; ++i) {
-        if (dump_seen_key[i] == key) { found = 1; break; }
+    for (unsigned int i = 0; i < snapshot_seen_count; ++i) {
+        if (snapshot_seen[i].id == id && snapshot_seen[i].off == off) { found = 1; break; }
     }
-    if (!found && dump_seen_count < MAX_DUMPS) { dump_seen_key[dump_seen_count++] = key; found = -1; }
+    if (!found && snapshot_seen_count < MAX_DUMPS) {
+        snapshot_seen[snapshot_seen_count].id = id;
+        snapshot_seen[snapshot_seen_count].off = off;
+        ++snapshot_seen_count;
+        found = -1;
+    }
     pthread_mutex_unlock(&dump_lock);
-    return found; /* 1 = seen before, -1 = newly recorded, 0 = table full */
+    return found;
+}
+
+static int memcpy_digest_seen(uint64_t digest) {
+    int found = 0;
+    pthread_mutex_lock(&dump_lock);
+    for (unsigned int i = 0; i < memcpy_seen_count; ++i) {
+        if (memcpy_seen_digest[i] == digest) { found = 1; break; }
+    }
+    if (!found && memcpy_seen_count < MAX_DUMPS) {
+        memcpy_seen_digest[memcpy_seen_count++] = digest;
+        found = -1;
+    }
+    pthread_mutex_unlock(&dump_lock);
+    return found;
 }
 
 static void write_blob(const char* tag, unsigned long long id, const void* data, size_t size) {
     char path[768];
     FILE* out;
+    int written;
     if (!snapshot_dir[0]) { return; }
-    snprintf(path, sizeof(path), "%s/%s-%llu.bin", snapshot_dir, tag, id);
+    written = snprintf(path, sizeof(path), "%s/%s-%llu.bin", snapshot_dir, tag, id);
+    if (written < 0 || (size_t)written >= sizeof(path)) {
+        log_line("error|write_blob_path_too_long|%s", tag);
+        return;
+    }
     out = fopen(path, "wb");
     if (!out) { log_line("error|write_blob|%s", path); return; }
     if (size) { fwrite(data, 1, size, out); }
@@ -246,7 +277,7 @@ static void snapshot_referenced(const char* fn_name, unsigned long long launch_i
         if (value < 0x10000ull) { continue; }
         id = lookup_alloc(value, 0, &alloc_offset, &alloc_size);
         if (!id) { continue; }
-        if (already_dumped(id * 65536ull + (uint64_t)off) != -1) { continue; }
+        if (snapshot_key_seen(id, (uint64_t)off) != -1) { continue; }
         window = alloc_size - alloc_offset;
         if (window > snapshot_max) { window = snapshot_max; }
         buffer = malloc(window ? window : 1);
@@ -379,15 +410,25 @@ static void parse_extra_launch(void** extra, const unsigned char** bytes, size_t
     *bytes = NULL;
     *size = 0;
     if (!extra) { return; }
-    for (unsigned int i = 0; i < 64u; ++i) {
-        if (extra[i] == CU_LAUNCH_PARAM_END) { return; }
-        if (extra[i] == CU_LAUNCH_PARAM_BUFFER_POINTER) {
-            *bytes = (const unsigned char*)extra[++i];
-        } else if (extra[i] == CU_LAUNCH_PARAM_BUFFER_SIZE) {
-            *size = *(size_t*)extra[++i];
-        } else {
+    for (unsigned int i = 0; i < 63u; ++i) {
+        void* token = extra[i];
+        void* value;
+        if (token == CU_LAUNCH_PARAM_END) { return; }
+        if (token != CU_LAUNCH_PARAM_BUFFER_POINTER && token != CU_LAUNCH_PARAM_BUFFER_SIZE) {
             return; /* unknown token: do not walk past the end */
         }
+        value = extra[i + 1];
+        /* Malformed value slots (NULL, token, END) are never dereferenced. */
+        if (value == NULL || value == CU_LAUNCH_PARAM_END ||
+            value == CU_LAUNCH_PARAM_BUFFER_POINTER || value == CU_LAUNCH_PARAM_BUFFER_SIZE) {
+            return;
+        }
+        if (token == CU_LAUNCH_PARAM_BUFFER_POINTER) {
+            *bytes = (const unsigned char*)value;
+        } else {
+            *size = *(size_t*)value;
+        }
+        ++i;
     }
 }
 
@@ -439,7 +480,11 @@ CUresult cuModuleLoadData(CUmodule* module, const void* image) {
         memcpy(&shnum, p + 0x3C, 2);
         size = (size_t)(shoff + (uint64_t)shentsize * shnum);
         if (size && size < digest_len) { digest_len = size; }
+    } else if (p && p[0] == 0x50 && p[1] == 0xED && p[2] == 0x55 && p[3] == 0xBA) {
+        size = 0; /* CUDA fatbin magic 0xBA55ED50: extent not parsed, prefix digest only */
     }
+    /* Heuristic bound: the driver itself reads the image, so the first 256
+     * bytes of a driver-accepted image are assumed mapped. */
     log_line("cuModuleLoadData|mod=%p|image=%p|size=%zu|prefix=%02x%02x%02x%02x|prefix_fnv=0x%llx|%d",
              (void*)(module ? *module : NULL), image, size,
              p ? p[0] : 0, p ? p[1] : 0, p ? p[2] : 0, p ? p[3] : 0,
@@ -518,15 +563,19 @@ CUresult cuLaunchKernel(CUfunction f, unsigned int gx, unsigned int gy, unsigned
                                                       shared_mem_bytes, stream,
                                                       kernel_params, extra)
                                  : CUDA_ERROR_NOT_INITIALIZED;
-    pthread_mutex_lock(&log_lock);
-    launch_id = ++seq_counter;
-    fprintf(log_file, "%llu|%llu|cuLaunchKernel|fn=%s|grid=%u,%u,%u|block=%u,%u,%u|shared=%u|stream=%p|args=%zu|argc=%s|fnv=0x%llx|%d\n",
-            launch_id, (unsigned long long)pthread_self(), name, gx, gy, gz, bx, by, bz,
-            shared_mem_bytes, (void*)stream, arg_size, hex,
-            arg_bytes ? (unsigned long long)fnv1a(arg_bytes, arg_size) : 0ull, (int)result);
-    fflush(log_file);
-    pthread_mutex_unlock(&log_lock);
-    if (result == CUDA_SUCCESS && arg_bytes && arg_size) {
+    if (log_file) {
+        pthread_mutex_lock(&log_lock);
+        launch_id = ++seq_counter;
+        fprintf(log_file, "%llu|%llu|cuLaunchKernel|fn=%s|grid=%u,%u,%u|block=%u,%u,%u|shared=%u|stream=%p|args=%zu|argc=%s|fnv=0x%llx|%d\n",
+                launch_id, (unsigned long long)pthread_self(), name, gx, gy, gz, bx, by, bz,
+                shared_mem_bytes, (void*)stream, arg_size, hex,
+                arg_bytes ? (unsigned long long)fnv1a(arg_bytes, arg_size) : 0ull, (int)result);
+        fflush(log_file);
+        pthread_mutex_unlock(&log_lock);
+    } else {
+        launch_id = 0; /* transparent-forwarder mode: no logging, no snapshots */
+    }
+    if (log_file && result == CUDA_SUCCESS && arg_bytes && arg_size) {
         snapshot_referenced(name, launch_id, arg_bytes, arg_size);
     }
     return result;
@@ -569,7 +618,7 @@ static void log_memcpy(const char* direction, uint64_t dst, uint64_t src, size_t
     log_line("memcpy|%s|dst=0x%llx(dev=%llu)|src=0x%llx(host=%llu)|size=%zu|fnv=0x%llx",
              direction, (unsigned long long)dst, dst_id, (unsigned long long)src, src_id, size, digest);
     if (dump_memcpy && host_bytes && size && strncmp(direction, "HtoD", 4) == 0) {
-        if (already_dumped(digest) == -1) {
+        if (memcpy_digest_seen(digest) == -1) {
             write_blob("memcpy-h2d", (unsigned long long)digest, host_bytes, size);
         }
     }

@@ -34,21 +34,31 @@ before every evaluation; every captured RGB value is finite (validated by the
 
 | File | Bytes | FNV-1a-64 (run-a = run-b) |
 |---|---|---|
-| input-colour.bin | 4,147,200 | `71236363ed0b69b3` |
-| input-depth.bin | 2,073,600 | `d9b9cd9791df8223` |
-| input-motion.bin | 2,073,600 | `fb01942564bcb383` |
-| output-frame00.bin | 4,147,200 | `865e5c4d2e787b60` |
-| output-frame01.bin | 4,147,200 | `bd7192c090cad4cf` |
-| output-frame02.bin | 4,147,200 | `d01848c49144f93e` |
-| output-frame03.bin | 4,147,200 | `f74c825006b9ef6d` |
-| output-frame04.bin | 4,147,200 | `4f7c3081ad7580a1` |
-| output-frame05.bin | 4,147,200 | `efec5456ae7b90d8` |
-| output-frame06.bin | 4,147,200 | `c2dc1c2f42a9ae73` |
-| output-frame07.bin | 4,147,200 | `78ab395e94624add` |
+| input-colour.bin | 4,147,200 | `fb51a175911c82f5` |
+| input-depth.bin | 2,073,600 | `33533d64f7d84205` |
+| input-motion.bin | 2,073,600 | `227ea3796d10f325` |
+| output-frame00.bin | 4,147,200 | `839de3f30038880a` |
+| output-frame01.bin | 4,147,200 | `65cba335fdd167ed` |
+| output-frame02.bin | 4,147,200 | `1f5df6063c506f74` |
+| output-frame03.bin | 4,147,200 | `9997e15cd2957237` |
+| output-frame04.bin | 4,147,200 | `c49fb39331ef808f` |
+| output-frame05.bin | 4,147,200 | `be6ebbf0d7da3676` |
+| output-frame06.bin | 4,147,200 | `61050c5427b0ea49` |
+| output-frame07.bin | 4,147,200 | `bbba397b954e15eb` |
 
 Layout: tight-packed rows (RowPitch padding stripped). Formats: colour/output
 FP16×4, depth F32, motion FP16×2. `manifest.txt` in each capture records
 protocol, sizes and digests; the report tool recomputes digests from payloads.
+Digests are standard **FNV-1a-64** (offset basis `0xCBF29CE484222325`, prime
+`0x100000001B3`), verified against published known-answer vectors (empty
+string, "a", "foobar") in the Python implementation and cross-verified between
+the C and Python implementations on the captured payloads themselves (the
+report tool recomputes every manifest digest — `manifest_consistent` for
+all 22 files across run-a/run-b). Superseded
+captures `run-a-fnv-superseded`/`run-b-fnv-superseded` are retained: their
+payloads are bit-identical to the current ones (verified) but their manifests
+carry a non-standard digest from the first build of the tooling, which the
+corrected report tool rejects as inconsistent.
 
 ## Temporal behaviour (why the frame index matters)
 
@@ -70,11 +80,13 @@ The capture was preceded by instrumentation of the runtime itself:
    attribution). A host-side tracer (`vr/capture/cuda-shim.c`) was built and
    injected via `LD_PRELOAD` + `LD_LIBRARY_PATH` — it loaded (28 processes,
    transparent forwarding: the 60-frame evaluation passed unchanged) but
-   **intercepted zero CUDA calls and zero `dlsym` lookups**. The runtime's
-   entry-point table ("LoadCUDAFunctionTable", resolved via `cuGetProcAddress`
-   per its strings) therefore bypasses interposable dynamic-symbol binding
-   (PE-level resolution and glibc-versioned `dlsym` defeat the unversioned
-   hook). Recorded as failed interception evidence; the shim source is kept.
+   **intercepted zero CUDA calls and zero `dlsym` lookups**. The trace cannot
+   distinguish "no lookups occurred" from "lookups bypassed the hook"; the
+   interpretation — the runtime's entry-point table ("LoadCUDAFunctionTable",
+   resolved via `cuGetProcAddress` per its strings) uses PE-level resolution
+   and/or glibc-versioned `dlsym`, defeating the unversioned hook — is a
+   **hypothesis consistent with the evidence, not a proven mechanism**.
+   Recorded as failed interception evidence; the shim source is kept.
 
 2. **The model's own logging** (enabled via `__NGX_LOG_LEVEL`,
    `__NGX_LOG_PATH_OVERRIDE`, `__NGX_ENABLE_OVERRIDE_LOG_PATH`) is now
@@ -119,9 +131,47 @@ remain unresolved.
    Higher `__NGX_LOG_LEVEL` values are a cheap complement.
 2. **Run the comparison half of the gate**: with dispatch pinned (or native
    input→output coverage), compare one native evaluation against this
-   reference using `reference-capture-report.py --mode float` (tolerance
-   reporting per sample), pinning frame index and reset semantics.
+   reference using `reference-capture-report.py --mode float --tolerance T`
+   (per-file differing-sample counts and max absolute difference; verdict
+   `within-tolerance` when every difference is within `T`), pinning frame
+   index and reset semantics.
 
 Containment unchanged: bwrap + Proton boundaries; captures and logs stay
 local (`*.bin`, `vr/logs/` excluded from git); committed evidence is
 digests/counts/verdicts only.
+
+## Review
+
+Independent review round 1: **FAIL (4 must-fix, ~10 advisory)** — the digest
+implementations used a non-standard FNV-1a-64 offset basis (internally
+consistent but not interoperable); `cuLaunchKernel` crashed the host when
+logging was disabled (unguarded `fprintf` on a NULL `FILE*`);
+`parse_extra_launch` dereferenced unvalidated value slots and walked past
+terminators; and the documentation overstated the interposition result
+("zero dlsym lookups" claimed as fact) while promising tolerance semantics
+the tool did not implement. All addressed: standard FNV basis with
+known-answer vectors in the Python implementation and cross-implementation
+digest verification on the captured payloads, fresh captures (superseded
+captures retained, payload invariance verified); NULL-guarded launch logging;
+hardened extra-array parsing (validated value slots, bounded walk);
+split dedupe tables with full-width keys; exact Map ranges and short-write
+checks in the capture writer; manifest handle closed on every error path;
+float-mode `--tolerance` with NaN-aware comparison and a non-vacuous verdict
+guard; documentation claims narrowed to the evidence (mechanism explanation
+marked as hypothesis). Evidence re-run against the corrected source:
+probe rebuilt, `evaluate` regression passes, captures re-taken, determinism
+re-verified bit-identical (11/11 tensors), shim smoke-tested with and
+without logging.
+
+Follow-up review round 2: **all round-1 findings verified resolved**; one new
+must-fix introduced by the fixes was found — float mode silently skipped
+files with unequal payload lengths, allowing a false `within-tolerance` or
+`bit-identical` verdict on size-divergent captures. Fixed: length mismatches
+now fail the file (`length_mismatch`), partial-sample payloads are rejected
+in float comparison, and `snprintf` truncation checks were added to the
+capture path writers (advisory). The C-side known-answer wording was narrowed
+to what the evidence shows (cross-implementation verification on captured
+payloads). Round-2 re-verification: synthetic size-mismatch and tolerance
+fixtures reject correctly, the real comparison still reports bit-identical
+11/11, and probe/shim rebuild clean with -Werror. Final review outcome:
+**PASS** on the committed state.

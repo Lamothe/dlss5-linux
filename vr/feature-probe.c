@@ -36,9 +36,9 @@ int main(int argc, char** argv) {
     if (argc > 1 && !evaluate_mode && !capture_mode) {
         fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR]\n");
         return 1;
-    }
-    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
+    }    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
+    FILE* capture_manifest = NULL;
     ID3D12Device* device = NULL;
     ID3D12CommandQueue* queue = NULL;
     ID3D12CommandAllocator* allocator = NULL;
@@ -116,14 +116,16 @@ int main(int argc, char** argv) {
     }
     completed = 1;
     if (capture_mode) {
-        FILE* manifest;
         char manifest_path[512];
         CreateDirectoryA(capture_dir, NULL);
         if (!prepare_eye(device, &eyes[0], 0, allocate)) { goto cleanup; }
-        snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.txt", capture_dir);
-        manifest = fopen(manifest_path, "w");
-        if (!manifest) { fprintf(stderr, "Capture manifest open failed\n"); goto cleanup; }
-        fprintf(manifest, "protocol capture-v1 frames=%u size=%u context=eye0 inputs=gradient-stationary reset=frame0\n",
+        if (snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.txt", capture_dir) >= (int)sizeof(manifest_path)) {
+            fprintf(stderr, "Capture manifest path too long\n");
+            goto cleanup;
+        }
+        capture_manifest = fopen(manifest_path, "w");
+        if (!capture_manifest) { fprintf(stderr, "Capture manifest open failed\n"); goto cleanup; }
+        fprintf(capture_manifest, "protocol capture-v1 frames=%u size=%u context=eye0 inputs=gradient-stationary reset=frame0\n",
                 CAPTURE_FRAMES, PROBE_SIZE);
         for (unsigned int frame = 0; frame < CAPTURE_FRAMES; ++frame) {
             CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
@@ -135,7 +137,7 @@ int main(int argc, char** argv) {
             set_uint(eyes[0].params, "DLSSNR.Reset", frame == 0 ? 1u : 0u);
             result = evaluate(list, features[0], eyes[0].params);
             printf("CaptureEvaluate frame=%u result=0x%x\n", frame, result); fflush(stdout);
-            if (result != 1) { fclose(manifest); goto cleanup; }
+            if (result != 1) { goto cleanup; }
             ++eyes[0].successful_evaluations;
             record_readback(list, &eyes[0]);
             CHECK_HR(ID3D12GraphicsCommandList_Close(list));
@@ -145,13 +147,13 @@ int main(int argc, char** argv) {
             CHECK_HR(ID3D12Fence_SetEventOnCompletion(fence, (UINT64)frame + 2, event));
             if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0 || ID3D12Fence_GetCompletedValue(fence) == UINT64_MAX) {
                 fprintf(stderr, "Capture GPU completion failed\n");
-                fclose(manifest);
                 goto cleanup;
             }
             completed = 1;
-            if (!capture_dump(capture_dir, &eyes[0], frame, manifest)) { fclose(manifest); goto cleanup; }
+            if (!capture_dump(capture_dir, &eyes[0], frame, capture_manifest)) { goto cleanup; }
         }
-        fclose(manifest);
+        fclose(capture_manifest);
+        capture_manifest = NULL;
         printf("PASS: reference capture frames=%u dir=%s context=eye0\n", CAPTURE_FRAMES, capture_dir);
         fflush(stdout);
     }
@@ -208,6 +210,8 @@ int main(int argc, char** argv) {
     }
     exit_code = 0;
 cleanup:
+    // Retain partial capture evidence (the launcher rejects runs without the PASS marker).
+    if (capture_manifest) { fclose(capture_manifest); capture_manifest = NULL; }
     // If submitted work did not finish, avoid destroying resources the GPU may still use.
     if (submitted && !completed) { fflush(NULL); ExitProcess(1); }
     for (unsigned int eye = 0; eye < 2; ++eye) { if (features[eye] && (eye == 0 || features[eye] != features[0])) { release(features[eye]); } }
