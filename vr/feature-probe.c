@@ -26,12 +26,17 @@ static void set_uint(void* params, const char* key, unsigned int value) {
 #include "gpu-scene.h"
 
 int main(int argc, char** argv) {
+    int capture_mode = argc == 3 && strcmp(argv[1], "--capture") == 0;
+    const char* capture_dir = capture_mode ? argv[2] : NULL;
     int tracked_mode = argc==2 && strcmp(argv[1],"--tracked-control")==0;
     int gpu_mode = tracked_mode || (argc == 2 && strcmp(argv[1], "--gpu-scene") == 0);
     GpuScene gpu_scene = {0};
     int scene_mode = gpu_mode || (argc == 2 && strcmp(argv[1], "--scene") == 0);
     int evaluate_mode = scene_mode || (argc == 2 && strcmp(argv[1], "--evaluate") == 0);
-    if (argc > 1 && !evaluate_mode) { fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene]\n"); return 1; }
+    if (argc > 1 && !evaluate_mode && !capture_mode) {
+        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR]\n");
+        return 1;
+    }
     unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
     ID3D12Device* device = NULL;
@@ -110,6 +115,46 @@ int main(int argc, char** argv) {
         fprintf(stderr, "GPU completion failed/timed out\n"); goto cleanup;
     }
     completed = 1;
+    if (capture_mode) {
+        FILE* manifest;
+        char manifest_path[512];
+        CreateDirectoryA(capture_dir, NULL);
+        if (!prepare_eye(device, &eyes[0], 0, allocate)) { goto cleanup; }
+        snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.txt", capture_dir);
+        manifest = fopen(manifest_path, "w");
+        if (!manifest) { fprintf(stderr, "Capture manifest open failed\n"); goto cleanup; }
+        fprintf(manifest, "protocol capture-v1 frames=%u size=%u context=eye0 inputs=gradient-stationary reset=frame0\n",
+                CAPTURE_FRAMES, PROBE_SIZE);
+        for (unsigned int frame = 0; frame < CAPTURE_FRAMES; ++frame) {
+            CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
+            CHECK_HR(ID3D12GraphicsCommandList_Reset(list, allocator, NULL));
+            if (frame == 0) {
+                for (unsigned int texture = 0; texture < 3; ++texture) { upload_texture(list, &eyes[0], texture); }
+            }
+            upload_texture(list, &eyes[0], 3); // fresh NaNs each evaluation
+            set_uint(eyes[0].params, "DLSSNR.Reset", frame == 0 ? 1u : 0u);
+            result = evaluate(list, features[0], eyes[0].params);
+            printf("CaptureEvaluate frame=%u result=0x%x\n", frame, result); fflush(stdout);
+            if (result != 1) { fclose(manifest); goto cleanup; }
+            ++eyes[0].successful_evaluations;
+            record_readback(list, &eyes[0]);
+            CHECK_HR(ID3D12GraphicsCommandList_Close(list));
+            ID3D12CommandQueue_ExecuteCommandLists(queue, 1, command_lists);
+            completed = 0;
+            CHECK_HR(ID3D12CommandQueue_Signal(queue, fence, (UINT64)frame + 2));
+            CHECK_HR(ID3D12Fence_SetEventOnCompletion(fence, (UINT64)frame + 2, event));
+            if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0 || ID3D12Fence_GetCompletedValue(fence) == UINT64_MAX) {
+                fprintf(stderr, "Capture GPU completion failed\n");
+                fclose(manifest);
+                goto cleanup;
+            }
+            completed = 1;
+            if (!capture_dump(capture_dir, &eyes[0], frame, manifest)) { fclose(manifest); goto cleanup; }
+        }
+        fclose(manifest);
+        printf("PASS: reference capture frames=%u dir=%s context=eye0\n", CAPTURE_FRAMES, capture_dir);
+        fflush(stdout);
+    }
     if (evaluate_mode) {
         for (unsigned int eye = 0; eye < 2; ++eye) {
             if (!prepare_eye(device, &eyes[eye], eye, allocate)) { goto cleanup; }
@@ -184,7 +229,9 @@ cleanup:
     if (device) { ID3D12Device_Release(device); }
     // Keep model/forwarder loaded through process teardown.
     if (exit_code == 0) {
-        if (gpu_mode) {
+        if (capture_mode) {
+            printf("PASS: capture teardown complete. NOT stereo quality or GPU timing.\n");
+        } else if (gpu_mode) {
             printf("PASS: GPU scene evaluation frames=%u evaluations=%u,%u validated_rgb_outputs=%u,%u. NOT headset/stereo quality or GPU timing.\n", frame_count, eyes[0].successful_evaluations, eyes[1].successful_evaluations, eyes[0].validated_outputs, eyes[1].validated_outputs);
         } else if (scene_mode) {
             printf("PASS: rendered scene evaluation frames=%u evaluations=%u,%u validated_rgb_outputs=%u,%u. NOT headset/stereo quality or GPU timing.\n", frame_count, eyes[0].successful_evaluations, eyes[1].successful_evaluations, eyes[0].validated_outputs, eyes[1].validated_outputs);

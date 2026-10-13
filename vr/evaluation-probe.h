@@ -216,6 +216,76 @@ static int validate_readback(EyeInputs* eye, unsigned int index, unsigned int fr
     if (valid) { ++eye->validated_outputs; }
     return valid;
 }
+// Reference capture: dump tight-packed input/output tensors for vendor comparison.
+// Files: input-colour.bin (FP16x4), input-depth.bin (F32), input-motion.bin (FP16x2),
+// output-frame%02u.bin (FP16x4), manifest.txt (sizes + FNV-1a-64 digests).
+#define CAPTURE_FRAMES 8u
+static uint64_t capture_fnv(const unsigned char* data, size_t size) {
+    uint64_t hash = 1469598103934665603ull;
+    for (size_t i = 0; i < size; ++i) { hash ^= data[i]; hash *= 1099511628211ull; }
+    return hash;
+}
+static int capture_write_file(const char* dir, const char* name, ID3D12Resource* staging,
+                              const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* layout,
+                              unsigned int channels_bytes, FILE* manifest) {
+    char path[512];
+    unsigned char* mapped = NULL;
+    D3D12_RANGE range = {0, (SIZE_T)0x7fffffff};
+    unsigned char* tight = NULL;
+    FILE* out;
+    uint64_t digest;
+    size_t row_bytes = (size_t)PROBE_SIZE * channels_bytes;
+    size_t total = row_bytes * PROBE_SIZE;
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (FAILED(ID3D12Resource_Map(staging, 0, &range, (void**)&mapped))) {
+        fprintf(stderr, "Capture map failed for %s\n", name);
+        return 0;
+    }
+    tight = (unsigned char*)malloc(total);
+    if (!tight) {
+        D3D12_RANGE no_write = {0, 0};
+        ID3D12Resource_Unmap(staging, 0, &no_write);
+        return 0;
+    }
+    for (unsigned int y = 0; y < PROBE_SIZE; ++y) {
+        memcpy(tight + (size_t)y * row_bytes,
+               mapped + layout->Offset + (size_t)y * layout->Footprint.RowPitch, row_bytes);
+    }
+    {
+        D3D12_RANGE no_write = {0, 0};
+        ID3D12Resource_Unmap(staging, 0, &no_write);
+    }
+    out = fopen(path, "wb");
+    if (!out) {
+        fprintf(stderr, "Capture open failed for %s\n", name);
+        free(tight);
+        return 0;
+    }
+    fwrite(tight, 1, total, out);
+    fclose(out);
+    digest = capture_fnv(tight, total);
+    free(tight);
+    fprintf(manifest, "%s bytes=%zu fnv=0x%016llx\n", name, total, (unsigned long long)digest);
+    printf("CAPTURE file=%s bytes=%zu fnv=0x%016llx\n", name, total, (unsigned long long)digest);
+    fflush(stdout);
+    return 1;
+}
+static int capture_dump(const char* dir, EyeInputs* eye, unsigned int frame, FILE* manifest) {
+    static const unsigned int channel_bytes[PROBE_TEXTURES] = {8u, 4u, 4u, 8u};
+    static const char* input_names[3] = {"input-colour.bin", "input-depth.bin", "input-motion.bin"};
+    char output_name[64];
+    if (frame == 0) {
+        for (unsigned int texture = 0; texture < 3; ++texture) {
+            if (!capture_write_file(dir, input_names[texture], eye->uploads[texture],
+                                    &eye->layouts[texture], channel_bytes[texture], manifest)) {
+                return 0;
+            }
+        }
+    }
+    snprintf(output_name, sizeof(output_name), "output-frame%02u.bin", frame);
+    return capture_write_file(dir, output_name, eye->readback, &eye->layouts[3],
+                              channel_bytes[3], manifest);
+}
 static int destroy_eye(EyeInputs* eye, DestroyParams destroy) {
     int success = 1;
     if (eye->params) {

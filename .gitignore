@@ -17,6 +17,10 @@
 !/vr/tests/
 /vr/tests/*
 !/vr/tests/*.c
+!/vr/capture/
+/vr/capture/*
+!/vr/capture/*.c
+!/vr/capture/*.sh
 /benchmark/*
 !/benchmark/*.py
 !/benchmark/RESULTS.md

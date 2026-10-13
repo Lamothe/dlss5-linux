@@ -33,6 +33,12 @@ case "$mode" in
   gpu-scene) command='feature-probe.exe --gpu-scene > probe-output.txt 2>&1'; marker='^PASS: GPU scene evaluation frames=12 evaluations=12,12 validated_rgb_outputs=12,12\.' ;;
   scene) command='feature-probe.exe --scene > probe-output.txt 2>&1'; marker='^PASS: rendered scene evaluation frames=12 evaluations=12,12 validated_rgb_outputs=12,12\.' ;;
   evaluate) command='feature-probe.exe --evaluate > probe-output.txt 2>&1'; marker='^PASS: repeated two-context evaluation frames=60 evaluations=60,60 validated_rgb_outputs=60,60\.' ;;
+  capture)
+    label="${2:-run}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'capture label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    command="feature-probe.exe --capture capture-$label > probe-output.txt 2>&1"
+    marker='^PASS: reference capture'
+    ;;
   *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene]' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
@@ -62,3 +68,11 @@ fi
 status=0
 grep -Eq "Unhandled exception:|_wassert|unable to load native steamclient" "$ROOT/vr/logs/steam-424243.log" || status=$?
 [[ "$status" == 1 ]]
+
+# Accepted capture runs are retained under vr/logs/reference/<label>.
+if [[ "$mode" == capture ]]; then
+  mkdir -p "$ROOT/vr/logs/reference"
+  rm -rf "$ROOT/vr/logs/reference/$label"
+  mv "capture-$label" "$ROOT/vr/logs/reference/$label"
+  echo "Reference capture stored at vr/logs/reference/$label"
+fi
