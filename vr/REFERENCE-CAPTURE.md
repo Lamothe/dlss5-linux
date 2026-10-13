@@ -124,11 +124,11 @@ remain unresolved.
 
 ## Next stage
 
-1. **Pin the dispatch** with a PE-level `nvapi64.dll` QueryInterface forwarder
-   (the `nvngx.dll_nrfwd.dll` pattern): log every resolved/called NvAPI method
-   around CreateFeature/EvaluateFeature. This is the cleanest interception
-   point for the NGXCubinD3D12 path and would unlock intermediate capture.
-   Higher `__NGX_LOG_LEVEL` values are a cheap complement.
+1. ~~**Pin the dispatch**~~ — **done**: see `NVAPI-DISPATCH.md`. The dispatch
+   is `NvAPI_D3D12_LaunchCubinShader` (156 launches per evaluation) resolved
+   through `nvapi_QueryInterface` and executed by DXVK-NVAPI's cubin interop;
+   this also explains the cuda-shim negative result above (no host CUDA calls
+   exist to interpose). Remaining: launch-argument capture.
 2. **Run the comparison half of the gate**: with dispatch pinned (or native
    input→output coverage), compare one native evaluation against this
    reference using `reference-capture-report.py --mode float --tolerance T`

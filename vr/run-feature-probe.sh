@@ -15,6 +15,7 @@ if [[ "${DLSS_PROBE_CONTAINED:-0}" != 1 ]]; then
   exec bwrap "${args[@]}" env DLSS_PROBE_CONTAINED=1 bash "$ROOT/vr/run-feature-probe.sh" "$@"
 fi
 mode="${1:-create}"
+WINROOT="Z:${ROOT//\//\\}"
 case "$mode" in
   aa-corrupt) command='aa-probe.exe --bad-aa-output > probe-output.txt 2>&1'; marker='^REJECT:' ;;
   aa) command='aa-probe.exe > probe-output.txt 2>&1'; marker='^PASS: offscreen composition AA' ;;
@@ -45,15 +46,53 @@ export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
 export STEAM_COMPAT_DATA_PATH="$ROOT/vr/prefix"
 export PROTON_ENABLE_NVAPI=1
 export WINEDLLOVERRIDES='dxgi=n,b'
+# Optional tracing (see vr/NVAPI-DISPATCH.md): DLSS_NVAPI_LABEL enables the
+# nvapi64.dll QueryInterface forwarder trace (retained under
+# vr/logs/capture/nvapi-<label>.log); DLSS_NGX_LOG=1 enables the model's own
+# logging (level via DLSS_NGX_LOG_LEVEL, default 2).
+if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
+  [[ "$DLSS_NVAPI_LABEL" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'DLSS_NVAPI_LABEL must match [a-z0-9-]{1,32}' >&2; exit 2; }
+  export DLSS_NVAPI_LOG="nvapi-trace-${DLSS_NVAPI_LABEL}.log"
+  # Proton redeploys its own nvapi64.dll into the prefix at startup, so the
+  # forwarder replaces it inside the Wine session as the first command.
+  command="copy /y ${WINROOT}\\vr\\capture\\nvapi64-trace.dll C:\\windows\\system32\\nvapi64.dll >nul && $command"
+fi
+if [[ -n "${DLSS_NGX_LOG:-}" ]]; then
+  mkdir -p "$ROOT/vr/logs/capture/ngxlog"
+  export __NGX_LOG_LEVEL="${DLSS_NGX_LOG_LEVEL:-2}"
+  export __NGX_LOG_PATH_OVERRIDE="${WINROOT}\\vr\\logs\\capture\\ngxlog"
+  export __NGX_ENABLE_OVERRIDE_LOG_PATH=1
+fi
 export SteamGameId=424243 PROTON_LOG=1 PROTON_LOG_DIR="$ROOT/vr/logs"
 unset VK_INSTANCE_LAYERS MANGOHUD
 cd "$ROOT/vr/probe"
 exec 9> "$ROOT/vr/probe/run.lock"
 flock -n 9 || { echo "Probe already running" >&2; exit 1; }
 rm -f probe-output.txt "$ROOT/vr/logs/steam-424243.log"
+if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
+  rm -f "nvapi-trace-${DLSS_NVAPI_LABEL}.log"
+fi
 limit=60
 if [[ "$mode" == scene ]]; then limit=300; fi
-timeout --kill-after=5s "$limit"s "$ROOT/runtime-copy/run" -- "$ROOT/proton-copy/proton" waitforexitandrun cmd /c "$command"
+run_status=0
+timeout --kill-after=5s "$limit"s "$ROOT/runtime-copy/run" -- "$ROOT/proton-copy/proton" waitforexitandrun cmd /c "$command" || run_status=$?
+
+# Retain the NvAPI trace before any validation so failed runs keep evidence
+# (crashes and timeouts included), then propagate the run status.
+if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
+  if [[ -s "nvapi-trace-${DLSS_NVAPI_LABEL}.log" ]]; then
+    mkdir -p "$ROOT/vr/logs/capture"
+    mv "nvapi-trace-${DLSS_NVAPI_LABEL}.log" "$ROOT/vr/logs/capture/"
+    echo "NvAPI trace stored at vr/logs/capture/nvapi-trace-${DLSS_NVAPI_LABEL}.log"
+  else
+    echo 'NvAPI trace requested but missing or empty' >&2
+    exit 1
+  fi
+fi
+if [[ "$run_status" != 0 ]]; then
+  echo "Probe run failed with status $run_status" >&2
+  exit "$run_status"
+fi
 
 # cmd/Proton can return zero after an application failure. Validate evidence too.
 test -s probe-output.txt
