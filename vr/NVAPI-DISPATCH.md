@@ -120,12 +120,15 @@ fixed launches per evaluation), kernel handle lifecycle, the caller module
 and call sites, why host-CUDA interposition saw nothing, and a transparent
 tracing harness for future capture.
 
-Not established: **launch arguments** (the trampolines deliberately do not
-read them), per-launch kernel identity (which of the 97 created handles each
-of the 156 launches uses; note 97 created vs 96 destroyed — one handle is
-never destroyed, unexplained), intermediate tensors, and any native-vs-vendor
-comparison. Traces contain IDs, pointers and code addresses only — no tensor
-or weight contents. Single machine, single Proton copy, deterministic runs.
+Not established **at this stage** (all since addressed by `NVAPI-ARGS.md`,
+whose `DLSS_NVAPI_ARGS` mode reads arguments opt-in): launch arguments (the
+trampolines here deliberately do not read them), per-launch kernel identity
+(which of the 97 created handles each of the 156 launches uses; note 97
+create calls vs 96 destroyed — the args stage accounts for the difference as
+one null-parameter create),
+intermediate tensors, and any native-vs-vendor comparison. Traces from this
+stage contain IDs, pointers and code addresses only — no tensor or weight
+contents. Single machine, single Proton copy, deterministic runs.
 Binary hashes are not used as evidence: rebuilds of `nvapi64-trace.dll` are
 not byte-identical (nondeterministic linker import-thunk ordering; verified
 same section sizes with differences confined to import-thunk displacements),
@@ -133,11 +136,18 @@ so the committed evidence is source, counts and verdicts only.
 
 ## Next stage
 
-1. **Launch-argument capture** (opt-in `DLSS_NVAPI_ARGS` mode): record
-   `LaunchCubinShader` arguments (handle, grid/block dims, shared memory,
-   parameter pointer target) per call. That yields the complete per-frame
-   kernel sequence — the contract the native reconstruction needs, and the
-   mapping from the 96 handles to our recovered kernel inventory.
+**Done — see `NVAPI-ARGS.md`:** launch-argument capture (`DLSS_NVAPI_ARGS`)
+recovers the complete named 156-launch sequence, the handle→kernel mapping and
+the creation struct (block dims, shared memory, cubin pointer/size). The
+decoder launch contract recovered natively in stage 5 (`block=32,2,1`, 80-byte
+parameter block) is confirmed by the vendor's own call. The launch ABI turned
+out to be seven arguments with no name field; names come from the create
+struct, read post-call.
+
+Remaining:
+
+1. Decode the captured parameter blocks (level 2) into per-slot **buffer
+   bindings**, turning the named sequence into a data-flow graph.
 2. With that, capture **decoder-boundary intermediates** and run the
    comparison half of the gate:
    `reference-capture-report.py --mode float --tolerance T` against

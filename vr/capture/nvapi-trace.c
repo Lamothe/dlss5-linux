@@ -12,6 +12,9 @@
  *                  that log (id, caller module+RVA) before tail-jumping to
  *                  the real implementation. Argument values are NOT read;
  *                  the wrapper is behaviour-preserving for the callee.
+ *   args log     - DLSS_NVAPI_ARGS adds a second record per dispatch call,
+ *                  reading the argument slots of the two cubin interfaces
+ *                  only (see below). Default mode still reads nothing.
  *
  * The caller return address is captured per event so a trace line attributes
  * each resolve/call to its calling module and RVA (the snippet's dispatch
@@ -25,10 +28,28 @@
  *                    returned untouched.
  *   DLSS_NVAPI_WRAP  0 = log resolves only; 1 (default when logging) =
  *                    also wrap resolved entry points with call trampolines.
+ *   DLSS_NVAPI_ARGS  0/absent = no argument reads (default). 1 = decode the
+ *                    documented NvAPI_D3D12_LaunchCubinShader ABI for every
+ *                    launch and log raw argument slots for
+ *                    NvAPI_D3D12_CreateCubinComputeShaderExV2 (whose ABI is
+ *                    not published). 2 = additionally hex-dump the first
+ *                    512 bytes of each launch's parameter block. Invalid
+ *                    values, or ARGS set together with WRAP=0 or without a
+ *                    trace, fail closed (QueryInterface returns NULL).
+ *
+ * Argument reads are bounded and guarded: pointers are dereferenced only
+ * after VirtualQuery reports a committed, readable region, reads stop at the
+ * first unreadable byte, and the dumps are capped (128-byte name, 512-byte
+ * parameter block). Parameter-block contents are recorded as hex for offline
+ * analysis; the pointers inside them are never dereferenced, so no tensor or
+ * weight content is captured. Stack argument slots are always readable by
+ * construction (they are the caller's own frame).
  *
  * Everything is bounded and best-effort: failures fall back to transparent
- * forwarding and are logged where possible. The trace contains interface
- * IDs, pointers and code addresses only - no tensor or weight contents.
+ * forwarding and are logged where possible. Without DLSS_NVAPI_ARGS the trace
+ * contains interface IDs, pointers and code addresses only. ARGS mode adds
+ * kernel names and, at level 2, hex of the kernel parameter block (scalars and
+ * device pointers) - never tensor or weight contents.
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -40,8 +61,16 @@
 
 #define REAL_DLL_NAME L"nvapi64_dxvk.dll"
 #define MAX_TRAMPS 256
-#define STUB_SIZE 256
+#define STUB_SIZE 384
 #define ARENA_SIZE (MAX_TRAMPS * STUB_SIZE)
+
+/* Interfaces whose argument slots are read in ARGS mode. Launch carries the
+ * documented 12-argument ABI; the create call's V2 ABI is not published, so
+ * its slots are logged undecoded, in ABI argument order. */
+#define ID_CREATE_CUBIN_V2 0x299F5FDCu
+#define ID_LAUNCH_CUBIN 0x5C52BB86u
+#define ARGS_NAME_MAX 128
+#define ARGS_PMEM_MAX 512
 
 typedef void*(__cdecl* PFN_QI)(unsigned int);
 
@@ -50,6 +79,7 @@ static HMODULE g_self;
 static SRWLOCK g_lock = SRWLOCK_INIT;
 static HANDLE g_log = INVALID_HANDLE_VALUE;
 static int g_wrap;
+static int g_args;
 static int g_init_done;
 static uint64_t g_seq;
 
@@ -64,6 +94,8 @@ struct Tramp {
 static struct Tramp g_tramps[MAX_TRAMPS];
 static int g_ntramps;
 
+static void flush_pending_create(void);
+
 static void log_line(const char* fmt, ...) {
   char buf[512];
   va_list ap;
@@ -77,9 +109,96 @@ static void log_line(const char* fmt, ...) {
   va_start(ap, fmt);
   n += vsnprintf(buf + n, sizeof(buf) - (size_t)n, fmt, ap);
   va_end(ap);
-  if (n < 0 || n >= (int)sizeof(buf)) return;
+  if (n < 0) return;
+  if (n >= (int)sizeof(buf)) {
+    /* Never drop a record: the sequence prefix must stay contiguous or a
+     * validator would read a lost line as tampering. */
+    n = (int)sizeof(buf) - 1;
+    memcpy(buf + n - 8, " trunc=1", 8);
+  }
   buf[n++] = '\n';
   WriteFile(g_log, buf, (DWORD)n, &written, NULL);
+}
+
+/* As log_line, but with a larger buffer and truncation-safe writes: an
+ * over-long record is emitted up to the buffer limit and flagged `trunc=1`
+ * rather than dropped, so argument evidence is never silently lost. */
+static void log_line_big(const char* fmt, ...) {
+  char buf[2048];
+  va_list ap;
+  int n;
+  DWORD written = 0;
+  if (g_log == INVALID_HANDLE_VALUE) return;
+  n = snprintf(buf, sizeof(buf), "%06llu %llu %lu ",
+               (unsigned long long)g_seq++, (unsigned long long)GetTickCount64(),
+               (unsigned long)GetCurrentThreadId());
+  if (n < 0 || n >= (int)sizeof(buf)) return;
+  va_start(ap, fmt);
+  n += vsnprintf(buf + n, sizeof(buf) - (size_t)n, fmt, ap);
+  va_end(ap);
+  if (n < 0) return;
+  if (n >= (int)sizeof(buf)) {
+    n = (int)sizeof(buf) - 1;
+    memcpy(buf + n - 8, " trunc=1", 8);
+  }
+  buf[n++] = '\n';
+  WriteFile(g_log, buf, (DWORD)n, &written, NULL);
+}
+
+/* Copy at most `want` bytes out of caller-owned memory, stopping at the first
+ * unreadable byte. Returns the number of bytes copied. VirtualQuery validates
+ * every region before it is touched, so no uncommitted or write-only page is
+ * ever read. */
+static size_t safe_read(const void* src, void* dst, size_t want) {
+  const unsigned char* in = (const unsigned char*)src;
+  unsigned char* out = (unsigned char*)dst;
+  size_t done = 0;
+  if (src == NULL || dst == NULL) return 0;
+  while (done < want) {
+    MEMORY_BASIC_INFORMATION mbi;
+    unsigned char* end;
+    size_t chunk;
+    DWORD prot;
+    if (VirtualQuery(in + done, &mbi, sizeof(mbi)) != sizeof(mbi)) break;
+    if (mbi.State != MEM_COMMIT) break;
+    if (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) break;
+    prot = mbi.Protect & 0xffu;
+    if (prot != PAGE_READONLY && prot != PAGE_READWRITE && prot != PAGE_WRITECOPY &&
+        prot != PAGE_EXECUTE_READ && prot != PAGE_EXECUTE_READWRITE &&
+        prot != PAGE_EXECUTE_WRITECOPY) {
+      break;
+    }
+    end = (unsigned char*)mbi.BaseAddress + mbi.RegionSize;
+    chunk = (size_t)(end - (in + done));
+    if (chunk > want - done) chunk = want - done;
+    memcpy(out + done, in + done, chunk);
+    done += chunk;
+  }
+  return done;
+}
+
+/* Render a bounded raw string as a single whitespace-free log field:
+ * printable non-space bytes pass through, everything else becomes \xNN.
+ * Returns the number of bytes written (excluding the terminator). */
+static size_t fmt_name(char* out, size_t cap, const char* raw, size_t n) {
+  static const char hex[] = "0123456789abcdef";
+  size_t o = 0;
+  size_t i;
+  if (cap == 0) return 0;
+  for (i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)raw[i];
+    if (o + 5 >= cap) break;
+    if (c > 0x20 && c < 0x7f) {
+      out[o++] = (char)c;
+    } else {
+      out[o++] = '\\';
+      out[o++] = 'x';
+      out[o++] = hex[c >> 4];
+      out[o++] = hex[c & 15];
+    }
+  }
+  out[o] = 0;
+  return o;
 }
 
 /* Module + RVA attribution for a code address (best-effort). */
@@ -128,10 +247,187 @@ static void __cdecl tramp_logger(unsigned int id, void* ret) {
   ReleaseSRWLockExclusive(&g_lock);
 }
 
-static void* build_stub(unsigned int id, void* real) {
+/* Argument-capturing trampoline target. `saved` points at the trampoline's
+ * saved-register block: [0]=r11 [1]=r10 [2]=r9 [3]=r8 [4]=rdx [5]=rcx [6]=rax
+ * [7]=flags [8]=dup return address [9]=return address [10..21]=the caller's
+ * shadow space and stack slots. The block layout is fixed by the stub's push
+ * sequence; the generic stub does not pass it and still reads nothing.
+ *
+ * LaunchCubinShader ABI - seven arguments, pinned twice over: by DXVK-NVAPI's
+ * implementation (NvAPI_D3D12_LaunchCubinShader(pCmdList, pShader, blockX,
+ * blockY, blockZ, params, paramSize)) and by the caller's own marshalling at
+ * nvngx_dlssnr.dll+0x2404 (rcx/rdx/r8/r9 then three stack slots at
+ * [rsp+0x20..0x30]). There is no shader-name argument at launch: the name,
+ * block dimensions and shared-memory size are fixed at creation time in
+ * NVAPI_D3D12_CREATE_CUBIN_SHADER_PARAMS (a single pointer in rcx).
+ *
+ * Creation is captured with a call-style stub that reads the parameter struct
+ * after the real call returns, because hShader is an output field written by
+ * the callee; at that point the struct holds the name, cubin pointer/size,
+ * block dims and the resulting handle. The struct read is bounded and
+ * VirtualQuery-guarded; the cubin pointer is recorded but never dereferenced.
+ *
+ * Every captured call also logs its full raw slot array, so the mapping above
+ * stays checkable offline. The slots include the caller's shadow space, which
+ * is not part of the ABI and is deliberately left uninterpreted. */
+
+struct PendingCreate {
+  uint64_t struct_ptr;
+  int active; /* a create call registered and awaits its post-call read */
+};
+static struct PendingCreate g_pending;
+/* Return address of the call being processed by a call-style (post-logging)
+ * stub. Single-threaded, non-reentrant dispatch is observed and required (the
+ * report pins "all create/launch calls on one thread"); a nested create call on
+ * the same thread would corrupt the outer call's saved return. The call-style
+ * stub also cannot propagate a structured exception out of the callee: it
+ * returns status codes in this call pattern, and 97/97 creations passed the
+ * probe's own validation. See NVAPI-ARGS.md. */
+static void* g_saved_ret;
+
+/* Bounded, guarded read of NVAPI_D3D12_CREATE_CUBIN_SHADER_PARAMS (0x50). */
+static void flush_pending_create(void) {
+  unsigned char buf[0x50];
+  char namebuf[ARGS_NAME_MAX * 4];
+  uint64_t ptr;
+  size_t got, k;
+  uint64_t struct_size, device, cubin, namep, handle;
+  unsigned size, bx, by, bz, smem, flags;
+  if (!g_pending.active) return; /* no create awaiting a read-back */
+  g_pending.active = 0;
+  ptr = g_pending.struct_ptr;
+  if (ptr == 0) {
+    log_line_big("created-null");
+    return;
+  }
+  memset(buf, 0, sizeof(buf));
+  got = safe_read((const void*)(uintptr_t)ptr, buf, sizeof(buf));
+  if (got != sizeof(buf)) {
+    log_line_big("created-invalid struct=0x%016llx read=%llu",
+                 (unsigned long long)ptr, (unsigned long long)got);
+    return;
+  }
+  memcpy(&struct_size, buf + 0x00, 8);
+  memcpy(&device, buf + 0x10, 8);
+  memcpy(&cubin, buf + 0x18, 8);
+  memcpy(&size, buf + 0x20, 4);
+  memcpy(&bx, buf + 0x24, 4);
+  memcpy(&by, buf + 0x28, 4);
+  memcpy(&bz, buf + 0x2C, 4);
+  memcpy(&smem, buf + 0x30, 4);
+  memcpy(&namep, buf + 0x38, 8);
+  memcpy(&flags, buf + 0x40, 4);
+  memcpy(&handle, buf + 0x48, 8);
+  namebuf[0] = 0;
+  if (namep != 0) {
+    unsigned char rawname[ARGS_NAME_MAX + 1];
+    size_t n = safe_read((const void*)(uintptr_t)namep, rawname, ARGS_NAME_MAX);
+    k = 0;
+    while (k < n && rawname[k] != 0) k++;
+    fmt_name(namebuf, sizeof(namebuf), (const char*)rawname, k);
+  }
+  log_line_big(
+      "created struct=0x%016llx struct_size=%llu device=0x%016llx "
+      "cubin=0x%016llx cubin_size=%u block=%u,%u,%u smem=%u flags=%u "
+      "name=%s handle=0x%016llx",
+      (unsigned long long)ptr, (unsigned long long)struct_size,
+      (unsigned long long)device, (unsigned long long)cubin, size, bx, by, bz,
+      smem, flags, namebuf[0] ? namebuf : "<none>", (unsigned long long)handle);
+}
+
+/* Post-call target for the create path: the parameters are complete only now
+ * (hShader is written by the callee), so the deferred read runs here. */
+static void __cdecl tramp_post_logger(unsigned int id) {
+  AcquireSRWLockExclusive(&g_lock);
+  flush_pending_create();
+  ReleaseSRWLockExclusive(&g_lock);
+  (void)id;
+}
+
+static void __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
+  char pmem[ARGS_PMEM_MAX * 2 + 4];
+  char raw[22 * 19 + 8];
+  const uint64_t* s = (const uint64_t*)saved;
+  size_t plen = 0;
+  int pcap = 3; /* 3 = parameter dump not requested (ARGS level 1) */
+  unsigned psize = 0;
+  unsigned grid[3] = {0, 0, 0};
+  uint64_t handle = 0, params = 0, cmd = 0;
+  size_t i, o = 0;
+
+  pmem[0] = 0;
+  raw[0] = 0;
+  if (saved != NULL) {
+    for (i = 0; i < 22; i++) {
+      int n = snprintf(raw + o, sizeof(raw) - o, "%s0x%016llx", i ? "," : "",
+                       (unsigned long long)s[i]);
+      if (n <= 0 || (size_t)n >= sizeof(raw) - o) break;
+      o += (size_t)n;
+    }
+    if (id == ID_LAUNCH_CUBIN) {
+      /* Seven-argument launch ABI (see the block comment above). */
+      cmd = s[5];
+      handle = s[4];
+      grid[0] = (unsigned)s[3];
+      grid[1] = (unsigned)s[2];
+      grid[2] = (unsigned)s[14];
+      params = s[15];
+      psize = (unsigned)s[16];
+      if (g_args >= 2 && params != 0 && psize > 0) {
+        unsigned char dump[ARGS_PMEM_MAX];
+        size_t want = (size_t)psize;
+        pcap = 0; /* complete dump */
+        if (want > ARGS_PMEM_MAX) {
+          want = ARGS_PMEM_MAX;
+          pcap = 1; /* capped */
+        }
+        plen = safe_read((const void*)(uintptr_t)params, dump, want);
+        if (plen < want) pcap = 2; /* short read: unreadable tail */
+        for (i = 0; i < plen; i++) {
+          static const char hex[] = "0123456789abcdef";
+          pmem[i * 2] = hex[dump[i] >> 4];
+          pmem[i * 2 + 1] = hex[dump[i] & 15];
+        }
+        pmem[plen * 2] = 0;
+      }
+    }
+  }
+
+  AcquireSRWLockExclusive(&g_lock);
+  log_site("call", id, ret);
+  if (saved != NULL && id == ID_LAUNCH_CUBIN) {
+    log_line_big(
+        "launch id=0x%08x cmd=0x%016llx handle=0x%016llx grid=%u,%u,%u "
+        "params=0x%016llx psize=%u pn=%llu pcap=%d pmem=%s s=%s",
+        id, (unsigned long long)cmd, (unsigned long long)handle, grid[0],
+        grid[1], grid[2], (unsigned long long)params, psize,
+        (unsigned long long)plen, pcap, pmem, raw);
+  } else if (saved != NULL && id == ID_CREATE_CUBIN_V2) {
+    /* s[9] is the return-address slot the call-style stub drops; keep it so
+     * the post-call stub can return to the original caller. */
+    g_saved_ret = (void*)(uintptr_t)s[9];
+    g_pending.struct_ptr = s[5];
+    g_pending.active = 1;
+    log_line_big("createargs id=0x%08x struct=0x%016llx s=%s", id,
+                 (unsigned long long)s[5], raw);
+    if (s[5] == 0) {
+      g_pending.struct_ptr = 0; /* nothing to read back */
+    }
+  } else if (saved != NULL) {
+    log_line_big("args id=0x%08x s=%s", id, raw);
+  }
+  ReleaseSRWLockExclusive(&g_lock);
+}
+
+/* Build a trampoline stub. `logger` receives (id, return address) and, when
+ * `pass_saved` is set, a third argument pointing at the saved-register block
+ * (see tramp_args_logger). With pass_saved clear the emitted stub is
+ * byte-identical to the pre-ARGS tracer: no argument is ever touched. */
+static void* build_stub(unsigned int id, void* real, uintptr_t logger,
+                        int pass_saved, uintptr_t post_logger) {
   unsigned char* p;
   unsigned char* base;
-  size_t off_id, off_logger, off_target;
+  size_t off_id, off_logger, off_target, off_id2 = 0, off_post = 0, off_saved = 0;
   if (g_arena == NULL) {
     g_arena = (unsigned char*)VirtualAlloc(NULL, ARENA_SIZE,
                                            MEM_COMMIT | MEM_RESERVE,
@@ -167,7 +463,10 @@ static void* build_stub(unsigned int id, void* real) {
   off_id = (size_t)(p - base);
   EMIT(0, 0, 0, 0);
   EMIT(0x48, 0x8B, 0x94, 0x24, 0xC0, 0x00, 0x00, 0x00); /* mov rdx, [rsp+0xC0] */
-  EMIT(0x48, 0xB8);                   /* mov rax, tramp_logger */
+  if (pass_saved) {
+    EMIT(0x4C, 0x8D, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00); /* lea r8, [rsp+0x80] */
+  }
+  EMIT(0x48, 0xB8);                   /* mov rax, logger */
   off_logger = (size_t)(p - base);
   EMIT(0, 0, 0, 0, 0, 0, 0, 0);
   EMIT(0xFF, 0xD0);                   /* call rax */
@@ -186,27 +485,106 @@ static void* build_stub(unsigned int id, void* real) {
   EMIT(0x59);                         /* pop rcx */
   EMIT(0x58);                         /* pop rax */
   EMIT(0x9D);                         /* popfq */
-  EMIT(0x48, 0x83, 0xC4, 0x08);       /* add rsp, 8 (drop dup retaddr) */
-  EMIT(0x48, 0xB8);                   /* mov rax, real */
-  off_target = (size_t)(p - base);
-  EMIT(0, 0, 0, 0, 0, 0, 0, 0);
-  EMIT(0xFF, 0xE0);                   /* jmp rax */
+  if (post_logger == 0) {
+    EMIT(0x48, 0x83, 0xC4, 0x08);     /* add rsp, 8 (drop dup retaddr) */
+    EMIT(0x48, 0xB8);                 /* mov rax, real */
+    off_target = (size_t)(p - base);
+    EMIT(0, 0, 0, 0, 0, 0, 0, 0);
+    EMIT(0xFF, 0xE0);                 /* jmp rax */
+  } else {
+    /* Call-style stub: drop the saved return addresses (the original one was
+     * captured into g_saved_ret by the pre-call logger) so rsp is exactly the
+     * caller's pre-call value, then CALL the real entry point. Its arguments
+     * line up again because the call re-creates the same frame the original
+     * caller set up (stack arguments at [rsp_entry+0x28] and below). After it
+     * returns, run the post-call logger - creation writes hShader as an
+     * output, so the parameters can only be read at that point - and finally
+     * return to the original caller with the real return value. */
+    EMIT(0x48, 0x83, 0xC4, 0x10);     /* add rsp, 16 (drop dup + orig retaddr) */
+    EMIT(0x48, 0xB8);                 /* mov rax, real */
+    off_target = (size_t)(p - base);
+    EMIT(0, 0, 0, 0, 0, 0, 0, 0);
+    EMIT(0xFF, 0xD0);                 /* call rax */
+    EMIT(0x50);                       /* push rax (return value) */
+    EMIT(0x9C);                       /* pushfq */
+    EMIT(0x51);                       /* push rcx */
+    EMIT(0x52);                       /* push rdx */
+    EMIT(0x41, 0x50);                 /* push r8 */
+    EMIT(0x41, 0x51);                 /* push r9 */
+    EMIT(0x41, 0x52);                 /* push r10 */
+    EMIT(0x41, 0x53);                 /* push r11 */
+    EMIT(0x48, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00); /* sub rsp, 0x80 */
+    EMIT(0x0F, 0x11, 0x44, 0x24, 0x20); /* movdqu [rsp+0x20], xmm0 */
+    EMIT(0x0F, 0x11, 0x4C, 0x24, 0x30); /* movdqu [rsp+0x30], xmm1 */
+    EMIT(0x0F, 0x11, 0x54, 0x24, 0x40); /* movdqu [rsp+0x40], xmm2 */
+    EMIT(0x0F, 0x11, 0x5C, 0x24, 0x50); /* movdqu [rsp+0x50], xmm3 */
+    EMIT(0x0F, 0x11, 0x64, 0x24, 0x60); /* movdqu [rsp+0x60], xmm4 */
+    EMIT(0x0F, 0x11, 0x6C, 0x24, 0x70); /* movdqu [rsp+0x70], xmm5 */
+    EMIT(0xB9);                       /* mov ecx, id */
+    off_id2 = (size_t)(p - base);
+    EMIT(0, 0, 0, 0);
+    EMIT(0x31, 0xD2);                 /* xor edx, edx */
+    EMIT(0x4C, 0x8D, 0x84, 0x24, 0x80, 0x00, 0x00, 0x00); /* lea r8, [rsp+0x80] */
+    EMIT(0x48, 0xB8);                 /* mov rax, post_logger */
+    off_post = (size_t)(p - base);
+    EMIT(0, 0, 0, 0, 0, 0, 0, 0);
+    EMIT(0xFF, 0xD0);                 /* call rax */
+    EMIT(0x0F, 0x10, 0x44, 0x24, 0x20); /* movdqu xmm0, [rsp+0x20] */
+    EMIT(0x0F, 0x10, 0x4C, 0x24, 0x30); /* movdqu xmm1, [rsp+0x30] */
+    EMIT(0x0F, 0x10, 0x54, 0x24, 0x40); /* movdqu xmm2, [rsp+0x40] */
+    EMIT(0x0F, 0x10, 0x5C, 0x24, 0x50); /* movdqu xmm3, [rsp+0x50] */
+    EMIT(0x0F, 0x10, 0x64, 0x24, 0x60); /* movdqu xmm4, [rsp+0x60] */
+    EMIT(0x0F, 0x10, 0x6C, 0x24, 0x70); /* movdqu xmm5, [rsp+0x70] */
+    EMIT(0x48, 0x81, 0xC4, 0x80, 0x00, 0x00, 0x00); /* add rsp, 0x80 */
+    EMIT(0x41, 0x5B);                 /* pop r11 */
+    EMIT(0x41, 0x5A);                 /* pop r10 */
+    EMIT(0x41, 0x59);                 /* pop r9 */
+    EMIT(0x41, 0x58);                 /* pop r8 */
+    EMIT(0x5A);                       /* pop rdx */
+    EMIT(0x59);                       /* pop rcx */
+    EMIT(0x9D);                       /* popfq */
+    EMIT(0x58);                       /* pop rax (real return value) */
+    EMIT(0x49, 0xBB);                 /* mov r11, &g_saved_ret */
+    off_saved = (size_t)(p - base);
+    EMIT(0, 0, 0, 0, 0, 0, 0, 0);
+    EMIT(0x4D, 0x8B, 0x1B);           /* mov r11, [r11] */
+    EMIT(0x41, 0x53);                 /* push r11 */
+    EMIT(0xC3);                       /* ret */
+  }
 #undef EMIT
   if ((size_t)(p - base) > STUB_SIZE) return NULL;
   memcpy(base + off_id, &id, sizeof(id));
   {
-    uintptr_t v = (uintptr_t)&tramp_logger;
+    uintptr_t v = logger;
     memcpy(base + off_logger, &v, sizeof(v));
     v = (uintptr_t)real;
     memcpy(base + off_target, &v, sizeof(v));
+    if (post_logger != 0) {
+      v = (uintptr_t)&tramp_post_logger;
+      memcpy(base + off_post, &v, sizeof(v));
+      v = (uintptr_t)&g_saved_ret;
+      memcpy(base + off_saved, &v, sizeof(v));
+      memcpy(base + off_id2, &id, sizeof(id));
+    }
   }
   FlushInstructionCache(GetCurrentProcess(), base, STUB_SIZE);
   g_used += STUB_SIZE;
   return base;
 }
 
+/* ARGS capture policy for one interface: 0 = generic trampoline (arguments
+ * never read), 1 = decoded launch ABI, 2 = raw slots (create ABI unpublish-
+ * ed). Only the two cubin interfaces are ever read. */
+static int capture_policy(unsigned int id) {
+  if (g_args == 0) return 0;
+  if (id == ID_LAUNCH_CUBIN) return 1;      /* decoded launch ABI */
+  if (id == ID_CREATE_CUBIN_V2) return 2;   /* raw slots + post-call struct */
+  return 0;
+}
+
 static void* wrap_entry(unsigned int id, void* real) {
   void* stub;
+  int policy = capture_policy(id);
   int i;
   for (i = 0; i < g_ntramps; i++) {
     if (g_tramps[i].id == id) {
@@ -222,7 +600,11 @@ static void* wrap_entry(unsigned int id, void* real) {
     log_line("wrap-exhausted id=0x%08x", id);
     return real;
   }
-  stub = build_stub(id, real);
+  stub = build_stub(id, real,
+                    policy ? (uintptr_t)&tramp_args_logger
+                           : (uintptr_t)&tramp_logger,
+                    policy != 0,
+                    policy == 2 ? (uintptr_t)&tramp_post_logger : 0);
   if (stub == NULL) {
     log_line("wrap-failed id=0x%08x", id);
     return real;
@@ -307,6 +689,21 @@ static int ensure_init(void) {
       }
     }
   }
+  /* Argument-capture level. Parsed even when no trace is configured, so a
+   * requested capture fails closed instead of silently passing through. */
+  {
+    char argsmode[8];
+    DWORD a =
+        GetEnvironmentVariableA("DLSS_NVAPI_ARGS", argsmode, sizeof(argsmode));
+    if (a > 0) {
+      if (a < sizeof(argsmode) && argsmode[1] == 0 &&
+          (argsmode[0] == '0' || argsmode[0] == '1' || argsmode[0] == '2')) {
+        g_args = argsmode[0] - '0'; /* 0 = no argument reads, as documented */
+      } else {
+        fail = 1; /* unknown value: never silently degrade */
+      }
+    }
+  }
   n = GetEnvironmentVariableA("DLSS_NVAPI_LOG", env, sizeof(env));
   if (n > 0 && n < sizeof(env)) {
     g_log = CreateFileA(env, GENERIC_WRITE, FILE_SHARE_READ, NULL,
@@ -320,10 +717,13 @@ static int ensure_init(void) {
           wrap[0] == '0') {
         g_wrap = 0;
       }
-      log_line("init real=%p wrap=%d", (void*)g_real_qi, g_wrap);
+      log_line("init real=%p wrap=%d args=%d", (void*)g_real_qi, g_wrap, g_args);
     }
   } else if (n >= sizeof(env)) {
     fail = 1; /* truncated path: never forward without a trace */
+  }
+  if (g_args > 0 && (g_log == INVALID_HANDLE_VALUE || !g_wrap)) {
+    fail = 1; /* argument capture needs a trace and trampolines */
   }
   if (fail) g_real_qi = NULL;
   g_init_done = 1;

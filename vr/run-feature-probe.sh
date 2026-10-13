@@ -57,6 +57,18 @@ if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
   # forwarder replaces it inside the Wine session as the first command.
   command="copy /y ${WINROOT}\\vr\\capture\\nvapi64-trace.dll C:\\windows\\system32\\nvapi64.dll >nul && $command"
 fi
+# Optional launch-argument capture (see vr/NVAPI-ARGS.md): level 1 decodes the
+# LaunchCubinShader ABI, level 2 also dumps each parameter block. Level 0 (or
+# unset) reads no arguments. Needs the forwarder trace above and trampolines;
+# the DLL fails closed without them as well.
+if [[ -n "${DLSS_NVAPI_ARGS:-}" ]]; then
+  [[ "$DLSS_NVAPI_ARGS" == 0 || "$DLSS_NVAPI_ARGS" == 1 || "$DLSS_NVAPI_ARGS" == 2 ]] || { echo 'DLSS_NVAPI_ARGS must be 0, 1 or 2' >&2; exit 2; }
+  if [[ "$DLSS_NVAPI_ARGS" != 0 ]]; then
+    [[ -n "${DLSS_NVAPI_LABEL:-}" ]] || { echo 'DLSS_NVAPI_ARGS requires DLSS_NVAPI_LABEL' >&2; exit 2; }
+    [[ "${DLSS_NVAPI_WRAP:-1}" != 0 ]] || { echo 'DLSS_NVAPI_ARGS requires DLSS_NVAPI_WRAP=1' >&2; exit 2; }
+    export DLSS_NVAPI_ARGS
+  fi
+fi
 if [[ -n "${DLSS_NGX_LOG:-}" ]]; then
   mkdir -p "$ROOT/vr/logs/capture/ngxlog"
   export __NGX_LOG_LEVEL="${DLSS_NGX_LOG_LEVEL:-2}"
