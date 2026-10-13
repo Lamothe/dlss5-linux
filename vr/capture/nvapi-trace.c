@@ -15,6 +15,23 @@
  *   args log     - DLSS_NVAPI_ARGS adds a second record per dispatch call,
  *                  reading the argument slots of the two cubin interfaces
  *                  only (see below). Default mode still reads nothing.
+ *   boundary cut - DLSS_NVAPI_CUT=1 (requires ARGS level 2) turns the launch
+ *                  trampoline into a truncating gate: the launch named
+ *                  cc_dec_input_upsample_1024_512_tilesync_fp8 is forwarded
+ *                  normally and arms the window, subsequent launches are
+ *                  logged but NOT forwarded (the stub returns NVAPI_OK
+ *                  without calling the real entry point), and the window
+ *                  closes at the next cc_cb_clear launch or at a bounded
+ *                  budget of 56 withheld launches, whichever comes first.
+ *                  Each evaluation therefore executes only slots 0..99 of
+ *                  the recovered 156-launch sequence, so nothing overwrites
+ *                  the decoder boundary buffers and the harness can read
+ *                  them back after the frame completes. Each armed decoder
+ *                  launch also appends one `boundary eval=.. psize=..
+ *                  pmem=<hex>` line to DLSS_NVAPI_CUT_FILE, giving the
+ *                  harness the boundary word values directly. See the state
+ *                  machine's block comment for the exact fail-closed
+ *                  semantics.
  *
  * The caller return address is captured per event so a trace line attributes
  * each resolve/call to its calling module and RVA (the snippet's dispatch
@@ -285,6 +302,108 @@ static struct PendingCreate g_pending;
  * probe's own validation. See NVAPI-ARGS.md. */
 static void* g_saved_ret;
 
+/* Boundary-cut mode (DLSS_NVAPI_CUT). Launches are forwarded until the
+ * decoder kernel launch, withheld from there until the window closes, then
+ * forwarded again. The handle names come from the create records captured by
+ * flush_pending_create below. Implemented semantics, precisely:
+ *   - Outside a window a launch with no readable name is forwarded and can
+ *     never trigger a cut. The decoder name arms the window only when the
+ *     parameter dump is complete, a clear-kernel name is currently mapped
+ *     (cut_clear_known), and the sidecar line was written in full; every
+ *     other case logs and leaves the run uncut.
+ *   - Inside a window everything is withheld except a recognised clear
+ *     launch, which closes the window and is forwarded. A decoder-named
+ *     launch inside the window is withheld and counted as an anomaly; it
+ *     never re-arms.
+ *   - The window withholds at most CUT_DROP_BUDGET launches (the recovered
+ *     inventory's 56 post-decoder launches, anomalies included): at the
+ *     budget the window force-closes and the current launch is forwarded.
+ *     No failure mode can withhold more than one budget per window; a
+ *     repeated failure yields repeated bounded windows, which the report's
+ *     exact cut counts reject. In the pinned 156-launch inventory the
+ *     withheld set is exactly slots 100-155, and the next evaluation's
+ *     clear - named or not - arrives at the exhaustion position and is
+ *     forwarded either way.
+ * Requires ARGS level 2 and a cut file; fail closed otherwise. */
+#define CUT_DECODER_NAME "cc_dec_input_upsample_1024_512_tilesync_fp8"
+#define CUT_CLEAR_NAME "cc_cb_clear"
+#define CUT_NAME_ENTRIES 128
+#define CUT_NAME_MAX 64
+#define CUT_DROP_BUDGET 56
+struct CutNameEntry {
+  uint64_t handle;
+  char name[CUT_NAME_MAX];
+};
+static struct CutNameEntry g_names[CUT_NAME_ENTRIES];
+static int g_nnames;
+static int g_cut;          /* cut requested and armed */
+static int g_cut_dropping; /* in the dropped window after the decoder */
+static unsigned long long g_cut_window; /* launches withheld in this window */
+static unsigned long long g_cut_evals; /* decoder launches seen */
+static unsigned long long g_cut_drops; /* launches withheld */
+static HANDLE g_cut_file = INVALID_HANDLE_VALUE;
+
+/* Called under g_lock from the create post-call read. The most recent create
+ * record wins: a repeated handle whose new name is unreadable invalidates any
+ * stale name (an entry with an empty name is looked up as unknown), so a stale
+ * name can never misattribute a later launch. */
+static void cut_note_name(uint64_t handle, const char* name) {
+  int i;
+  int usable = name != NULL && name[0] != 0 && strcmp(name, "<none>") != 0;
+  for (i = 0; i < g_nnames; i++) {
+    if (g_names[i].handle == handle) break;
+  }
+  if (i == g_nnames) {
+    if (!usable) return; /* nothing known about this handle */
+    if (g_nnames >= CUT_NAME_ENTRIES) {
+      log_line("cut-name-table-full handle=0x%016llx",
+               (unsigned long long)handle);
+      return;
+    }
+    g_names[g_nnames].handle = handle;
+    g_nnames++;
+  }
+  strncpy(g_names[i].name, usable ? name : "", CUT_NAME_MAX - 1);
+  g_names[i].name[CUT_NAME_MAX - 1] = 0;
+}
+
+/* Called under g_lock. Returns NULL when the handle has no readable name. */
+static const char* cut_lookup(uint64_t handle) {
+  int i;
+  for (i = 0; i < g_nnames; i++) {
+    if (g_names[i].handle == handle) {
+      return g_names[i].name[0] ? g_names[i].name : NULL;
+    }
+  }
+  return NULL;
+}
+
+/* Called under g_lock: does any currently mapped handle belong to the clear
+ * kernel? Arming requires this: without it the window cannot be closed by
+ * name, only by the budget, and the run must stay uncut. */
+static int cut_clear_known(void) {
+  int i;
+  for (i = 0; i < g_nnames; i++) {
+    if (g_names[i].name[0] && strcmp(g_names[i].name, CUT_CLEAR_NAME) == 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* Called under g_lock: one sidecar line per decoder launch. Returns 1 only
+ * when the line was written in full: the cut never arms without it. */
+static int cut_write_boundary(uint64_t eval, unsigned psize, const char* pmem) {
+  char buf[2048];
+  DWORD written = 0;
+  int n;
+  if (g_cut_file == INVALID_HANDLE_VALUE || pmem == NULL) return 0;
+  n = snprintf(buf, sizeof(buf), "boundary eval=%llu psize=%u pmem=%s\n",
+               (unsigned long long)eval, psize, pmem);
+  if (n <= 0 || n >= (int)sizeof(buf)) return 0;
+  return WriteFile(g_cut_file, buf, (DWORD)n, &written, NULL) && written == (DWORD)n;
+}
+
 /* Bounded, guarded read of NVAPI_D3D12_CREATE_CUBIN_SHADER_PARAMS (0x50). */
 static void flush_pending_create(void) {
   unsigned char buf[0x50];
@@ -326,6 +445,7 @@ static void flush_pending_create(void) {
     while (k < n && rawname[k] != 0) k++;
     fmt_name(namebuf, sizeof(namebuf), (const char*)rawname, k);
   }
+  cut_note_name(handle, namebuf[0] ? namebuf : NULL);
   log_line_big(
       "created struct=0x%016llx struct_size=%llu device=0x%016llx "
       "cubin=0x%016llx cubin_size=%u block=%u,%u,%u smem=%u flags=%u "
@@ -344,12 +464,13 @@ static void __cdecl tramp_post_logger(unsigned int id) {
   (void)id;
 }
 
-static void __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
+static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
   char pmem[ARGS_PMEM_MAX * 2 + 4];
   char raw[22 * 19 + 8];
   const uint64_t* s = (const uint64_t*)saved;
   size_t plen = 0;
   int pcap = 3; /* 3 = parameter dump not requested (ARGS level 1) */
+  int drop = 0; /* boundary cut: 1 = withhold this launch from the callee */
   unsigned psize = 0;
   unsigned grid[3] = {0, 0, 0};
   uint64_t handle = 0, params = 0, cmd = 0;
@@ -402,6 +523,66 @@ static void __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
         id, (unsigned long long)cmd, (unsigned long long)handle, grid[0],
         grid[1], grid[2], (unsigned long long)params, psize,
         (unsigned long long)plen, pcap, pmem, raw);
+    if (g_cut) {
+      const char* kname = cut_lookup(handle);
+      int complete = (pcap == 0 && plen == psize && psize > 0);
+      int is_decoder = kname != NULL && strcmp(kname, CUT_DECODER_NAME) == 0;
+      int is_clear = kname != NULL && strcmp(kname, CUT_CLEAR_NAME) == 0;
+      if (g_cut_dropping) {
+        if (is_clear) {
+          log_line("cut-release eval=%llu window=%llu",
+                   (unsigned long long)g_cut_evals,
+                   (unsigned long long)g_cut_window);
+          g_cut_dropping = 0;
+          g_cut_window = 0;
+        } else if (is_decoder) {
+          /* Anomalous repeat inside the window: never re-arm mid-window.
+           * Counted toward the budget so the window bound stays exact. */
+          drop = 1;
+          g_cut_window++;
+          g_cut_drops++;
+          log_line("cut-anomaly decoder-inside-window handle=0x%016llx",
+                   (unsigned long long)handle);
+        } else if (g_cut_window >= CUT_DROP_BUDGET) {
+          /* Bounded window: without this a lost clear name would truncate
+           * the rest of the run. Force a release and forward again. */
+          g_cut_dropping = 0;
+          g_cut_window = 0;
+          log_line("cut-window-exhausted handle=0x%016llx",
+                   (unsigned long long)handle);
+        } else {
+          drop = 1;
+          g_cut_window++;
+          g_cut_drops++;
+          log_line("cut-drop handle=0x%016llx name=%s",
+                   (unsigned long long)handle, kname ? kname : "<unknown>");
+        }
+      } else if (is_decoder) {
+        if (!complete) {
+          /* Never cut without the boundary words: the truncated run would be
+           * unusable and silently misleading. The run stays uncut instead. */
+          log_line("cut-pmem-incomplete pcap=%d psize=%u plen=%llu", pcap,
+                   psize, (unsigned long long)plen);
+        } else if (!cut_clear_known()) {
+          /* Without a mapped clear kernel the window cannot be closed by
+           * name; never arm (the run stays uncut and the report rejects it). */
+          log_line("cut-clear-unknown handle=0x%016llx",
+                   (unsigned long long)handle);
+        } else if (cut_write_boundary(g_cut_evals, psize, pmem)) {
+          g_cut_dropping = 1;
+          g_cut_window = 0;
+          log_line("cut-armed eval=%llu handle=0x%016llx",
+                   (unsigned long long)g_cut_evals,
+                   (unsigned long long)handle);
+          g_cut_evals++;
+        } else {
+          log_line("cut-sidecar-write-failed handle=0x%016llx",
+                   (unsigned long long)handle);
+        }
+      } else if (kname == NULL) {
+        log_line("cut-unknown handle=0x%016llx", (unsigned long long)handle);
+      }
+    }
   } else if (saved != NULL && id == ID_CREATE_CUBIN_V2) {
     /* s[9] is the return-address slot the call-style stub drops; keep it so
      * the post-call stub can return to the original caller. */
@@ -417,6 +598,7 @@ static void __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
     log_line_big("args id=0x%08x s=%s", id, raw);
   }
   ReleaseSRWLockExclusive(&g_lock);
+  return drop;
 }
 
 /* Build a trampoline stub. `logger` receives (id, return address) and, when
@@ -428,6 +610,7 @@ static void* build_stub(unsigned int id, void* real, uintptr_t logger,
   unsigned char* p;
   unsigned char* base;
   size_t off_id, off_logger, off_target, off_id2 = 0, off_post = 0, off_saved = 0;
+  size_t off_drop_jmp = 0, off_drop_start = 0;
   if (g_arena == NULL) {
     g_arena = (unsigned char*)VirtualAlloc(NULL, ARENA_SIZE,
                                            MEM_COMMIT | MEM_RESERVE,
@@ -470,6 +653,13 @@ static void* build_stub(unsigned int id, void* real, uintptr_t logger,
   off_logger = (size_t)(p - base);
   EMIT(0, 0, 0, 0, 0, 0, 0, 0);
   EMIT(0xFF, 0xD0);                   /* call rax */
+  if (pass_saved && post_logger == 0) {
+    /* Logger return value decides forwarding (boundary cut): zero forwards
+     * to the real entry point, nonzero drops the call below. */
+    EMIT(0x85, 0xC0);                 /* test eax, eax */
+    EMIT(0x75, 0x00);                 /* jnz drop path (rel8 patched) */
+    off_drop_jmp = (size_t)(p - base) - 1;
+  }
   EMIT(0x0F, 0x10, 0x44, 0x24, 0x20); /* movdqu xmm0, [rsp+0x20] */
   EMIT(0x0F, 0x10, 0x4C, 0x24, 0x30); /* movdqu xmm1, [rsp+0x30] */
   EMIT(0x0F, 0x10, 0x54, 0x24, 0x40); /* movdqu xmm2, [rsp+0x40] */
@@ -491,6 +681,31 @@ static void* build_stub(unsigned int id, void* real, uintptr_t logger,
     off_target = (size_t)(p - base);
     EMIT(0, 0, 0, 0, 0, 0, 0, 0);
     EMIT(0xFF, 0xE0);                 /* jmp rax */
+    if (pass_saved) {
+      /* Drop path (boundary cut): the same volatile-register restore as the
+       * forward path, then return NVAPI_OK to the original caller without
+       * ever reaching the real entry point. The caller observes a successful
+       * launch that was never dispatched. */
+      off_drop_start = (size_t)(p - base);
+      EMIT(0x0F, 0x10, 0x44, 0x24, 0x20); /* movdqu xmm0, [rsp+0x20] */
+      EMIT(0x0F, 0x10, 0x4C, 0x24, 0x30);
+      EMIT(0x0F, 0x10, 0x54, 0x24, 0x40);
+      EMIT(0x0F, 0x10, 0x5C, 0x24, 0x50);
+      EMIT(0x0F, 0x10, 0x64, 0x24, 0x60);
+      EMIT(0x0F, 0x10, 0x6C, 0x24, 0x70);
+      EMIT(0x48, 0x81, 0xC4, 0x80, 0x00, 0x00, 0x00); /* add rsp, 0x80 */
+      EMIT(0x41, 0x5B);               /* pop r11 */
+      EMIT(0x41, 0x5A);               /* pop r10 */
+      EMIT(0x41, 0x59);               /* pop r9 */
+      EMIT(0x41, 0x58);               /* pop r8 */
+      EMIT(0x5A);                     /* pop rdx */
+      EMIT(0x59);                     /* pop rcx */
+      EMIT(0x58);                     /* pop rax */
+      EMIT(0x9D);                     /* popfq */
+      EMIT(0x48, 0x83, 0xC4, 0x08);   /* add rsp, 8 (drop dup retaddr) */
+      EMIT(0x31, 0xC0);               /* xor eax, eax (NVAPI_OK) */
+      EMIT(0xC3);                     /* ret */
+    }
   } else {
     /* Call-style stub: drop the saved return addresses (the original one was
      * captured into g_saved_ret by the pre-call logger) so rsp is exactly the
@@ -553,6 +768,11 @@ static void* build_stub(unsigned int id, void* real, uintptr_t logger,
   }
 #undef EMIT
   if ((size_t)(p - base) > STUB_SIZE) return NULL;
+  if (off_drop_jmp != 0) {
+    size_t rel = off_drop_start - (off_drop_jmp + 1);
+    if (off_drop_start == 0 || rel > 127) return NULL;
+    base[off_drop_jmp] = (unsigned char)rel;
+  }
   memcpy(base + off_id, &id, sizeof(id));
   {
     uintptr_t v = logger;
@@ -724,6 +944,37 @@ static int ensure_init(void) {
   }
   if (g_args > 0 && (g_log == INVALID_HANDLE_VALUE || !g_wrap)) {
     fail = 1; /* argument capture needs a trace and trampolines */
+  }
+  /* Boundary-cut mode: needs full parameter dumps (ARGS level 2) so the
+   * sidecar can carry the boundary words, plus the trace and trampolines. */
+  {
+    char cutmode[8];
+    DWORD c =
+        GetEnvironmentVariableA("DLSS_NVAPI_CUT", cutmode, sizeof(cutmode));
+    if (c > 0) {
+      if (c < sizeof(cutmode) && cutmode[1] == 0 &&
+          (cutmode[0] == '0' || cutmode[0] == '1')) {
+        g_cut = cutmode[0] - '0'; /* 0 = no truncation, like ARGS level 0 */
+      } else {
+        fail = 1; /* unknown value: never silently degrade */
+      }
+    }
+    if (g_cut) {
+      char path[MAX_PATH];
+      DWORD f =
+          GetEnvironmentVariableA("DLSS_NVAPI_CUT_FILE", path, sizeof(path));
+      if (f == 0 || f >= sizeof(path)) {
+        fail = 1; /* never cut without recording the boundary words */
+      } else {
+        g_cut_file = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (g_cut_file == INVALID_HANDLE_VALUE) fail = 1;
+      }
+      if (g_args < 2 || g_log == INVALID_HANDLE_VALUE || !g_wrap) fail = 1;
+    }
+    if (g_log != INVALID_HANDLE_VALUE) {
+      log_line("cut-init armed=%d evals=0 drops=0", g_cut);
+    }
   }
   if (fail) g_real_qi = NULL;
   g_init_done = 1;

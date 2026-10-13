@@ -40,6 +40,19 @@ case "$mode" in
     command="feature-probe.exe --capture capture-$label > probe-output.txt 2>&1"
     marker='^PASS: reference capture'
     ;;
+  boundary)
+    # Decoder-boundary intermediate capture (see vr/DECODER-BOUNDARY.md): the
+    # forwarder truncates every evaluation after the decoder launch and writes
+    # the boundary words to DLSS_NVAPI_CUT_FILE, which the harness reads back.
+    label="${2:-run}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'boundary label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    command="feature-probe.exe --capture-boundary capture-boundary-$label > probe-output.txt 2>&1"
+    marker='^PASS: boundary capture'
+    export DLSS_NVAPI_LABEL="${DLSS_NVAPI_LABEL:-boundary-$label}"
+    export DLSS_NVAPI_ARGS=2
+    export DLSS_NVAPI_CUT=1
+    export DLSS_NVAPI_CUT_FILE="nvapi-boundary-$label.txt"
+    ;;
   *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene]' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
@@ -84,6 +97,9 @@ rm -f probe-output.txt "$ROOT/vr/logs/steam-424243.log"
 if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
   rm -f "nvapi-trace-${DLSS_NVAPI_LABEL}.log"
 fi
+if [[ "$mode" == boundary ]]; then
+  rm -f "nvapi-boundary-$label.txt"
+fi
 limit=60
 if [[ "$mode" == scene ]]; then limit=300; fi
 run_status=0
@@ -126,4 +142,19 @@ if [[ "$mode" == capture ]]; then
   rm -rf "$ROOT/vr/logs/reference/$label"
   mv "capture-$label" "$ROOT/vr/logs/reference/$label"
   echo "Reference capture stored at vr/logs/reference/$label"
+fi
+
+# Boundary captures are retained under vr/logs/boundary/<label> together with
+# the forwarder's sidecar (the boundary words the harness resolved).
+if [[ "$mode" == boundary ]]; then
+  mkdir -p "$ROOT/vr/logs/boundary"
+  rm -rf "$ROOT/vr/logs/boundary/$label"
+  mv "capture-boundary-$label" "$ROOT/vr/logs/boundary/$label"
+  if [[ -s "nvapi-boundary-$label.txt" ]]; then
+    mv "nvapi-boundary-$label.txt" "$ROOT/vr/logs/boundary/$label/boundary-va.txt"
+  else
+    echo 'Boundary sidecar missing or empty' >&2
+    exit 1
+  fi
+  echo "Boundary capture stored at vr/logs/boundary/$label"
 fi

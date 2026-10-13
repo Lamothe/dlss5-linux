@@ -22,19 +22,22 @@ static void set_uint(void* params, const char* key, unsigned int value) {
 }
 
 #include "evaluation-probe.h"
+#include "boundary-probe.h"
 #include "scene-probe.h"
 #include "gpu-scene.h"
 
 int main(int argc, char** argv) {
     int capture_mode = argc == 3 && strcmp(argv[1], "--capture") == 0;
     const char* capture_dir = capture_mode ? argv[2] : NULL;
+    int boundary_mode = argc == 3 && strcmp(argv[1], "--capture-boundary") == 0;
+    const char* boundary_dir = boundary_mode ? argv[2] : NULL;
     int tracked_mode = argc==2 && strcmp(argv[1],"--tracked-control")==0;
     int gpu_mode = tracked_mode || (argc == 2 && strcmp(argv[1], "--gpu-scene") == 0);
     GpuScene gpu_scene = {0};
     int scene_mode = gpu_mode || (argc == 2 && strcmp(argv[1], "--scene") == 0);
     int evaluate_mode = scene_mode || (argc == 2 && strcmp(argv[1], "--evaluate") == 0);
-    if (argc > 1 && !evaluate_mode && !capture_mode) {
-        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR]\n");
+    if (argc > 1 && !evaluate_mode && !capture_mode && !boundary_mode) {
+        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-boundary DIR]\n");
         return 1;
     }    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
@@ -73,6 +76,7 @@ int main(int argc, char** argv) {
     }
 #define CHECK_HR(call) do { HRESULT hr = (call); if (FAILED(hr)) { fprintf(stderr, "%s => HRESULT 0x%08lx\n", #call, (unsigned long)hr); goto cleanup; } } while (0)
     CHECK_HR(D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void**)&device));
+    if (boundary_mode) { boundary_install(device); }
     D3D12_COMMAND_QUEUE_DESC queue_desc = {0};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     CHECK_HR(ID3D12Device_CreateCommandQueue(device, &queue_desc, &IID_ID3D12CommandQueue, (void**)&queue));
@@ -157,6 +161,44 @@ int main(int argc, char** argv) {
         printf("PASS: reference capture frames=%u dir=%s context=eye0\n", CAPTURE_FRAMES, capture_dir);
         fflush(stdout);
     }
+    if (boundary_mode) {
+        char manifest_path[512];
+        BoundaryContext boundary = {0};
+        CreateDirectoryA(boundary_dir, NULL);
+        if (!prepare_eye(device, &eyes[0], 0, allocate)) { goto cleanup; }
+        if (snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.txt", boundary_dir) >= (int)sizeof(manifest_path)) {
+            fprintf(stderr, "Boundary manifest path too long\n");
+            goto cleanup;
+        }
+        capture_manifest = fopen(manifest_path, "w");
+        if (!capture_manifest) { fprintf(stderr, "Boundary manifest open failed\n"); goto cleanup; }
+        fprintf(capture_manifest, "protocol boundary-capture-v1 frames=%u size=%u context=eye0 window=%llu words=%u\n",
+                BOUNDARY_FRAMES, PROBE_SIZE, (unsigned long long)BOUNDARY_WINDOW, BOUNDARY_WORDS);
+        boundary.device = device;
+        boundary.queue = queue;
+        boundary.allocator = allocator;
+        boundary.list = list;
+        boundary.fence = fence;
+        boundary.event = event;
+        boundary.eye = &eyes[0];
+        boundary.evaluate = evaluate;
+        boundary.feature = features[0];
+        boundary.dir = boundary_dir;
+        boundary.manifest = capture_manifest;
+        boundary.sidecar = getenv("DLSS_NVAPI_CUT_FILE");
+        boundary.submitted = &submitted;
+        boundary.completed = &completed;
+        if (!boundary.sidecar) {
+            fprintf(stderr, "DLSS_NVAPI_CUT_FILE not set: no boundary words available\n");
+            goto cleanup;
+        }
+        if (!boundary_run(&boundary)) { goto cleanup; }
+        fclose(capture_manifest);
+        capture_manifest = NULL;
+        printf("PASS: boundary capture frames=%u words=%u dir=%s context=eye0\n",
+               BOUNDARY_FRAMES, BOUNDARY_WORDS, boundary_dir);
+        fflush(stdout);
+    }
     if (evaluate_mode) {
         for (unsigned int eye = 0; eye < 2; ++eye) {
             if (!prepare_eye(device, &eyes[eye], eye, allocate)) { goto cleanup; }
@@ -235,6 +277,8 @@ cleanup:
     if (exit_code == 0) {
         if (capture_mode) {
             printf("PASS: capture teardown complete. NOT stereo quality or GPU timing.\n");
+        } else if (boundary_mode) {
+            printf("PASS: boundary teardown complete. NOT stereo quality or GPU timing.\n");
         } else if (gpu_mode) {
             printf("PASS: GPU scene evaluation frames=%u evaluations=%u,%u validated_rgb_outputs=%u,%u. NOT headset/stereo quality or GPU timing.\n", frame_count, eyes[0].successful_evaluations, eyes[1].successful_evaluations, eyes[0].validated_outputs, eyes[1].validated_outputs);
         } else if (scene_mode) {
