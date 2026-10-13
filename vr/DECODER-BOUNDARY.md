@@ -187,7 +187,9 @@ tools/zig-x86_64-linux-0.15.2/zig cc -target x86_64-windows-gnu -std=c11 -Wall -
 
 ## Next
 
-The stage-3 comparison is now unblocked and fully specified: run the native
+**Completed 14/10/2026:** the stage-3 comparison ran and matches byte-for-byte
+— see [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md). (Original plan
+text follows.) The stage-3 comparison is now unblocked and fully specified: run the native
 decoder (`native-decoder-launch-probe.py` machinery, real weights now
 confirmed) with **captured words 0/1 as inputs and the captured weights**, and
 compare against **captured word 2**. A bit-exact or tolerance-bounded match
