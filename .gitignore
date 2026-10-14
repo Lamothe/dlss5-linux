@@ -9,6 +9,7 @@
 !/benchmark/
 /vr/*
 !/vr/*.c
+!/vr/*.cpp
 !/vr/*.h
 !/vr/*.hlsl
 !/vr/*.py
@@ -17,6 +18,7 @@
 !/vr/tests/
 /vr/tests/*
 !/vr/tests/*.c
+!/vr/tests/*.py
 !/vr/capture/
 /vr/capture/*
 !/vr/capture/*.c
