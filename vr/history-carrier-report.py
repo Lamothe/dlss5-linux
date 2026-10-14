@@ -1196,6 +1196,19 @@ def self_test():
         def c_counter_short(root, trace):
             write_counter_trace(trace, [0, 1, 2, 3])
 
+        def c_counter_blob(root, trace):
+            # Eval 0's slot-1 blob is one word short of the counter word: the
+            # per-blob length check must reject it. Eval 0 is chosen because
+            # its counter value is 0 — a silent short read would also yield 0,
+            # so only the raise can make this control fail.
+            p = os.path.join(root, "counter-trace.log")
+            lines = open(p, encoding="utf-8").read().splitlines()
+            pmem = bytearray(25 * 8)
+            lines[1] = ("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
+                        "params=0x3 psize=%d pn=%d pcap=0 pmem=%s"
+                        % (len(pmem), len(pmem), pmem.hex()))
+            open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+
         def c_input(root, trace):
             # Cross-run input drift: not covered by any pair/anchor relation.
             mutate(root, "hist-replay", "input-colour.bin", flip)
@@ -1284,6 +1297,7 @@ def self_test():
         control("injreset-not-ignored", c_injreset_effect, "injectreset-not-ignored")
         control("counter-not-reset", c_counter, "counter-reset-mismatch")
         control("counter-trace-short", c_counter_short, "counter-reset-mismatch")
+        control("counter-blob-short", c_counter_blob, "counter-reset-mismatch")
         control("input-drifted", c_input, "input-mismatch")
         control("counter-anchor-broken", c_counter_anchor, "counter-anchor-mismatch",
                 counter_anchor=0xDEADBEEF)
