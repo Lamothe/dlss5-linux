@@ -68,12 +68,13 @@ exhaustive partition (`SCAN_PINS`, verified by `scan-mismatch` in `validate`):
 multi-valued position pinned as (position, distinct count, FNV of its full
 120-eval value sequence). Of the multi-valued positions only **slot 1,
 word 25** varies *per frame*: the frame counter (60 values across the 120
-evals, incrementing once per frame — the sequence is digest-pinned, so that
-reading is machine-checked). The other four — slot 1 words 1–2 and the
-identical slot 154 words 11–12 (pinned as `multi_shared`) — are one
-lazily initialised parameter pair **shared verbatim between the two launches**:
-zero at evals 0–1, then per-eye constants from eval 2 (the two eyes' values
-differ by 2). A traced `capture-reset` run shows the counter sequence
+evals — the sequence is digest-frozen, and this reading of it is cross-checked
+by the 8-eval counter check below). The other four — slot 1 words 1–2 and the
+identical slot 154 words 11–12 (the duplication is machine-checked as
+`multi_shared`) — are one lazily initialised parameter pair **shared verbatim
+between the two launches**, read from the frozen sequences as: zero at evals
+0–1, then per-eye constants from eval 2 (the two eyes' values differ by 2).
+A traced `capture-reset` run shows the counter sequence
 **`[0,1,2,3,0,1,2,3]`** across a mid-stream reset at frame 4: the counter is
 the frame index since the last `DLSSNR.Reset`.
 

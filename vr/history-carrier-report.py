@@ -10,7 +10,7 @@ frame-counter result. Usage:
   python3 vr/history-carrier-report.py validate [root]
   python3 vr/history-carrier-report.py self-test
 
-Validate walks the nine runs, recomputes every digest from the bytes on disk,
+Validate walks the ten runs, recomputes every digest from the bytes on disk,
 and checks the pinned relationships. Self-test builds a small synthetic fixture
 (same relationships, 4x4 files) and asserts that each named corruption control
 fails with its pinned check (exactly, where isolation is achievable).
@@ -260,8 +260,10 @@ SCAN_PINS = {
     # Three or more values, pinned as (position, distinct count, FNV of the
     # full 120-eval value sequence): the frame counter plus one lazily
     # initialised per-eye parameter pair that slot 1 and slot 154 share
-    # verbatim (see multi_shared). The sequence digests make readings like
-    # "increments once per frame" machine-checkable, not just observations.
+    # verbatim (see multi_shared). The sequence digests *freeze* the sequences
+    # (any change breaks the pins); property readings of them (per-frame
+    # increments, initialisation boundaries) are manual observations of the
+    # anchored dump, except the duplication, which multi_shared checks.
     "multi_valued": [((1, 1), 3, 0x3d4683fc9575b86b),
                      ((1, 2), 3, 0xc4a62105b7292f2b),
                      ((1, 25), 60, 0x6214fb4e0df33be5),
@@ -364,16 +366,17 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
             else:
                 nonaddr_lazy += 1
     # Multi-valued positions carry a digest of their full value sequence, so
-    # pinned claims about the sequences (per-frame increments, initialisation
-    # boundaries) are machine-checkable rather than readings of the dump.
-    multi_seqs = {}
-    for pos, count, seq_bytes in multi:
-        multi_seqs[pos] = seq_bytes
+    # the sequences are frozen against the anchored dump (any change breaks
+    # the pins). Shared pairs are detected by digest equality — i.e. subject
+    # to FNV-64 collision resistance, not literal byte comparison.
+    multi_digests = {}
+    for pos, count, seq_digest in multi:
+        multi_digests[pos] = seq_digest
     shared = []
     positions = [m[0] for m in multi]
     for i, a in enumerate(positions):
         for b in positions[i + 1:]:
-            if multi_seqs[a] == multi_seqs[b]:
+            if multi_digests[a] == multi_digests[b]:
                 shared.append((a, b))
     return {
         "total_words": total,
@@ -694,7 +697,7 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
                 fail("counter-anchor-mismatch", str(exc))
         try:
             seq = counter_sequence(counter_trace)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, IndexError) as exc:
             fail("counter-reset-mismatch", str(exc))
         else:
             if seq != [0, 1, 2, 3, 0, 1, 2, 3]:
@@ -725,7 +728,7 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
                 fail("scan-mismatch", str(exc))
         try:
             got = scan_trace(scan_trace_path, scan_evals, eye_fn, slots=scan_slots)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, IndexError) as exc:
             fail("scan-mismatch", str(exc))
         else:
             if not pins:
@@ -1206,15 +1209,16 @@ def self_test():
             open(p, "w", encoding="utf-8").write(s)
 
         def c_scan_ragged(root, trace):
-            # One eval's slot shrinks from 4 to 3 words: scan_trace must
-            # reject the ragged slot rather than classify it (anchor disabled
-            # so only the raise path can fire).
+            # Eval 1's slot 1 shrinks from 4 words to 3, keeping its first
+            # three words verbatim. The dropped word is constant zero in every
+            # eval and out-of-range slices read as zero, so all 12 positions
+            # classify identically: only the ragged-slot raise can fire.
             p = os.path.join(root, "scan-trace.log")
             lines = open(p, encoding="utf-8").read().splitlines()
-            pmem = bytearray(3 * 8)
-            lines[3] = ("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
-                        "params=0x3 psize=%d pn=%d pcap=0 pmem=%s"
-                        % (len(pmem), len(pmem), pmem.hex()))
+            pmem_hex = lines[4][lines[4].index("pmem=") + len("pmem="):]
+            lines[4] = ("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
+                        "params=0x3 psize=24 pn=24 pcap=0 pmem=%s"
+                        % pmem_hex[:48])
             open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 
         def c_scan_pmem_size(root, trace):
