@@ -697,7 +697,11 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
                 fail("counter-anchor-mismatch", str(exc))
         try:
             seq = counter_sequence(counter_trace)
-        except (ValueError, OSError, IndexError) as exc:
+        except (ValueError, OSError) as exc:
+            # Bare IndexError deliberately escapes (caught and reported by
+            # the self-test control runner): it can only mean a check above
+            # was deleted — a tool bug must fail the control loudly, not be
+            # rebranded as evidence corruption.
             fail("counter-reset-mismatch", str(exc))
         else:
             if seq != [0, 1, 2, 3, 0, 1, 2, 3]:
@@ -728,7 +732,9 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
                 fail("scan-mismatch", str(exc))
         try:
             got = scan_trace(scan_trace_path, scan_evals, eye_fn, slots=scan_slots)
-        except (ValueError, OSError, IndexError) as exc:
+        except (ValueError, OSError) as exc:
+            # As above: bare IndexError escapes to the control runner so a
+            # deleted scan check cannot hide behind a catch-all.
             fail("scan-mismatch", str(exc))
         else:
             if not pins:
@@ -1016,7 +1022,13 @@ def self_test():
             kw.update(scan_kwargs)
             kw["scan_trace_path"] = os.path.join(root, "scan-trace.log")
             kw.update(vkw)
-            got, _ = validate(root, FIXTURE_SIZES, fixture_anchors, **kw)
+            try:
+                got, _ = validate(root, FIXTURE_SIZES, fixture_anchors, **kw)
+            except Exception as exc:  # tool bug (e.g. a deleted check raising)
+                problems.append(name)
+                print("FAIL %-26s crashed: %r" % (name, exc))
+                shutil.rmtree(root)
+                return
             checks_seen.update(got)
             ok = expect in got and (got == [expect] if isolated else True)
             if not ok:
