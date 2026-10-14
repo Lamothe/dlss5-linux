@@ -337,6 +337,18 @@ struct CutNameEntry {
 static struct CutNameEntry g_names[CUT_NAME_ENTRIES];
 static int g_nnames;
 static int g_cut;          /* cut requested and armed */
+/* Index-based cut (DLSS_NVAPI_CUT_AT): arm at recovered slot N of the
+ * evaluation instead of at a kernel name, so any stage boundary can be
+ * captured. The evaluation window opens with the clear kernel (recovered
+ * slot 0 of the 156-launch inventory, NVAPI-ARGS.md), so slots are counted
+ * from it. g_cut_at stays -1 for the original name-anchored mode, whose
+ * behaviour is unchanged: it arms only on the decoder name, withholds the
+ * recovered 56 post-decoder launches and treats a decoder name inside the
+ * window as an anomaly. In index mode those three rules become "arm at
+ * slot N", "budget 155 - N" and "no name-based anomaly", respectively. */
+static long g_cut_at = -1;
+static unsigned long long g_cut_slot; /* slot of the current launch */
+static int g_cut_started;             /* a clear kernel has been seen */
 static int g_cut_dropping; /* in the dropped window after the decoder */
 static unsigned long long g_cut_window; /* launches withheld in this window */
 static unsigned long long g_cut_evals; /* decoder launches seen */
@@ -528,6 +540,25 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
       int complete = (pcap == 0 && plen == psize && psize > 0);
       int is_decoder = kname != NULL && strcmp(kname, CUT_DECODER_NAME) == 0;
       int is_clear = kname != NULL && strcmp(kname, CUT_CLEAR_NAME) == 0;
+      unsigned long long budget;
+      int at_boundary;
+      /* Slot accounting: the clear kernel opens an evaluation at slot 0.
+       * Without a seen clear there is no evaluation boundary to index from,
+       * so index mode never arms (the run stays uncut). */
+      if (is_clear) {
+        g_cut_slot = 0;
+        g_cut_started = 1;
+      } else if (g_cut_started) {
+        g_cut_slot++;
+      }
+      /* The recovered inventory has 156 launches (slots 0..155): everything
+       * after slot g_cut_at is withheld, and no window can exceed that. */
+      budget = (g_cut_at >= 0)
+                   ? (155ull - (unsigned long long)g_cut_at)
+                   : (unsigned long long)CUT_DROP_BUDGET;
+      at_boundary = (g_cut_at >= 0) ? (g_cut_started &&
+                                       (unsigned long long)g_cut_at == g_cut_slot)
+                                    : is_decoder;
       if (g_cut_dropping) {
         if (is_clear) {
           log_line("cut-release eval=%llu window=%llu",
@@ -535,7 +566,7 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
                    (unsigned long long)g_cut_window);
           g_cut_dropping = 0;
           g_cut_window = 0;
-        } else if (is_decoder) {
+        } else if (is_decoder && g_cut_at < 0) {
           /* Anomalous repeat inside the window: never re-arm mid-window.
            * Counted toward the budget so the window bound stays exact. */
           drop = 1;
@@ -543,7 +574,7 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
           g_cut_drops++;
           log_line("cut-anomaly decoder-inside-window handle=0x%016llx",
                    (unsigned long long)handle);
-        } else if (g_cut_window >= CUT_DROP_BUDGET) {
+        } else if (g_cut_window >= budget) {
           /* Bounded window: without this a lost clear name would truncate
            * the rest of the run. Force a release and forward again. */
           g_cut_dropping = 0;
@@ -557,7 +588,7 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
           log_line("cut-drop handle=0x%016llx name=%s",
                    (unsigned long long)handle, kname ? kname : "<unknown>");
         }
-      } else if (is_decoder) {
+      } else if (at_boundary) {
         if (!complete) {
           /* Never cut without the boundary words: the truncated run would be
            * unusable and silently misleading. The run stays uncut instead. */
@@ -571,6 +602,9 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
         } else if (cut_write_boundary(g_cut_evals, psize, pmem)) {
           g_cut_dropping = 1;
           g_cut_window = 0;
+          log_line("cut-boundary eval=%llu slot=%llu psize=%u",
+                   (unsigned long long)g_cut_evals,
+                   (unsigned long long)g_cut_slot, psize);
           log_line("cut-armed eval=%llu handle=0x%016llx",
                    (unsigned long long)g_cut_evals,
                    (unsigned long long)handle);
@@ -579,7 +613,7 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
           log_line("cut-sidecar-write-failed handle=0x%016llx",
                    (unsigned long long)handle);
         }
-      } else if (kname == NULL) {
+      } else if (kname == NULL && g_cut_at < 0) {
         log_line("cut-unknown handle=0x%016llx", (unsigned long long)handle);
       }
     }
@@ -948,13 +982,39 @@ static int ensure_init(void) {
   /* Boundary-cut mode: needs full parameter dumps (ARGS level 2) so the
    * sidecar can carry the boundary words, plus the trace and trampolines. */
   {
+    /* Index-based cut point: decimal slot 0..155 (the whole recovered
+     * inventory). Anything else fails the whole run closed rather than
+     * silently degrading to a wrong boundary. */
+    char atbuf[16];
+    DWORD a = GetEnvironmentVariableA("DLSS_NVAPI_CUT_AT", atbuf, sizeof(atbuf));
+    if (a > 0) {
+      char* end = NULL;
+      long v;
+      if (a >= sizeof(atbuf)) {
+        fail = 1;
+      } else {
+        v = strtol(atbuf, &end, 10);
+        if (end == atbuf || *end != 0 || v < 0 || v > 155) {
+          fail = 1;
+        } else {
+          g_cut_at = v;
+        }
+      }
+    }
+    if (g_cut_at >= 0) { g_cut = 1; } /* index mode is a cut mode */
     char cutmode[8];
     DWORD c =
         GetEnvironmentVariableA("DLSS_NVAPI_CUT", cutmode, sizeof(cutmode));
     if (c > 0) {
       if (c < sizeof(cutmode) && cutmode[1] == 0 &&
           (cutmode[0] == '0' || cutmode[0] == '1')) {
-        g_cut = cutmode[0] - '0'; /* 0 = no truncation, like ARGS level 0 */
+        /* Both selectors at once is ambiguous: never silently degrade to one
+         * of them (the stated policy of this file). Fail the run closed. */
+        if (g_cut_at >= 0) {
+          fail = 1;
+        } else {
+          g_cut = cutmode[0] - '0'; /* 0 = no truncation, like ARGS level 0 */
+        }
       } else {
         fail = 1; /* unknown value: never silently degrade */
       }

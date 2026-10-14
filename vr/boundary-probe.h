@@ -27,7 +27,18 @@
 #define BOUNDARY_WINDOW (2ull * 1024ull * 1024ull)
 #define BOUNDARY_WORDS 6u
 #define BOUNDARY_ARG_WORDS 10u
-#define BOUNDARY_HEX_MAX (80 * 2 + 4)
+// The decoder's parameter block is 10 words, but an intermediate-ladder cut can
+// land on any slot of the recovered 156-launch sequence: the live parameter
+// sizes run 16..264 bytes (NVAPI-ARGS.md). The parse bound is that maximum.
+#define BOUNDARY_ARG_WORDS_MAX 33u
+#define BOUNDARY_HEX_MAX (264 * 2 + 4)
+
+// Intermediate-ladder capture (LADDER.md): at an arbitrary recovered slot the
+// model's entire working pool is read back, so consecutive cut points are
+// directly comparable and the slots in between resolve to write-sets. The
+// pool size is the model's own allocation, matched from the boundary words'
+// resources and pinned here (see DECODER-BOUNDARY.md's allocator table).
+#define LADDER_POOL_SIZE 62684160ull
 
 static const unsigned int boundary_word_index[BOUNDARY_WORDS] = {0, 1, 2, 4, 6, 7};
 static const char* boundary_word_name[BOUNDARY_WORDS] = {
@@ -205,7 +216,8 @@ typedef struct BoundarySidecar {
 typedef struct BoundaryWords {
     unsigned long long eval;
     unsigned int psize;
-    uint64_t word[BOUNDARY_ARG_WORDS];
+    unsigned int count; // decoded argument words (psize / 8)
+    uint64_t word[BOUNDARY_ARG_WORDS_MAX];
     char hex[BOUNDARY_HEX_MAX];
 } BoundaryWords;
 
@@ -224,15 +236,22 @@ static int boundary_parse_line(const char* line, BoundaryWords* out) {
         ++hexlen;
     }
     if (hexlen == 0 || hexlen >= sizeof(out->hex) || (hexlen & 1) != 0) { return 0; }
-    // Strict: the decoder parameter block is exactly 80 bytes; anything else
-    // would leave argument words uninitialised and fail closed here instead.
-    if (psize != BOUNDARY_ARG_WORDS * 8 || hexlen != (size_t)psize * 2) { return 0; }
+    // Strict: the parameter block must be a whole number of 64-bit argument
+    // words within the live range and the hex must match it exactly. Anything
+    // else would leave argument words uninitialised and fails closed here.
+    // (The decoder's exact 80-byte block is asserted by the decoder-boundary
+    // path itself; a ladder cut can land on any slot's parameter size.)
+    if (psize == 0 || (psize & 7u) != 0 || psize > BOUNDARY_ARG_WORDS_MAX * 8u ||
+        hexlen != (size_t)psize * 2) {
+        return 0;
+    }
     memcpy(out->hex, pmem, hexlen);
     out->hex[hexlen] = 0;
     out->eval = eval;
     out->psize = psize;
+    out->count = psize / 8u;
     // Hex decode into little-endian 64-bit argument words.
-    for (size_t i = 0; i < hexlen / 2 && i < sizeof(uint64_t) * BOUNDARY_ARG_WORDS; ++i) {
+    for (size_t i = 0; i < hexlen / 2 && i < BOUNDARY_ARG_WORDS_MAX * 8u; ++i) {
         unsigned int nibble[2];
         for (unsigned int k = 0; k < 2; ++k) {
             char c = pmem[i * 2 + k];
@@ -332,7 +351,37 @@ typedef struct BoundaryContext {
     const char* sidecar;
     int* submitted;
     int* completed;
+    int ladder; // 1 = capture the whole working pool at the cut point
 } BoundaryContext;
+
+// The working pool this evaluation writes, identified by the cut point's own
+// bindings: the phase-1 (model-allocated) resource of pinned size that the
+// boundary launch's words resolve into. Two per-eye pools of identical size
+// exist (see TEMPORAL-HISTORY.md's ABBA note), so size alone can never decide;
+// the words of one evaluation touch exactly one of them. The phase filter keeps
+// the harness's own readback buffer (phase 2, same size) out of contention, and
+// a scalar word that merely lands inside some buffer's VA range is not treated
+// as an allocation the model made. Returns NULL when the words resolve into no
+// such pool or into more than one - the run must fail closed rather than
+// capture a plausible but wrong buffer.
+static const ResourceRecord* boundary_pool_from_words(const BoundaryWords* words) {
+    const ResourceRecord* found = NULL;
+    unsigned int count = words->count;
+    if (count > BOUNDARY_ARG_WORDS_MAX) { count = BOUNDARY_ARG_WORDS_MAX; }
+    for (unsigned int i = 0; i < count; ++i) {
+        uint64_t va = words->word[i];
+        const ResourceRecord* record;
+        if (va == 0) { continue; }
+        record = boundary_find(va);
+        if (record == NULL || record->size != LADDER_POOL_SIZE ||
+            record->phase != 1u) {
+            continue;
+        }
+        if (found != NULL && found != record) { return NULL; } // ambiguous
+        found = record;
+    }
+    return found;
+}
 
 static int boundary_dump_window(const BoundaryContext* ctx, unsigned int frame,
                                 unsigned int slot, const BoundaryWords* words,
@@ -384,9 +433,59 @@ static int boundary_dump_window(const BoundaryContext* ctx, unsigned int frame,
     return 1;
 }
 
+static int boundary_dump_pool(const BoundaryContext* ctx, unsigned int frame,
+                              const ResourceRecord* pool,
+                              ID3D12Resource* readback) {
+    unsigned char* mapped = NULL;
+    UINT64 digest;
+    char name[64];
+    FILE* out;
+    D3D12_RANGE range = {0, (SIZE_T)LADDER_POOL_SIZE};
+    D3D12_RANGE no_write = {0, 0};
+    if (FAILED(ID3D12Resource_Map(readback, 0, &range, (void**)&mapped))) {
+        fprintf(stderr, "Ladder pool map failed frame=%u\n", frame);
+        return 0;
+    }
+    snprintf(name, sizeof(name), "pool-frame%02u.bin", frame);
+    {
+        char path[MAX_PATH];
+        if (snprintf(path, sizeof(path), "%s/%s", ctx->dir, name) >= (int)sizeof(path)) {
+            ID3D12Resource_Unmap(readback, 0, &no_write);
+            fprintf(stderr, "Ladder pool path too long\n");
+            return 0;
+        }
+        out = fopen(path, "wb");
+        if (out == NULL) {
+            ID3D12Resource_Unmap(readback, 0, &no_write);
+            fprintf(stderr, "Ladder pool write failed %s\n", path);
+            return 0;
+        }
+        if (fwrite(mapped, 1, (size_t)LADDER_POOL_SIZE, out) != (size_t)LADDER_POOL_SIZE) {
+            fclose(out);
+            ID3D12Resource_Unmap(readback, 0, &no_write);
+            fprintf(stderr, "Ladder pool short write %s\n", path);
+            return 0;
+        }
+        fclose(out);
+    }
+    digest = capture_fnv(mapped, (size_t)LADDER_POOL_SIZE);
+    ID3D12Resource_Unmap(readback, 0, &no_write);
+    fprintf(ctx->manifest,
+            "pool-frame=%u bytes=%llu file=%s fnv=0x%016llx va=0x%llx res_va=0x%llx "
+            "res_size=%llu\n",
+            frame, (unsigned long long)LADDER_POOL_SIZE, name,
+            (unsigned long long)digest, (unsigned long long)pool->va,
+            (unsigned long long)pool->va, (unsigned long long)pool->size);
+    printf("LADDER frame=%u bytes=%llu fnv=0x%016llx file=%s\n", frame,
+           (unsigned long long)LADDER_POOL_SIZE, (unsigned long long)digest, name);
+    fflush(stdout);
+    return 1;
+}
+
 static int boundary_run(BoundaryContext* ctx) {
     ID3D12CommandList* command_lists[] = {(ID3D12CommandList*)ctx->list};
     ID3D12Resource* windows[BOUNDARY_WORDS] = {0};
+    ID3D12Resource* pool_readback = NULL;
     BoundarySidecar sidecar = {0};
     int success = 0;
     for (unsigned int slot = 0; slot < BOUNDARY_WORDS; ++slot) {
@@ -394,6 +493,12 @@ static int boundary_run(BoundaryContext* ctx) {
                            &windows[slot])) {
             goto done;
         }
+    }
+    if (ctx->ladder &&
+        !create_buffer(ctx->device, D3D12_HEAP_TYPE_READBACK, LADDER_POOL_SIZE,
+                       &pool_readback)) {
+        fprintf(stderr, "Ladder readback allocation failed\n");
+        goto done;
     }
     fprintf(ctx->manifest, "sidecar=%s\n", ctx->sidecar);
     for (unsigned int frame = 0; frame < BOUNDARY_FRAMES; ++frame) {
@@ -403,6 +508,7 @@ static int boundary_run(BoundaryContext* ctx) {
         unsigned int barriers = 0;
         int result;
         int lines;
+        const ResourceRecord* ladder_pool = NULL;
         if (FAILED(ID3D12CommandAllocator_Reset(ctx->allocator))) {
             fprintf(stderr, "Boundary allocator reset failed\n");
             goto done;
@@ -428,9 +534,17 @@ static int boundary_run(BoundaryContext* ctx) {
                     lines, frame);
             goto done;
         }
+        if (!ctx->ladder && words.count != BOUNDARY_ARG_WORDS) {
+            // The decoder-boundary path is defined on the decoder's exact
+            // 10-word parameter block; any other size is a misaligned cut.
+            fprintf(stderr, "Boundary words=%u for frame=%u (need %u)\n",
+                    words.count, frame, (unsigned int)BOUNDARY_ARG_WORDS);
+            goto done;
+        }
         fprintf(ctx->manifest,
                 "boundary-frame=%u eval=%llu psize=%u pmem=%s\n", frame,
                 words.eval, words.psize, words.hex);
+        if (!ctx->ladder) {
         for (unsigned int slot = 0; slot < BOUNDARY_WORDS; ++slot) {
             uint64_t va = words.word[boundary_word_index[slot]];
             const ResourceRecord* record = boundary_find(va);
@@ -460,6 +574,25 @@ static int boundary_run(BoundaryContext* ctx) {
             ID3D12GraphicsCommandList_CopyBufferRegion(ctx->list, windows[slot], 0,
                                                        record->resource, offset, bytes);
         }
+        } else {
+            /* Ladder mode: the cut point's whole working pool, so consecutive
+             * cut points can be diffed into the intervening slots' write-sets.
+             * Read-only copy of a model-owned resource; a UAV barrier only, no
+             * state transition (as for the history textures). */
+            D3D12_RESOURCE_BARRIER barrier = {0};
+            ladder_pool = boundary_pool_from_words(&words);
+            if (ladder_pool == NULL) {
+                fprintf(stderr,
+                        "Ladder cut point words resolve into no single working pool\n");
+                goto done;
+            }
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            barrier.UAV.pResource = ladder_pool->resource;
+            ID3D12GraphicsCommandList_ResourceBarrier(ctx->list, 1, &barrier);
+            ID3D12GraphicsCommandList_CopyBufferRegion(
+                ctx->list, pool_readback, 0, ladder_pool->resource, 0,
+                LADDER_POOL_SIZE);
+        }
         record_readback(ctx->list, ctx->eye);
         if (FAILED(ID3D12GraphicsCommandList_Close(ctx->list))) {
             fprintf(stderr, "Boundary list close failed\n");
@@ -476,12 +609,16 @@ static int boundary_run(BoundaryContext* ctx) {
             goto done;
         }
         *ctx->completed = 1;
+        if (ctx->ladder) {
+            if (!boundary_dump_pool(ctx, frame, ladder_pool, pool_readback)) { goto done; }
+        } else {
         for (unsigned int slot = 0; slot < BOUNDARY_WORDS; ++slot) {
             if (!boundary_dump_window(ctx, frame, slot, &words, copies[slot].record,
                                       copies[slot].offset, copies[slot].bytes,
                                       windows[slot])) {
                 goto done;
             }
+        }
         }
         if (!capture_dump(ctx->dir, ctx->eye, frame, ctx->manifest)) { goto done; }
         if (!boundary_validate_untouched(ctx->eye, frame)) {
@@ -502,6 +639,7 @@ done:
     for (unsigned int slot = 0; slot < BOUNDARY_WORDS; ++slot) {
         if (windows[slot]) { ID3D12Resource_Release(windows[slot]); }
     }
+    if (pool_readback) { ID3D12Resource_Release(pool_readback); }
     return success;
 }
 

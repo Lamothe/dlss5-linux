@@ -92,7 +92,27 @@ case "$mode" in
     export DLSS_NVAPI_CUT=1
     export DLSS_NVAPI_CUT_FILE="nvapi-boundary-$label.txt"
     ;;
-  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene|capture|capture-reset|capture-history|boundary]' >&2; exit 1 ;;
+  ladder)
+    # Intermediate-ladder capture (see vr/LADDER.md): truncate the evaluation
+    # at recovered slot $slot and read back the model's whole working pool, so
+    # consecutive cut points can be diffed into the intervening write-sets.
+    label="${2:-run}"
+    slot="${3:-}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'ladder label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    # Reject leading zeros outright: bash arithmetic would read 018 as octal
+    # while the DLL's strtol parses base 10, so the two bounds could disagree.
+    [[ "$slot" =~ ^(0|[1-9][0-9]{0,2})$ ]] || { echo 'ladder slot must be decimal without leading zeros' >&2; exit 2; }
+    (( 10#$slot >= 0 && 10#$slot <= 155 )) || { echo 'ladder slot must be 0..155 (recovered 156-launch inventory)' >&2; exit 2; }
+    command="feature-probe.exe --capture-ladder capture-ladder-$label > probe-output.txt 2>&1"
+    marker='^PASS: ladder capture'
+    export DLSS_NVAPI_LABEL="${DLSS_NVAPI_LABEL:-ladder-$label}"
+    export DLSS_NVAPI_ARGS=2
+    # Index mode arms the cut itself; DLSS_NVAPI_CUT stays unset so the two
+    # modes can never both be active.
+    export DLSS_NVAPI_CUT_AT="$slot"
+    export DLSS_NVAPI_CUT_FILE="nvapi-ladder-$label.txt"
+    ;;
+  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene|capture|capture-reset|capture-history|boundary|ladder LABEL SLOT]' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
 export STEAM_COMPAT_DATA_PATH="$ROOT/vr/prefix"
@@ -138,6 +158,9 @@ if [[ -n "${DLSS_NVAPI_LABEL:-}" ]]; then
 fi
 if [[ "$mode" == boundary ]]; then
   rm -f "nvapi-boundary-$label.txt"
+fi
+if [[ "$mode" == ladder ]]; then
+  rm -f "nvapi-ladder-$label.txt"
 fi
 limit=60
 if [[ "$mode" == scene ]]; then limit=300; fi
@@ -212,4 +235,20 @@ if [[ "$mode" == boundary ]]; then
     exit 1
   fi
   echo "Boundary capture stored at vr/logs/boundary/$label"
+fi
+
+# Ladder captures are retained under vr/logs/ladder/<label> with the forwarder's
+# sidecar (the cut point's parameter block) and the recorded slot.
+if [[ "$mode" == ladder ]]; then
+  mkdir -p "$ROOT/vr/logs/ladder"
+  rm -rf "$ROOT/vr/logs/ladder/$label"
+  mv "capture-ladder-$label" "$ROOT/vr/logs/ladder/$label"
+  if [[ -s "nvapi-ladder-$label.txt" ]]; then
+    mv "nvapi-ladder-$label.txt" "$ROOT/vr/logs/ladder/$label/boundary-va.txt"
+  else
+    echo 'Ladder sidecar missing or empty' >&2
+    exit 1
+  fi
+  echo "slot=$slot" > "$ROOT/vr/logs/ladder/$label/slot.txt"
+  echo "Ladder capture stored at vr/logs/ladder/$label (slot=$slot)"
 fi

@@ -49,7 +49,9 @@ int main(int argc, char** argv) {
         }
         capture_reset_frame = (unsigned int)parsed;
     }
-    int boundary_mode = argc == 3 && strcmp(argv[1], "--capture-boundary") == 0;
+    int boundary_mode = argc == 3 && (strcmp(argv[1], "--capture-boundary") == 0 ||
+                                      strcmp(argv[1], "--capture-ladder") == 0);
+    int ladder_mode = argc == 3 && strcmp(argv[1], "--capture-ladder") == 0;
     const char* boundary_dir = boundary_mode ? argv[2] : NULL;
     int tracked_mode = argc==2 && strcmp(argv[1],"--tracked-control")==0;
     int gpu_mode = tracked_mode || (argc == 2 && strcmp(argv[1], "--gpu-scene") == 0);
@@ -57,7 +59,7 @@ int main(int argc, char** argv) {
     int scene_mode = gpu_mode || (argc == 2 && strcmp(argv[1], "--scene") == 0);
     int evaluate_mode = scene_mode || (argc == 2 && strcmp(argv[1], "--evaluate") == 0);
     if (argc > 1 && !evaluate_mode && !capture_mode && !boundary_mode) {
-        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-reset-mid DIR [FRAME]|--capture-history DIR [FRAME]|--capture-history-inject DIR|--capture-history-sham DIR|--capture-boundary DIR]\n");
+        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-reset-mid DIR [FRAME]|--capture-history DIR [FRAME]|--capture-history-inject DIR|--capture-history-sham DIR|--capture-boundary DIR|--capture-ladder DIR]\n");
         return 1;
     }    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
@@ -366,8 +368,14 @@ int main(int argc, char** argv) {
         }
         capture_manifest = fopen(manifest_path, "w");
         if (!capture_manifest) { fprintf(stderr, "Boundary manifest open failed\n"); goto cleanup; }
+        if (ladder_mode) {
+            fprintf(capture_manifest,
+                    "protocol ladder-capture-v1 frames=%u size=%u context=eye0 pool=%llu\n",
+                    BOUNDARY_FRAMES, PROBE_SIZE, (unsigned long long)LADDER_POOL_SIZE);
+        } else {
         fprintf(capture_manifest, "protocol boundary-capture-v1 frames=%u size=%u context=eye0 window=%llu words=%u\n",
                 BOUNDARY_FRAMES, PROBE_SIZE, (unsigned long long)BOUNDARY_WINDOW, BOUNDARY_WORDS);
+        }
         boundary.device = device;
         boundary.queue = queue;
         boundary.allocator = allocator;
@@ -382,6 +390,7 @@ int main(int argc, char** argv) {
         boundary.sidecar = getenv("DLSS_NVAPI_CUT_FILE");
         boundary.submitted = &submitted;
         boundary.completed = &completed;
+        boundary.ladder = ladder_mode;
         if (!boundary.sidecar) {
             fprintf(stderr, "DLSS_NVAPI_CUT_FILE not set: no boundary words available\n");
             goto cleanup;
@@ -389,8 +398,13 @@ int main(int argc, char** argv) {
         if (!boundary_run(&boundary)) { goto cleanup; }
         fclose(capture_manifest);
         capture_manifest = NULL;
+        if (ladder_mode) {
+            printf("PASS: ladder capture frames=%u pool=%llu dir=%s context=eye0\n",
+                   BOUNDARY_FRAMES, (unsigned long long)LADDER_POOL_SIZE, boundary_dir);
+        } else {
         printf("PASS: boundary capture frames=%u words=%u dir=%s context=eye0\n",
                BOUNDARY_FRAMES, BOUNDARY_WORDS, boundary_dir);
+        }
         fflush(stdout);
     }
     if (evaluate_mode) {
