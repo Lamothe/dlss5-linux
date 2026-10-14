@@ -306,7 +306,17 @@ static int boundary_next_words(const char* path, BoundarySidecar* state, Boundar
 
 // The output texture still holds the uploaded NaN sentinel only when no later
 // stage ran: the cut's in-process canary.
-static int boundary_validate_untouched(EyeInputs* eye, unsigned int frame) {
+// Output-texture state at the cut point. The FP16 NaN sentinel is uploaded
+// fresh each frame, so "written" means some kernel at or before the cut point
+// produced output. For cuts before the output-writing launch an untouched
+// output proves the cut held; for ladder cuts at or after that launch a
+// written output is the *expected* state and the canary cannot discriminate
+// anything - it is recorded as evidence and pinned per cut point by
+// ladder-report.py (LADDER_OUTPUT_WRITER_SLOT, measured: s153 leaves the
+// sentinel, s154 writes it). The decoder-boundary path cuts at slot 99,
+// before the writer, and keeps its hard rejection at the call site.
+static int boundary_output_state(EyeInputs* eye, unsigned int frame,
+                                 int* written) {
     unsigned char* mapped = NULL;
     unsigned int nan_pixels = 0;
     unsigned int other = 0;
@@ -330,10 +340,11 @@ static int boundary_validate_untouched(EyeInputs* eye, unsigned int frame) {
         D3D12_RANGE no_write = {0, 0};
         ID3D12Resource_Unmap(eye->readback, 0, &no_write);
     }
-    printf("BoundaryOutputUntouched frame=%u nan_pixels=%u other_pixels=%u untouched=%d\n",
-           frame, nan_pixels, other, other == 0);
+    *written = (other != 0);
+    printf("BoundaryOutputState frame=%u nan_pixels=%u other_pixels=%u written=%d\n",
+           frame, nan_pixels, other, *written);
     fflush(stdout);
-    return other == 0;
+    return 1;
 }
 
 typedef struct BoundaryContext {
@@ -372,6 +383,17 @@ static const ResourceRecord* boundary_pool_from_words(const BoundaryWords* words
         uint64_t va = words->word[i];
         const ResourceRecord* record;
         if (va == 0) { continue; }
+        /* Only address-shaped words are buffer bindings (NVAPI-BINDINGS.md:
+         * ADDR_MIN <= v < 2^32 and 512-byte aligned). Scalar words - f32
+         * constants such as 0x44340000 (720.0f) and 0x3ab60b61 (~0.00135) -
+         * can coincide with a device VA range: at the s154 cut point one did
+         * exactly that inside the second per-eye pool, and the single-pool
+         * rule failed closed on a false ambiguity. Real bindings are always
+         * address-shaped under the recovered contract, so excluding scalars
+         * never discards a true candidate. */
+        if (va < 0x01000000ull || va >= 0x100000000ull || (va & 511ull) != 0) {
+            continue;
+        }
         record = boundary_find(va);
         if (record == NULL || record->size != LADDER_POOL_SIZE ||
             record->phase != 1u) {
@@ -621,9 +643,19 @@ static int boundary_run(BoundaryContext* ctx) {
         }
         }
         if (!capture_dump(ctx->dir, ctx->eye, frame, ctx->manifest)) { goto done; }
-        if (!boundary_validate_untouched(ctx->eye, frame)) {
-            fprintf(stderr, "REJECT: output texture changed despite the cut\n");
-            goto done;
+        {
+            int written = 0;
+            if (!boundary_output_state(ctx->eye, frame, &written)) { goto done; }
+            if (!ctx->ladder && written) {
+                /* Decoder-boundary cuts land at slot 99, before the output
+                 * writer (recovered slot 154, LADDER.md), so a written output
+                 * here means the cut did not hold. Ladder cuts can land at or
+                 * past the writer, where a written output is the expected
+                 * state: the report pins the expectation per cut point from
+                 * the recorded output digests. */
+                fprintf(stderr, "REJECT: output texture changed despite the cut\n");
+                goto done;
+            }
         }
     }
     {

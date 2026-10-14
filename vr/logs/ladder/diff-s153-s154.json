@@ -1,0 +1,33 @@
+{
+  "slots": [
+    153,
+    154
+  ],
+  "pool_va": 481165312,
+  "frames": [
+    {
+      "frame": 0,
+      "changed": 0,
+      "ranges": 0,
+      "first": null,
+      "last": null,
+      "largest": 0
+    },
+    {
+      "frame": 1,
+      "changed": 0,
+      "ranges": 0,
+      "first": null,
+      "last": null,
+      "largest": 0
+    },
+    {
+      "frame": 2,
+      "changed": 0,
+      "ranges": 0,
+      "first": null,
+      "last": null,
+      "largest": 0
+    }
+  ]
+}

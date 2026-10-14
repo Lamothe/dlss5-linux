@@ -314,7 +314,12 @@ static void* g_saved_ret;
  *   - Inside a window everything is withheld except a recognised clear
  *     launch, which closes the window and is forwarded. A decoder-named
  *     launch inside the window is withheld and counted as an anomaly; it
- *     never re-arms.
+ *     never re-arms. A clear that closes a window is also recovered slot 0
+ *     of the next evaluation, so in index mode at slot 0 the same launch
+ *     immediately arms the next window (without that fall-through every
+ *     evaluation after the first ran uncut and the capture failed on
+ *     missing sidecar lines - the s0 ladder cut). Name mode is unaffected:
+ *     a clear is never the decoder boundary.
  *   - The window withholds at most CUT_DROP_BUDGET launches (the recovered
  *     inventory's 56 post-decoder launches, anomalies included): at the
  *     budget the window force-closes and the current launch is forwarded.
@@ -542,6 +547,8 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
       int is_clear = kname != NULL && strcmp(kname, CUT_CLEAR_NAME) == 0;
       unsigned long long budget;
       int at_boundary;
+      int was_dropping = g_cut_dropping;
+      int released = 0;
       /* Slot accounting: the clear kernel opens an evaluation at slot 0.
        * Without a seen clear there is no evaluation boundary to index from,
        * so index mode never arms (the run stays uncut). */
@@ -566,6 +573,12 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
                    (unsigned long long)g_cut_window);
           g_cut_dropping = 0;
           g_cut_window = 0;
+          /* The clear kernel is recovered slot 0, so when the cut point is
+           * slot 0 this same launch is also the next window's boundary. Fall
+           * through to the boundary check below instead of skipping it:
+           * otherwise every evaluation after the first runs uncut and the
+           * capture fails on missing sidecar lines. */
+          released = 1;
         } else if (is_decoder && g_cut_at < 0) {
           /* Anomalous repeat inside the window: never re-arm mid-window.
            * Counted toward the budget so the window bound stays exact. */
@@ -588,7 +601,8 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
           log_line("cut-drop handle=0x%016llx name=%s",
                    (unsigned long long)handle, kname ? kname : "<unknown>");
         }
-      } else if (at_boundary) {
+      }
+      if ((released || !was_dropping) && at_boundary) {
         if (!complete) {
           /* Never cut without the boundary words: the truncated run would be
            * unusable and silently misleading. The run stays uncut instead. */
@@ -613,7 +627,9 @@ static int __cdecl tramp_args_logger(unsigned int id, void* ret, void* saved) {
           log_line("cut-sidecar-write-failed handle=0x%016llx",
                    (unsigned long long)handle);
         }
-      } else if (kname == NULL && g_cut_at < 0) {
+      } else if (!was_dropping && kname == NULL && g_cut_at < 0) {
+        /* Unchanged from the original chain: only launches processed outside
+         * a dropped window are reported as unknown. */
         log_line("cut-unknown handle=0x%016llx", (unsigned long long)handle);
       }
     }

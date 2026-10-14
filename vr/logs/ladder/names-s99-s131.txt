@@ -1,0 +1,1273 @@
+interval 99-131 pool=0x1cae0000 size=62684160
+ frame 0: changed=10920551 ranges=92890 attributed=10920551 segments=63
+   +33242112 changed=342805   span=[33242112,33586176) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +33242112 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +33242112 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +23706624 changed=342491   span=[23706624,24050688) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +23804928 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23706624 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +23706624 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +23706624 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +23804928 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +26459136 changed=342422   span=[26459136,26803200) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +28277760 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w1
+       alias +26999808 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w1
+       alias +26459136 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +26459136 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +26803200 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w3
+       alias +26803200 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w0
+       alias +26508288 slot 82 cc_vit_1d_projection_chained_fp8 w5
+       alias +26803200 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w3
+       alias +26999808 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w3
+       alias +28277760 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w3
+   +25082880 changed=342353   span=[25082880,25426944) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +25082880 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w9
+       alias +25082880 slot 24 cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8 w0
+       alias +25082880 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w1
+       alias +25328640 slot 85 cc_vit_1d_qkv_chained_fp8 w6
+   +22330368 changed=342300   span=[22330368,22674432) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +22526976 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +22330368 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +22330368 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +22330368 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22526976 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +20954112 changed=342247   span=[20954112,21298176) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +21249024 slot 17 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +20954112 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w2
+       alias +20954112 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +20954112 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21249024 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +33930240 changed=342088   span=[33930240,34274304) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +33930240 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +33930240 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +25771008 changed=341696   span=[25771008,26115072) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +25771008 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +25771008 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +31865856 changed=341671   span=[31865856,32209920) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32111616 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w9
+       alias +32111616 slot 16 cc_tinlayout_fused_swin_8h_256_8_inpview_tilesync_fp8 w0
+       alias +31865856 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +31865856 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32013312 slot 95 cc_vit_1d_qkv_chained_fp8 w6
+       alias +32111616 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w1
+       alias +32111616 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w0
+   +24394752 changed=341573   span=[24394752,24738816) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24443904 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +24443904 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w0
+       alias +24394752 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +24394752 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +24394752 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24443904 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w0
+       alias +24443904 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +34274304 changed=341435   span=[34274304,34618368) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34274304 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +34274304 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +34274304 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34372608 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w2
+       alias +34372608 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +33586176 changed=341233   span=[33586176,33930240) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +33586176 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +33586176 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +33586176 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +23018496 changed=341156   span=[23018496,23362560) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +23165952 slot 7 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+       alias +23165952 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23018496 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +23018496 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +23018496 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23165952 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23165952 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+   +31177728 changed=341126   span=[31177728,31521792) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +31177728 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +31177728 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +34962432 changed=341110   span=[34962432,35306496) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w1
+       alias +34962432 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +34962432 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +34962432 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w1
+       alias +35159040 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35159040 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +34618368 changed=340785   span=[34618368,34962432) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +34618368 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +34618368 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +32553984 changed=340739   span=[32553984,32898048) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +32553984 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +32553984 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +35650560 changed=340725   span=[35650560,35994624) anchored=1 slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w2
+       alias +35945472 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +35945472 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w0
+       alias +41057280 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w1
+       alias +46169088 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w8
+       alias +46169088 slot 6 cc_tinlayout_fused_swin_2h_64_2_inpview_tilesync_fp8 w0
+       alias +46169088 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w1
+       alias +52313088 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w2
+       alias +52657152 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w1
+       alias +52657152 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w0
+       alias +52853760 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w1
+       alias +52853760 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w0
+       alias +52853760 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +53246976 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49167360 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +53246976 slot 60 cc_vit_1d_qkv_chained_fp8 w0
+       alias +53443584 slot 60 cc_vit_1d_qkv_chained_fp8 w1
+       alias +53836800 slot 60 cc_vit_1d_qkv_chained_fp8 w2
+       alias +53640192 slot 60 cc_vit_1d_qkv_chained_fp8 w3
+       alias +53443584 slot 61 cc_vit_1d_attention_chained_fp8 w0
+       alias +53836800 slot 61 cc_vit_1d_attention_chained_fp8 w1
+       alias +53640192 slot 61 cc_vit_1d_attention_chained_fp8 w2
+       alias +54033408 slot 61 cc_vit_1d_attention_chained_fp8 w3
+       alias +54033408 slot 62 cc_vit_1d_projection_chained_fp8 w0
+       alias +53246976 slot 62 cc_vit_1d_projection_chained_fp8 w1
+       alias +54230016 slot 62 cc_vit_1d_projection_chained_fp8 w2
+       alias +49560576 slot 62 cc_vit_1d_projection_chained_fp8 w5
+       alias +54230016 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +54230016 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +54426624 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49953792 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +54426624 slot 65 cc_vit_1d_qkv_chained_fp8 w0
+       alias +54623232 slot 65 cc_vit_1d_qkv_chained_fp8 w1
+       alias +54819840 slot 65 cc_vit_1d_qkv_chained_fp8 w2
+       alias +55016448 slot 65 cc_vit_1d_qkv_chained_fp8 w3
+       alias +54623232 slot 66 cc_vit_1d_attention_chained_fp8 w0
+       alias +54819840 slot 66 cc_vit_1d_attention_chained_fp8 w1
+       alias +55016448 slot 66 cc_vit_1d_attention_chained_fp8 w2
+       alias +55213056 slot 66 cc_vit_1d_attention_chained_fp8 w3
+       alias +55213056 slot 67 cc_vit_1d_projection_chained_fp8 w0
+       alias +54426624 slot 67 cc_vit_1d_projection_chained_fp8 w1
+       alias +55409664 slot 67 cc_vit_1d_projection_chained_fp8 w2
+       alias +48774144 slot 67 cc_vit_1d_projection_chained_fp8 w5
+       alias +55409664 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +35945472 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35945472 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +55409664 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +55606272 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +50347008 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +55606272 slot 70 cc_vit_1d_qkv_chained_fp8 w0
+       alias +55802880 slot 70 cc_vit_1d_qkv_chained_fp8 w1
+       alias +55999488 slot 70 cc_vit_1d_qkv_chained_fp8 w2
+       alias +56196096 slot 70 cc_vit_1d_qkv_chained_fp8 w3
+       alias +55802880 slot 71 cc_vit_1d_attention_chained_fp8 w0
+       alias +55999488 slot 71 cc_vit_1d_attention_chained_fp8 w1
+       alias +56196096 slot 71 cc_vit_1d_attention_chained_fp8 w2
+       alias +56392704 slot 71 cc_vit_1d_attention_chained_fp8 w3
+       alias +56392704 slot 72 cc_vit_1d_projection_chained_fp8 w0
+       alias +55606272 slot 72 cc_vit_1d_projection_chained_fp8 w1
+       alias +56589312 slot 72 cc_vit_1d_projection_chained_fp8 w2
+       alias +50740224 slot 72 cc_vit_1d_projection_chained_fp8 w5
+       alias +56589312 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +36731904 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +36731904 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +56589312 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +56785920 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51133440 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +56785920 slot 75 cc_vit_1d_qkv_chained_fp8 w0
+       alias +56982528 slot 75 cc_vit_1d_qkv_chained_fp8 w1
+       alias +57179136 slot 75 cc_vit_1d_qkv_chained_fp8 w2
+       alias +57375744 slot 75 cc_vit_1d_qkv_chained_fp8 w3
+       alias +56982528 slot 76 cc_vit_1d_attention_chained_fp8 w0
+       alias +57179136 slot 76 cc_vit_1d_attention_chained_fp8 w1
+       alias +57375744 slot 76 cc_vit_1d_attention_chained_fp8 w2
+       alias +57572352 slot 76 cc_vit_1d_attention_chained_fp8 w3
+       alias +57572352 slot 77 cc_vit_1d_projection_chained_fp8 w0
+       alias +56785920 slot 77 cc_vit_1d_projection_chained_fp8 w1
+       alias +57768960 slot 77 cc_vit_1d_projection_chained_fp8 w2
+       alias +51526656 slot 77 cc_vit_1d_projection_chained_fp8 w5
+       alias +57768960 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +37518336 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +37518336 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +57768960 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +57965568 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51919872 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +57965568 slot 80 cc_vit_1d_qkv_chained_fp8 w0
+       alias +58358784 slot 80 cc_vit_1d_qkv_chained_fp8 w1
+       alias +58162176 slot 80 cc_vit_1d_qkv_chained_fp8 w2
+       alias +58555392 slot 80 cc_vit_1d_qkv_chained_fp8 w3
+       alias +58358784 slot 81 cc_vit_1d_attention_chained_fp8 w0
+       alias +58162176 slot 81 cc_vit_1d_attention_chained_fp8 w1
+       alias +58555392 slot 81 cc_vit_1d_attention_chained_fp8 w2
+       alias +58752000 slot 81 cc_vit_1d_attention_chained_fp8 w3
+       alias +58752000 slot 82 cc_vit_1d_projection_chained_fp8 w0
+       alias +57965568 slot 82 cc_vit_1d_projection_chained_fp8 w1
+       alias +58948608 slot 82 cc_vit_1d_projection_chained_fp8 w2
+       alias +58948608 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +38304768 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +38304768 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +58948608 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +59145216 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +40664064 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +59145216 slot 85 cc_vit_1d_qkv_chained_fp8 w0
+       alias +59735040 slot 85 cc_vit_1d_qkv_chained_fp8 w1
+       alias +59538432 slot 85 cc_vit_1d_qkv_chained_fp8 w2
+       alias +59341824 slot 85 cc_vit_1d_qkv_chained_fp8 w3
+       alias +59735040 slot 86 cc_vit_1d_attention_chained_fp8 w0
+       alias +59538432 slot 86 cc_vit_1d_attention_chained_fp8 w1
+       alias +59341824 slot 86 cc_vit_1d_attention_chained_fp8 w2
+       alias +59931648 slot 86 cc_vit_1d_attention_chained_fp8 w3
+       alias +59931648 slot 87 cc_vit_1d_projection_chained_fp8 w0
+       alias +59145216 slot 87 cc_vit_1d_projection_chained_fp8 w1
+       alias +60128256 slot 87 cc_vit_1d_projection_chained_fp8 w2
+       alias +46808064 slot 87 cc_vit_1d_projection_chained_fp8 w5
+       alias +60128256 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39091200 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39091200 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +60128256 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +60324864 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47201280 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +60324864 slot 90 cc_vit_1d_qkv_chained_fp8 w0
+       alias +60914688 slot 90 cc_vit_1d_qkv_chained_fp8 w1
+       alias +60718080 slot 90 cc_vit_1d_qkv_chained_fp8 w2
+       alias +60521472 slot 90 cc_vit_1d_qkv_chained_fp8 w3
+       alias +60914688 slot 91 cc_vit_1d_attention_chained_fp8 w0
+       alias +60718080 slot 91 cc_vit_1d_attention_chained_fp8 w1
+       alias +60521472 slot 91 cc_vit_1d_attention_chained_fp8 w2
+       alias +61111296 slot 91 cc_vit_1d_attention_chained_fp8 w3
+       alias +61111296 slot 92 cc_vit_1d_projection_chained_fp8 w0
+       alias +60324864 slot 92 cc_vit_1d_projection_chained_fp8 w1
+       alias +61307904 slot 92 cc_vit_1d_projection_chained_fp8 w2
+       alias +47594496 slot 92 cc_vit_1d_projection_chained_fp8 w5
+       alias +61307904 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39877632 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39877632 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +61307904 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +61504512 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47987712 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +61504512 slot 95 cc_vit_1d_qkv_chained_fp8 w0
+       alias +62094336 slot 95 cc_vit_1d_qkv_chained_fp8 w1
+       alias +61701120 slot 95 cc_vit_1d_qkv_chained_fp8 w2
+       alias +61897728 slot 95 cc_vit_1d_qkv_chained_fp8 w3
+       alias +62094336 slot 96 cc_vit_1d_attention_chained_fp8 w0
+       alias +61701120 slot 96 cc_vit_1d_attention_chained_fp8 w1
+       alias +61897728 slot 96 cc_vit_1d_attention_chained_fp8 w2
+       alias +62290944 slot 96 cc_vit_1d_attention_chained_fp8 w3
+       alias +62290944 slot 97 cc_vit_1d_projection_wait_fp8 w0
+       alias +61504512 slot 97 cc_vit_1d_projection_wait_fp8 w1
+       alias +53050368 slot 97 cc_vit_1d_projection_wait_fp8 w2
+       alias +48380928 slot 97 cc_vit_1d_projection_wait_fp8 w5
+       alias +53050368 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w0
+       alias +62487552 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w1
+       alias +62487552 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w0
+       alias +52313088 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w1
+       alias +35994624 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w6
+       alias +35650560 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w0
+       alias +46169088 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w3
+       alias +46169088 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w1
+       alias +46169088 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w0
+       alias +41057280 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w10
+       alias +35945472 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w1
+       alias +35945472 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w0
+   +32898048 changed=340671   span=[32898048,33242112) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +32898048 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +32898048 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +32898048 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +33192960 slot 60 cc_vit_1d_qkv_chained_fp8 w6
+   +21298176 changed=340599   span=[21298176,21642240) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21298176 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +21298176 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +26115072 changed=340581   span=[26115072,26459136) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +26115072 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +26115072 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +26115072 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +21642240 changed=340577   span=[21642240,21986304) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +21888000 slot 11 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +21888000 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21642240 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +21642240 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +21642240 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21789696 slot 70 cc_vit_1d_qkv_chained_fp8 w6
+       alias +21888000 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21888000 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +24738816 changed=340573   span=[24738816,25082880) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24738816 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +24738816 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +32209920 changed=340560   span=[32209920,32553984) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +32209920 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +32209920 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +32209920 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +21986304 changed=340549   span=[21986304,22330368) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21986304 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +21986304 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +31521792 changed=340532   span=[31521792,31865856) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +31521792 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +31521792 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +31521792 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +24050688 changed=340488   span=[24050688,24394752) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +24050688 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +24050688 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24148992 slot 80 cc_vit_1d_qkv_chained_fp8 w6
+   +30833664 changed=340455   span=[30833664,31177728) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +30833664 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w9
+       alias +30833664 slot 10 cc_tinlayout_fused_swin_4h_128_4_inpview_tilesync_fp8 w0
+       alias +30833664 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +30833664 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +30833664 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 90 cc_vit_1d_qkv_chained_fp8 w6
+       alias +30833664 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w1
+       alias +30833664 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w0
+       alias +30833664 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w0
+   +22674432 changed=340434   span=[22674432,23018496) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22674432 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +22674432 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +22969344 slot 75 cc_vit_1d_qkv_chained_fp8 w6
+   +23362560 changed=340420   span=[23362560,23706624) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23362560 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +23362560 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +25426944 changed=340295   span=[25426944,25771008) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 2 cc_tinlayout_fused_swin_1h_32_1_inpview_tilesync_fp8 w1
+       alias +25721856 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +25721856 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w0
+       alias +25721856 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w0
+       alias +25426944 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +25426944 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +25426944 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w0
+       alias +25721856 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w0
+       alias +25721856 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +25721856 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+   +35306496 changed=339862   span=[35306496,35650560) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w0
+       alias +35306496 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +35306496 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w0
+   +101376   changed=256      span=[101376,101632) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +105472   changed=256      span=[105472,105728) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +109568   changed=256      span=[109568,109824) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +113664   changed=256      span=[113664,113920) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w7
+       alias +162816 slot 1 cc_tinlayout_fused_pre_block_swin_1h_32_1_ds_fp8 w27
+       alias +114176 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w8
+       alias +114176 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +114688 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +114688 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115200 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115200 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115712 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115712 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116224 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116224 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116736 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116736 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +117248 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +117248 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w6
+       alias +117760 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w8
+       alias +117760 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +118784 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +118784 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +119808 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +119808 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +120832 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +120832 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +121856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +121856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w6
+       alias +122880 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w8
+       alias +122880 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +125440 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +125440 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +128512 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +128512 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w6
+       alias +131584 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w7
+       alias +131584 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +141824 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +141824 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +152576 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +152576 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w5
+       alias +162816 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w1
+   +99328    changed=192      span=[99328,99520) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +103424   changed=192      span=[103424,103616) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +107520   changed=192      span=[107520,107712) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +111616   changed=192      span=[111616,111808) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +98304    changed=96       span=[98304,98400) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +98816    changed=96       span=[98816,98912) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +99840    changed=96       span=[99840,99936) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +100352   changed=96       span=[100352,100448) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +100864   changed=96       span=[100864,100960) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +101888   changed=96       span=[101888,101984) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +102400   changed=96       span=[102400,102496) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +102912   changed=96       span=[102912,103008) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +103936   changed=96       span=[103936,104032) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +104448   changed=96       span=[104448,104544) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +104960   changed=96       span=[104960,105056) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +105984   changed=96       span=[105984,106080) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +106496   changed=96       span=[106496,106592) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +107008   changed=96       span=[107008,107104) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +108032   changed=96       span=[108032,108128) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +108544   changed=96       span=[108544,108640) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +109056   changed=96       span=[109056,109152) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +110080   changed=96       span=[110080,110176) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +110592   changed=96       span=[110592,110688) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +111104   changed=96       span=[111104,111200) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +112128   changed=96       span=[112128,112224) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +112640   changed=96       span=[112640,112736) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +113152   changed=96       span=[113152,113248) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w5
+ frame 1: changed=10921561 ranges=91881 attributed=10921561 segments=63
+   +33242112 changed=342917   span=[33242112,33586176) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +33242112 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +33242112 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +23706624 changed=342631   span=[23706624,24050688) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +23804928 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23706624 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +23706624 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +23706624 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +23804928 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +26459136 changed=342588   span=[26459136,26803200) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +28277760 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w1
+       alias +26999808 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w1
+       alias +26459136 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +26459136 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +26803200 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w3
+       alias +26803200 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w0
+       alias +26508288 slot 82 cc_vit_1d_projection_chained_fp8 w5
+       alias +26803200 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w3
+       alias +26999808 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w3
+       alias +28277760 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w3
+   +25082880 changed=342522   span=[25082880,25426944) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +25082880 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w9
+       alias +25082880 slot 24 cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8 w0
+       alias +25082880 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w1
+       alias +25328640 slot 85 cc_vit_1d_qkv_chained_fp8 w6
+   +22330368 changed=342440   span=[22330368,22674432) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +22526976 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +22330368 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +22330368 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +22330368 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22526976 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +20954112 changed=342283   span=[20954112,21298176) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +21249024 slot 17 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +20954112 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w2
+       alias +20954112 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +20954112 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21249024 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +33930240 changed=342164   span=[33930240,34274304) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +33930240 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +33930240 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +31865856 changed=341649   span=[31865856,32209920) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32111616 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w9
+       alias +32111616 slot 16 cc_tinlayout_fused_swin_8h_256_8_inpview_tilesync_fp8 w0
+       alias +31865856 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +31865856 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32013312 slot 95 cc_vit_1d_qkv_chained_fp8 w6
+       alias +32111616 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w1
+       alias +32111616 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w0
+   +25771008 changed=341627   span=[25771008,26115072) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +25771008 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +25771008 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +24394752 changed=341516   span=[24394752,24738816) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24443904 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +24443904 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w0
+       alias +24394752 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +24394752 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +24394752 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24443904 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w0
+       alias +24443904 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +34274304 changed=341435   span=[34274304,34618368) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34274304 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +34274304 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +34274304 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34372608 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w2
+       alias +34372608 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +33586176 changed=341316   span=[33586176,33930240) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +33586176 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +33586176 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +33586176 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +31177728 changed=341179   span=[31177728,31521792) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +31177728 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +31177728 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +23018496 changed=341127   span=[23018496,23362560) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +23165952 slot 7 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+       alias +23165952 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23018496 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +23018496 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +23018496 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23165952 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23165952 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+   +34962432 changed=341116   span=[34962432,35306496) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w1
+       alias +34962432 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +34962432 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +34962432 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w1
+       alias +35159040 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35159040 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +34618368 changed=340994   span=[34618368,34962432) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +34618368 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +34618368 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +32553984 changed=340851   span=[32553984,32898048) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +32553984 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +32553984 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +35650560 changed=340800   span=[35650560,35994624) anchored=1 slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w2
+       alias +35945472 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +35945472 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w0
+       alias +41057280 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w1
+       alias +46169088 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w8
+       alias +46169088 slot 6 cc_tinlayout_fused_swin_2h_64_2_inpview_tilesync_fp8 w0
+       alias +46169088 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w1
+       alias +52313088 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w2
+       alias +52657152 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w1
+       alias +52657152 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w0
+       alias +52853760 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w1
+       alias +52853760 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w0
+       alias +52853760 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +53246976 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49167360 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +53246976 slot 60 cc_vit_1d_qkv_chained_fp8 w0
+       alias +53443584 slot 60 cc_vit_1d_qkv_chained_fp8 w1
+       alias +53836800 slot 60 cc_vit_1d_qkv_chained_fp8 w2
+       alias +53640192 slot 60 cc_vit_1d_qkv_chained_fp8 w3
+       alias +53443584 slot 61 cc_vit_1d_attention_chained_fp8 w0
+       alias +53836800 slot 61 cc_vit_1d_attention_chained_fp8 w1
+       alias +53640192 slot 61 cc_vit_1d_attention_chained_fp8 w2
+       alias +54033408 slot 61 cc_vit_1d_attention_chained_fp8 w3
+       alias +54033408 slot 62 cc_vit_1d_projection_chained_fp8 w0
+       alias +53246976 slot 62 cc_vit_1d_projection_chained_fp8 w1
+       alias +54230016 slot 62 cc_vit_1d_projection_chained_fp8 w2
+       alias +49560576 slot 62 cc_vit_1d_projection_chained_fp8 w5
+       alias +54230016 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +54230016 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +54426624 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49953792 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +54426624 slot 65 cc_vit_1d_qkv_chained_fp8 w0
+       alias +54623232 slot 65 cc_vit_1d_qkv_chained_fp8 w1
+       alias +54819840 slot 65 cc_vit_1d_qkv_chained_fp8 w2
+       alias +55016448 slot 65 cc_vit_1d_qkv_chained_fp8 w3
+       alias +54623232 slot 66 cc_vit_1d_attention_chained_fp8 w0
+       alias +54819840 slot 66 cc_vit_1d_attention_chained_fp8 w1
+       alias +55016448 slot 66 cc_vit_1d_attention_chained_fp8 w2
+       alias +55213056 slot 66 cc_vit_1d_attention_chained_fp8 w3
+       alias +55213056 slot 67 cc_vit_1d_projection_chained_fp8 w0
+       alias +54426624 slot 67 cc_vit_1d_projection_chained_fp8 w1
+       alias +55409664 slot 67 cc_vit_1d_projection_chained_fp8 w2
+       alias +48774144 slot 67 cc_vit_1d_projection_chained_fp8 w5
+       alias +55409664 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +35945472 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35945472 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +55409664 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +55606272 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +50347008 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +55606272 slot 70 cc_vit_1d_qkv_chained_fp8 w0
+       alias +55802880 slot 70 cc_vit_1d_qkv_chained_fp8 w1
+       alias +55999488 slot 70 cc_vit_1d_qkv_chained_fp8 w2
+       alias +56196096 slot 70 cc_vit_1d_qkv_chained_fp8 w3
+       alias +55802880 slot 71 cc_vit_1d_attention_chained_fp8 w0
+       alias +55999488 slot 71 cc_vit_1d_attention_chained_fp8 w1
+       alias +56196096 slot 71 cc_vit_1d_attention_chained_fp8 w2
+       alias +56392704 slot 71 cc_vit_1d_attention_chained_fp8 w3
+       alias +56392704 slot 72 cc_vit_1d_projection_chained_fp8 w0
+       alias +55606272 slot 72 cc_vit_1d_projection_chained_fp8 w1
+       alias +56589312 slot 72 cc_vit_1d_projection_chained_fp8 w2
+       alias +50740224 slot 72 cc_vit_1d_projection_chained_fp8 w5
+       alias +56589312 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +36731904 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +36731904 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +56589312 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +56785920 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51133440 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +56785920 slot 75 cc_vit_1d_qkv_chained_fp8 w0
+       alias +56982528 slot 75 cc_vit_1d_qkv_chained_fp8 w1
+       alias +57179136 slot 75 cc_vit_1d_qkv_chained_fp8 w2
+       alias +57375744 slot 75 cc_vit_1d_qkv_chained_fp8 w3
+       alias +56982528 slot 76 cc_vit_1d_attention_chained_fp8 w0
+       alias +57179136 slot 76 cc_vit_1d_attention_chained_fp8 w1
+       alias +57375744 slot 76 cc_vit_1d_attention_chained_fp8 w2
+       alias +57572352 slot 76 cc_vit_1d_attention_chained_fp8 w3
+       alias +57572352 slot 77 cc_vit_1d_projection_chained_fp8 w0
+       alias +56785920 slot 77 cc_vit_1d_projection_chained_fp8 w1
+       alias +57768960 slot 77 cc_vit_1d_projection_chained_fp8 w2
+       alias +51526656 slot 77 cc_vit_1d_projection_chained_fp8 w5
+       alias +57768960 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +37518336 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +37518336 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +57768960 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +57965568 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51919872 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +57965568 slot 80 cc_vit_1d_qkv_chained_fp8 w0
+       alias +58358784 slot 80 cc_vit_1d_qkv_chained_fp8 w1
+       alias +58162176 slot 80 cc_vit_1d_qkv_chained_fp8 w2
+       alias +58555392 slot 80 cc_vit_1d_qkv_chained_fp8 w3
+       alias +58358784 slot 81 cc_vit_1d_attention_chained_fp8 w0
+       alias +58162176 slot 81 cc_vit_1d_attention_chained_fp8 w1
+       alias +58555392 slot 81 cc_vit_1d_attention_chained_fp8 w2
+       alias +58752000 slot 81 cc_vit_1d_attention_chained_fp8 w3
+       alias +58752000 slot 82 cc_vit_1d_projection_chained_fp8 w0
+       alias +57965568 slot 82 cc_vit_1d_projection_chained_fp8 w1
+       alias +58948608 slot 82 cc_vit_1d_projection_chained_fp8 w2
+       alias +58948608 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +38304768 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +38304768 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +58948608 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +59145216 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +40664064 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +59145216 slot 85 cc_vit_1d_qkv_chained_fp8 w0
+       alias +59735040 slot 85 cc_vit_1d_qkv_chained_fp8 w1
+       alias +59538432 slot 85 cc_vit_1d_qkv_chained_fp8 w2
+       alias +59341824 slot 85 cc_vit_1d_qkv_chained_fp8 w3
+       alias +59735040 slot 86 cc_vit_1d_attention_chained_fp8 w0
+       alias +59538432 slot 86 cc_vit_1d_attention_chained_fp8 w1
+       alias +59341824 slot 86 cc_vit_1d_attention_chained_fp8 w2
+       alias +59931648 slot 86 cc_vit_1d_attention_chained_fp8 w3
+       alias +59931648 slot 87 cc_vit_1d_projection_chained_fp8 w0
+       alias +59145216 slot 87 cc_vit_1d_projection_chained_fp8 w1
+       alias +60128256 slot 87 cc_vit_1d_projection_chained_fp8 w2
+       alias +46808064 slot 87 cc_vit_1d_projection_chained_fp8 w5
+       alias +60128256 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39091200 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39091200 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +60128256 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +60324864 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47201280 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +60324864 slot 90 cc_vit_1d_qkv_chained_fp8 w0
+       alias +60914688 slot 90 cc_vit_1d_qkv_chained_fp8 w1
+       alias +60718080 slot 90 cc_vit_1d_qkv_chained_fp8 w2
+       alias +60521472 slot 90 cc_vit_1d_qkv_chained_fp8 w3
+       alias +60914688 slot 91 cc_vit_1d_attention_chained_fp8 w0
+       alias +60718080 slot 91 cc_vit_1d_attention_chained_fp8 w1
+       alias +60521472 slot 91 cc_vit_1d_attention_chained_fp8 w2
+       alias +61111296 slot 91 cc_vit_1d_attention_chained_fp8 w3
+       alias +61111296 slot 92 cc_vit_1d_projection_chained_fp8 w0
+       alias +60324864 slot 92 cc_vit_1d_projection_chained_fp8 w1
+       alias +61307904 slot 92 cc_vit_1d_projection_chained_fp8 w2
+       alias +47594496 slot 92 cc_vit_1d_projection_chained_fp8 w5
+       alias +61307904 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39877632 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39877632 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +61307904 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +61504512 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47987712 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +61504512 slot 95 cc_vit_1d_qkv_chained_fp8 w0
+       alias +62094336 slot 95 cc_vit_1d_qkv_chained_fp8 w1
+       alias +61701120 slot 95 cc_vit_1d_qkv_chained_fp8 w2
+       alias +61897728 slot 95 cc_vit_1d_qkv_chained_fp8 w3
+       alias +62094336 slot 96 cc_vit_1d_attention_chained_fp8 w0
+       alias +61701120 slot 96 cc_vit_1d_attention_chained_fp8 w1
+       alias +61897728 slot 96 cc_vit_1d_attention_chained_fp8 w2
+       alias +62290944 slot 96 cc_vit_1d_attention_chained_fp8 w3
+       alias +62290944 slot 97 cc_vit_1d_projection_wait_fp8 w0
+       alias +61504512 slot 97 cc_vit_1d_projection_wait_fp8 w1
+       alias +53050368 slot 97 cc_vit_1d_projection_wait_fp8 w2
+       alias +48380928 slot 97 cc_vit_1d_projection_wait_fp8 w5
+       alias +53050368 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w0
+       alias +62487552 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w1
+       alias +62487552 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w0
+       alias +52313088 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w1
+       alias +35994624 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w6
+       alias +35650560 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w0
+       alias +46169088 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w3
+       alias +46169088 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w1
+       alias +46169088 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w0
+       alias +41057280 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w10
+       alias +35945472 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w1
+       alias +35945472 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w0
+   +21298176 changed=340674   span=[21298176,21642240) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21298176 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +21298176 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +21642240 changed=340673   span=[21642240,21986304) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +21888000 slot 11 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +21888000 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21642240 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +21642240 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +21642240 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21789696 slot 70 cc_vit_1d_qkv_chained_fp8 w6
+       alias +21888000 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21888000 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +26115072 changed=340661   span=[26115072,26459136) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +26115072 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +26115072 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +26115072 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +32898048 changed=340534   span=[32898048,33242112) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +32898048 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +32898048 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +32898048 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +33192960 slot 60 cc_vit_1d_qkv_chained_fp8 w6
+   +30833664 changed=340513   span=[30833664,31177728) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +30833664 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w9
+       alias +30833664 slot 10 cc_tinlayout_fused_swin_4h_128_4_inpview_tilesync_fp8 w0
+       alias +30833664 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +30833664 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +30833664 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 90 cc_vit_1d_qkv_chained_fp8 w6
+       alias +30833664 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w1
+       alias +30833664 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w0
+       alias +30833664 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w0
+   +24050688 changed=340500   span=[24050688,24394752) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +24050688 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +24050688 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24148992 slot 80 cc_vit_1d_qkv_chained_fp8 w6
+   +24738816 changed=340480   span=[24738816,25082880) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24738816 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +24738816 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +22674432 changed=340478   span=[22674432,23018496) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22674432 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +22674432 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +22969344 slot 75 cc_vit_1d_qkv_chained_fp8 w6
+   +23362560 changed=340451   span=[23362560,23706624) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23362560 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +23362560 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +31521792 changed=340443   span=[31521792,31865856) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +31521792 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +31521792 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +31521792 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +32209920 changed=340425   span=[32209920,32553984) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +32209920 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +32209920 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +32209920 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +25426944 changed=340397   span=[25426944,25771008) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 2 cc_tinlayout_fused_swin_1h_32_1_inpview_tilesync_fp8 w1
+       alias +25721856 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +25721856 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w0
+       alias +25721856 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w0
+       alias +25426944 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +25426944 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +25426944 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w0
+       alias +25721856 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w0
+       alias +25721856 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +25721856 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+   +21986304 changed=340340   span=[21986304,22330368) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21986304 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +21986304 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +35306496 changed=339837   span=[35306496,35650560) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w0
+       alias +35306496 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +35306496 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w0
+   +101376   changed=256      span=[101376,101632) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +105472   changed=256      span=[105472,105728) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +109568   changed=256      span=[109568,109824) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +113664   changed=256      span=[113664,113920) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w7
+       alias +162816 slot 1 cc_tinlayout_fused_pre_block_swin_1h_32_1_ds_fp8 w27
+       alias +114176 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w8
+       alias +114176 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +114688 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +114688 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115200 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115200 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115712 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115712 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116224 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116224 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116736 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116736 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +117248 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +117248 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w6
+       alias +117760 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w8
+       alias +117760 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +118784 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +118784 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +119808 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +119808 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +120832 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +120832 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +121856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +121856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w6
+       alias +122880 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w8
+       alias +122880 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +125440 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +125440 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +128512 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +128512 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w6
+       alias +131584 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w7
+       alias +131584 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +141824 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +141824 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +152576 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +152576 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w5
+       alias +162816 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w1
+   +99328    changed=192      span=[99328,99520) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +103424   changed=192      span=[103424,103616) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +107520   changed=192      span=[107520,107712) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +111616   changed=192      span=[111616,111808) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +98304    changed=96       span=[98304,98400) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +98816    changed=96       span=[98816,98912) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +99840    changed=96       span=[99840,99936) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +100352   changed=96       span=[100352,100448) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +100864   changed=96       span=[100864,100960) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +101888   changed=96       span=[101888,101984) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +102400   changed=96       span=[102400,102496) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +102912   changed=96       span=[102912,103008) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +103936   changed=96       span=[103936,104032) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +104448   changed=96       span=[104448,104544) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +104960   changed=96       span=[104960,105056) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +105984   changed=96       span=[105984,106080) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +106496   changed=96       span=[106496,106592) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +107008   changed=96       span=[107008,107104) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +108032   changed=96       span=[108032,108128) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +108544   changed=96       span=[108544,108640) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +109056   changed=96       span=[109056,109152) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +110080   changed=96       span=[110080,110176) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +110592   changed=96       span=[110592,110688) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +111104   changed=96       span=[111104,111200) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +112128   changed=96       span=[112128,112224) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +112640   changed=96       span=[112640,112736) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +113152   changed=96       span=[113152,113248) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w5
+ frame 2: changed=10921898 ranges=91600 attributed=10921898 segments=63
+   +33242112 changed=342991   span=[33242112,33586176) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +33242112 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +33242112 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +26459136 changed=342619   span=[26459136,26803200) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +28277760 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w1
+       alias +26999808 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w1
+       alias +26459136 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +26459136 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +26803200 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w3
+       alias +26803200 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w0
+       alias +26508288 slot 82 cc_vit_1d_projection_chained_fp8 w5
+       alias +26803200 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w3
+       alias +26999808 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w3
+       alias +28277760 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w3
+   +23706624 changed=342501   span=[23706624,24050688) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +23804928 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23706624 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +23706624 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +23706624 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +23804928 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23804928 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +25082880 changed=342456   span=[25082880,25426944) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +25082880 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w9
+       alias +25082880 slot 24 cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8 w0
+       alias +25082880 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w1
+       alias +25328640 slot 85 cc_vit_1d_qkv_chained_fp8 w6
+   +22330368 changed=342445   span=[22330368,22674432) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +22526976 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +22330368 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +22330368 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +22330368 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22526976 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +22526976 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +20954112 changed=342240   span=[20954112,21298176) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +21249024 slot 17 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +20954112 slot 25 cc_split_swin_16h_ffwd_proj_inpview_512_chained_fp8 w2
+       alias +20954112 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +20954112 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21249024 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21249024 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+   +33930240 changed=342089   span=[33930240,34274304) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +33930240 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +33930240 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +25771008 changed=341692   span=[25771008,26115072) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +25771008 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +25771008 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +31865856 changed=341567   span=[31865856,32209920) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32111616 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w9
+       alias +32111616 slot 16 cc_tinlayout_fused_swin_8h_256_8_inpview_tilesync_fp8 w0
+       alias +31865856 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +31865856 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +32013312 slot 95 cc_vit_1d_qkv_chained_fp8 w6
+       alias +32111616 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w1
+       alias +32111616 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w0
+   +24394752 changed=341513   span=[24394752,24738816) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24443904 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +24443904 slot 22 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w0
+       alias +24394752 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +24394752 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +24394752 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24443904 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +24443904 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w0
+       alias +24443904 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +24443904 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +34274304 changed=341420   span=[34274304,34618368) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34274304 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +34274304 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +34274304 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +34372608 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w2
+       alias +34372608 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +23018496 changed=341227   span=[23018496,23362560) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +23165952 slot 7 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+       alias +23165952 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 13 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 20 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 21 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23018496 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +23018496 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +23018496 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23165952 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +23165952 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +23165952 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +23165952 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +23165952 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +23165952 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w0
+   +31177728 changed=341187   span=[31177728,31521792) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +31177728 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +31177728 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +33586176 changed=341185   span=[33586176,33930240) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +33586176 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +33586176 slot 50 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +33586176 slot 51 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +34962432 changed=341121   span=[34962432,35306496) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w1
+       alias +34962432 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +34962432 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +34962432 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w1
+       alias +35159040 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35159040 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w0
+   +34618368 changed=340977   span=[34618368,34962432) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w1, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+       alias +34618368 slot 52 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +34618368 slot 53 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +32553984 changed=340834   span=[32553984,32898048) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +32553984 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +32553984 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +35650560 changed=340784   span=[35650560,35994624) anchored=1 slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w2
+       alias +35945472 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +35945472 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w0
+       alias +41057280 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w1
+       alias +46169088 slot 5 cc_tinlayout_fused_swin_1h_32_1_ds_wait_fp8 w8
+       alias +46169088 slot 6 cc_tinlayout_fused_swin_2h_64_2_inpview_tilesync_fp8 w0
+       alias +46169088 slot 23 cc_tinlayout_fused_swin_8h_256_8_ds_wait_fp8 w1
+       alias +52313088 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w2
+       alias +52657152 slot 56 cc_split_swin_16h_final_head_512_wait_fp8 w1
+       alias +52657152 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w0
+       alias +52853760 slot 57 cc_vit_1d_repack_2d_to_1d_fp8 w1
+       alias +52853760 slot 58 cc_vit_1d_ffn_expand_publish_fp8 w0
+       alias +52853760 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +53246976 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49167360 slot 59 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +53246976 slot 60 cc_vit_1d_qkv_chained_fp8 w0
+       alias +53443584 slot 60 cc_vit_1d_qkv_chained_fp8 w1
+       alias +53836800 slot 60 cc_vit_1d_qkv_chained_fp8 w2
+       alias +53640192 slot 60 cc_vit_1d_qkv_chained_fp8 w3
+       alias +53443584 slot 61 cc_vit_1d_attention_chained_fp8 w0
+       alias +53836800 slot 61 cc_vit_1d_attention_chained_fp8 w1
+       alias +53640192 slot 61 cc_vit_1d_attention_chained_fp8 w2
+       alias +54033408 slot 61 cc_vit_1d_attention_chained_fp8 w3
+       alias +54033408 slot 62 cc_vit_1d_projection_chained_fp8 w0
+       alias +53246976 slot 62 cc_vit_1d_projection_chained_fp8 w1
+       alias +54230016 slot 62 cc_vit_1d_projection_chained_fp8 w2
+       alias +49560576 slot 62 cc_vit_1d_projection_chained_fp8 w5
+       alias +54230016 slot 63 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +54230016 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +54426624 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +49953792 slot 64 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +54426624 slot 65 cc_vit_1d_qkv_chained_fp8 w0
+       alias +54623232 slot 65 cc_vit_1d_qkv_chained_fp8 w1
+       alias +54819840 slot 65 cc_vit_1d_qkv_chained_fp8 w2
+       alias +55016448 slot 65 cc_vit_1d_qkv_chained_fp8 w3
+       alias +54623232 slot 66 cc_vit_1d_attention_chained_fp8 w0
+       alias +54819840 slot 66 cc_vit_1d_attention_chained_fp8 w1
+       alias +55016448 slot 66 cc_vit_1d_attention_chained_fp8 w2
+       alias +55213056 slot 66 cc_vit_1d_attention_chained_fp8 w3
+       alias +55213056 slot 67 cc_vit_1d_projection_chained_fp8 w0
+       alias +54426624 slot 67 cc_vit_1d_projection_chained_fp8 w1
+       alias +55409664 slot 67 cc_vit_1d_projection_chained_fp8 w2
+       alias +48774144 slot 67 cc_vit_1d_projection_chained_fp8 w5
+       alias +55409664 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +35945472 slot 68 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +35945472 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +55409664 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +55606272 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +50347008 slot 69 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +55606272 slot 70 cc_vit_1d_qkv_chained_fp8 w0
+       alias +55802880 slot 70 cc_vit_1d_qkv_chained_fp8 w1
+       alias +55999488 slot 70 cc_vit_1d_qkv_chained_fp8 w2
+       alias +56196096 slot 70 cc_vit_1d_qkv_chained_fp8 w3
+       alias +55802880 slot 71 cc_vit_1d_attention_chained_fp8 w0
+       alias +55999488 slot 71 cc_vit_1d_attention_chained_fp8 w1
+       alias +56196096 slot 71 cc_vit_1d_attention_chained_fp8 w2
+       alias +56392704 slot 71 cc_vit_1d_attention_chained_fp8 w3
+       alias +56392704 slot 72 cc_vit_1d_projection_chained_fp8 w0
+       alias +55606272 slot 72 cc_vit_1d_projection_chained_fp8 w1
+       alias +56589312 slot 72 cc_vit_1d_projection_chained_fp8 w2
+       alias +50740224 slot 72 cc_vit_1d_projection_chained_fp8 w5
+       alias +56589312 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +36731904 slot 73 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +36731904 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +56589312 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +56785920 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51133440 slot 74 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +56785920 slot 75 cc_vit_1d_qkv_chained_fp8 w0
+       alias +56982528 slot 75 cc_vit_1d_qkv_chained_fp8 w1
+       alias +57179136 slot 75 cc_vit_1d_qkv_chained_fp8 w2
+       alias +57375744 slot 75 cc_vit_1d_qkv_chained_fp8 w3
+       alias +56982528 slot 76 cc_vit_1d_attention_chained_fp8 w0
+       alias +57179136 slot 76 cc_vit_1d_attention_chained_fp8 w1
+       alias +57375744 slot 76 cc_vit_1d_attention_chained_fp8 w2
+       alias +57572352 slot 76 cc_vit_1d_attention_chained_fp8 w3
+       alias +57572352 slot 77 cc_vit_1d_projection_chained_fp8 w0
+       alias +56785920 slot 77 cc_vit_1d_projection_chained_fp8 w1
+       alias +57768960 slot 77 cc_vit_1d_projection_chained_fp8 w2
+       alias +51526656 slot 77 cc_vit_1d_projection_chained_fp8 w5
+       alias +57768960 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +37518336 slot 78 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +37518336 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +57768960 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +57965568 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +51919872 slot 79 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +57965568 slot 80 cc_vit_1d_qkv_chained_fp8 w0
+       alias +58358784 slot 80 cc_vit_1d_qkv_chained_fp8 w1
+       alias +58162176 slot 80 cc_vit_1d_qkv_chained_fp8 w2
+       alias +58555392 slot 80 cc_vit_1d_qkv_chained_fp8 w3
+       alias +58358784 slot 81 cc_vit_1d_attention_chained_fp8 w0
+       alias +58162176 slot 81 cc_vit_1d_attention_chained_fp8 w1
+       alias +58555392 slot 81 cc_vit_1d_attention_chained_fp8 w2
+       alias +58752000 slot 81 cc_vit_1d_attention_chained_fp8 w3
+       alias +58752000 slot 82 cc_vit_1d_projection_chained_fp8 w0
+       alias +57965568 slot 82 cc_vit_1d_projection_chained_fp8 w1
+       alias +58948608 slot 82 cc_vit_1d_projection_chained_fp8 w2
+       alias +58948608 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +38304768 slot 83 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +38304768 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +58948608 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +59145216 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +40664064 slot 84 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +59145216 slot 85 cc_vit_1d_qkv_chained_fp8 w0
+       alias +59735040 slot 85 cc_vit_1d_qkv_chained_fp8 w1
+       alias +59538432 slot 85 cc_vit_1d_qkv_chained_fp8 w2
+       alias +59341824 slot 85 cc_vit_1d_qkv_chained_fp8 w3
+       alias +59735040 slot 86 cc_vit_1d_attention_chained_fp8 w0
+       alias +59538432 slot 86 cc_vit_1d_attention_chained_fp8 w1
+       alias +59341824 slot 86 cc_vit_1d_attention_chained_fp8 w2
+       alias +59931648 slot 86 cc_vit_1d_attention_chained_fp8 w3
+       alias +59931648 slot 87 cc_vit_1d_projection_chained_fp8 w0
+       alias +59145216 slot 87 cc_vit_1d_projection_chained_fp8 w1
+       alias +60128256 slot 87 cc_vit_1d_projection_chained_fp8 w2
+       alias +46808064 slot 87 cc_vit_1d_projection_chained_fp8 w5
+       alias +60128256 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39091200 slot 88 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39091200 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +60128256 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +60324864 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47201280 slot 89 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +60324864 slot 90 cc_vit_1d_qkv_chained_fp8 w0
+       alias +60914688 slot 90 cc_vit_1d_qkv_chained_fp8 w1
+       alias +60718080 slot 90 cc_vit_1d_qkv_chained_fp8 w2
+       alias +60521472 slot 90 cc_vit_1d_qkv_chained_fp8 w3
+       alias +60914688 slot 91 cc_vit_1d_attention_chained_fp8 w0
+       alias +60718080 slot 91 cc_vit_1d_attention_chained_fp8 w1
+       alias +60521472 slot 91 cc_vit_1d_attention_chained_fp8 w2
+       alias +61111296 slot 91 cc_vit_1d_attention_chained_fp8 w3
+       alias +61111296 slot 92 cc_vit_1d_projection_chained_fp8 w0
+       alias +60324864 slot 92 cc_vit_1d_projection_chained_fp8 w1
+       alias +61307904 slot 92 cc_vit_1d_projection_chained_fp8 w2
+       alias +47594496 slot 92 cc_vit_1d_projection_chained_fp8 w5
+       alias +61307904 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w0
+       alias +39877632 slot 93 cc_vit_1d_ffn_expand_chained_fp8 w2
+       alias +39877632 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w0
+       alias +61307904 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w1
+       alias +61504512 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w2
+       alias +47987712 slot 94 cc_vit_1d_ffn_contract_chained_fp8 w5
+       alias +61504512 slot 95 cc_vit_1d_qkv_chained_fp8 w0
+       alias +62094336 slot 95 cc_vit_1d_qkv_chained_fp8 w1
+       alias +61701120 slot 95 cc_vit_1d_qkv_chained_fp8 w2
+       alias +61897728 slot 95 cc_vit_1d_qkv_chained_fp8 w3
+       alias +62094336 slot 96 cc_vit_1d_attention_chained_fp8 w0
+       alias +61701120 slot 96 cc_vit_1d_attention_chained_fp8 w1
+       alias +61897728 slot 96 cc_vit_1d_attention_chained_fp8 w2
+       alias +62290944 slot 96 cc_vit_1d_attention_chained_fp8 w3
+       alias +62290944 slot 97 cc_vit_1d_projection_wait_fp8 w0
+       alias +61504512 slot 97 cc_vit_1d_projection_wait_fp8 w1
+       alias +53050368 slot 97 cc_vit_1d_projection_wait_fp8 w2
+       alias +48380928 slot 97 cc_vit_1d_projection_wait_fp8 w5
+       alias +53050368 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w0
+       alias +62487552 slot 98 cc_vit_1d_repack_1d_to_2d_fp8 w1
+       alias +62487552 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w0
+       alias +52313088 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w1
+       alias +35994624 slot 99 cc_dec_input_upsample_1024_512_tilesync_fp8 w6
+       alias +35650560 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w0
+       alias +46169088 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w3
+       alias +46169088 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w1
+       alias +46169088 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w0
+       alias +41057280 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w10
+       alias +35945472 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w1
+       alias +35945472 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w0
+   +21642240 changed=340688   span=[21642240,21986304) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +21888000 slot 11 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 12 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+       alias +21888000 slot 18 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 19 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21642240 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +21642240 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +21642240 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21789696 slot 70 cc_vit_1d_qkv_chained_fp8 w6
+       alias +21888000 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w1
+       alias +21888000 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w0
+       alias +21888000 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +21888000 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w0
+   +26115072 changed=340661   span=[26115072,26459136) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +26115072 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +26115072 slot 40 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +26115072 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +21298176 changed=340613   span=[21298176,21642240) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +21298176 slot 26 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +21298176 slot 27 cc_split_swin_16h_proj_512_chained_fp8 w0
+   +24738816 changed=340559   span=[24738816,25082880) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +24738816 slot 36 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +24738816 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +30833664 changed=340554   span=[30833664,31177728) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 4 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +30833664 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w9
+       alias +30833664 slot 10 cc_tinlayout_fused_swin_4h_128_4_inpview_tilesync_fp8 w0
+       alias +30833664 slot 41 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +30833664 slot 42 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +30833664 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +30833664 slot 90 cc_vit_1d_qkv_chained_fp8 w6
+       alias +30833664 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w1
+       alias +30833664 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w0
+       alias +30833664 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +30833664 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w0
+   +24050688 changed=340528   span=[24050688,24394752) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +24050688 slot 34 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +24050688 slot 35 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +24148992 slot 80 cc_vit_1d_qkv_chained_fp8 w6
+   +32898048 changed=340526   span=[32898048,33242112) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +32898048 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +32898048 slot 48 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +32898048 slot 49 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +33192960 slot 60 cc_vit_1d_qkv_chained_fp8 w6
+   +32209920 changed=340480   span=[32209920,32553984) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +32209920 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +32209920 slot 46 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +32209920 slot 47 cc_split_swin_16h_proj_512_chained_fp8 w1
+   +31521792 changed=340469   span=[31521792,31865856) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +31521792 slot 43 cc_split_swin_16h_proj_512_chained_fp8 w2
+       alias +31521792 slot 44 cc_split_swin_16h_ffwd_512_chained_fp8 w0
+       alias +31521792 slot 45 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+   +21986304 changed=340465   span=[21986304,22330368) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +21986304 slot 28 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +21986304 slot 29 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +22674432 changed=340463   span=[22674432,23018496) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +22674432 slot 30 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +22674432 slot 31 cc_split_swin_16h_proj_512_chained_fp8 w0
+       alias +22969344 slot 75 cc_vit_1d_qkv_chained_fp8 w6
+   +25426944 changed=340443   span=[25426944,25771008) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w0, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 2 cc_tinlayout_fused_swin_1h_32_1_inpview_tilesync_fp8 w1
+       alias +25721856 slot 3 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+       alias +25721856 slot 8 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 9 cc_tinlayout_fused_swin_2h_64_2_ds_wait_fp8 w0
+       alias +25721856 slot 14 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 15 cc_tinlayout_fused_swin_4h_128_4_ds_wait_fp8 w0
+       alias +25426944 slot 37 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w2
+       alias +25426944 slot 38 cc_split_swin_16h_qkv_512_chained_fp8 w0
+       alias +25426944 slot 39 cc_split_swin_16h_proj_512_chained_fp8 w1
+       alias +25721856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w1
+       alias +25721856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w0
+       alias +25721856 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w1
+       alias +25721856 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w0
+       alias +25721856 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w1
+       alias +25721856 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w0
+   +23362560 changed=340406   span=[23362560,23706624) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w2, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w0, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w1
+       alias +23362560 slot 32 cc_split_swin_16h_ffwd_512_chained_fp8 w1
+       alias +23362560 slot 33 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w0
+   +35306496 changed=340195   span=[35306496,35650560) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w1, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w0
+       alias +35306496 slot 54 cc_split_swin_16h_qkv_512_chained_fp8 w1
+       alias +35306496 slot 55 cc_split_swin_16h_proj_pool_512_chained_fp8 w0
+   +101376   changed=256      span=[101376,101632) anchored=1 slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 107 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +105472   changed=256      span=[105472,105728) anchored=1 slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 115 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +109568   changed=256      span=[109568,109824) anchored=1 slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 123 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +113664   changed=256      span=[113664,113920) anchored=1 slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 131 cc_split_swin_16h_proj_512_outview_wait_fp8 w7
+       alias +162816 slot 1 cc_tinlayout_fused_pre_block_swin_1h_32_1_ds_fp8 w27
+       alias +114176 slot 132 cc_tinlayout_fused_swin_8h_256_8_upsample_tilesync_fp8 w8
+       alias +114176 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +114688 slot 133 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +114688 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115200 slot 134 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115200 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +115712 slot 135 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +115712 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116224 slot 136 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116224 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +116736 slot 137 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +116736 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w6
+       alias +117248 slot 138 cc_tinlayout_fused_swin_8h_256_8_chained_fp8 w8
+       alias +117248 slot 139 cc_tinlayout_fused_swin_8h_256_8_outview_wait_fp8 w6
+       alias +117760 slot 140 cc_tinlayout_fused_swin_4h_128_4_upsample_tilesync_fp8 w8
+       alias +117760 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +118784 slot 141 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +118784 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +119808 slot 142 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +119808 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +120832 slot 143 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +120832 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w6
+       alias +121856 slot 144 cc_tinlayout_fused_swin_4h_128_4_chained_fp8 w8
+       alias +121856 slot 145 cc_tinlayout_fused_swin_4h_128_4_outview_wait_fp8 w6
+       alias +122880 slot 146 cc_tinlayout_fused_swin_2h_64_2_upsample_tilesync_fp8 w8
+       alias +122880 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +125440 slot 147 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +125440 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w6
+       alias +128512 slot 148 cc_tinlayout_fused_swin_2h_64_2_chained_fp8 w8
+       alias +128512 slot 149 cc_tinlayout_fused_swin_2h_64_2_outview_wait_fp8 w6
+       alias +131584 slot 150 cc_tinlayout_fused_swin_1h_32_1_upsample_tilesync_fp8 w7
+       alias +131584 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +141824 slot 151 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +141824 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w5
+       alias +152576 slot 152 cc_tinlayout_fused_swin_1h_32_1_chained_fp8 w7
+       alias +152576 slot 153 cc_tinlayout_fused_swin_1h_32_1_outview_wait_fp8 w5
+       alias +162816 slot 154 cc_tinlayout_fused_post_block_swin_1h_32_fp8 w1
+   +99328    changed=192      span=[99328,99520) anchored=1 slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 103 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +103424   changed=192      span=[103424,103616) anchored=1 slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 111 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +107520   changed=192      span=[107520,107712) anchored=1 slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 119 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +111616   changed=192      span=[111616,111808) anchored=1 slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w6, slot 127 cc_split_swin_16h_proj_512_chained_fp8 w7
+   +98304    changed=96       span=[98304,98400) anchored=1 slot 100 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +98816    changed=96       span=[98816,98912) anchored=1 slot 101 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 102 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +99840    changed=96       span=[99840,99936) anchored=1 slot 103 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +100352   changed=96       span=[100352,100448) anchored=1 slot 104 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +100864   changed=96       span=[100864,100960) anchored=1 slot 105 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 106 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +101888   changed=96       span=[101888,101984) anchored=1 slot 107 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +102400   changed=96       span=[102400,102496) anchored=1 slot 108 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +102912   changed=96       span=[102912,103008) anchored=1 slot 109 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 110 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +103936   changed=96       span=[103936,104032) anchored=1 slot 111 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +104448   changed=96       span=[104448,104544) anchored=1 slot 112 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +104960   changed=96       span=[104960,105056) anchored=1 slot 113 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 114 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +105984   changed=96       span=[105984,106080) anchored=1 slot 115 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +106496   changed=96       span=[106496,106592) anchored=1 slot 116 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +107008   changed=96       span=[107008,107104) anchored=1 slot 117 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 118 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +108032   changed=96       span=[108032,108128) anchored=1 slot 119 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +108544   changed=96       span=[108544,108640) anchored=1 slot 120 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +109056   changed=96       span=[109056,109152) anchored=1 slot 121 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 122 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +110080   changed=96       span=[110080,110176) anchored=1 slot 123 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +110592   changed=96       span=[110592,110688) anchored=1 slot 124 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +111104   changed=96       span=[111104,111200) anchored=1 slot 125 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 126 cc_split_swin_16h_qkv_512_chained_fp8 w5
+   +112128   changed=96       span=[112128,112224) anchored=1 slot 127 cc_split_swin_16h_proj_512_chained_fp8 w6, slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w4
+   +112640   changed=96       span=[112640,112736) anchored=1 slot 128 cc_split_swin_16h_ffwd_512_chained_fp8 w6, slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w7
+   +113152   changed=96       span=[113152,113248) anchored=1 slot 129 cc_split_swin_16h_ffwd_proj_512_chained_fp8 w6, slot 130 cc_split_swin_16h_qkv_512_chained_fp8 w5
