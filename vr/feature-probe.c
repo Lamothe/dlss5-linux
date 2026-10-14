@@ -27,8 +27,19 @@ static void set_uint(void* params, const char* key, unsigned int value) {
 #include "gpu-scene.h"
 
 int main(int argc, char** argv) {
-    int capture_mode = argc == 3 && strcmp(argv[1], "--capture") == 0;
+    int capture_reset_mode = (argc == 3 || argc == 4) && strcmp(argv[1], "--capture-reset-mid") == 0;
+    int capture_mode = capture_reset_mode || (argc == 3 && strcmp(argv[1], "--capture") == 0);
     const char* capture_dir = capture_mode ? argv[2] : NULL;
+    unsigned int capture_reset_frame = CAPTURE_RESET_FRAME;
+    if (capture_reset_mode && argc == 4) {
+        char* end = NULL;
+        unsigned long parsed = strtoul(argv[3], &end, 10);
+        if (!argv[3][0] || *end || parsed < 1 || parsed >= CAPTURE_FRAMES) {
+            fprintf(stderr, "Reset frame must be an integer in [1, %u]\n", CAPTURE_FRAMES - 1);
+            return 1;
+        }
+        capture_reset_frame = (unsigned int)parsed;
+    }
     int boundary_mode = argc == 3 && strcmp(argv[1], "--capture-boundary") == 0;
     const char* boundary_dir = boundary_mode ? argv[2] : NULL;
     int tracked_mode = argc==2 && strcmp(argv[1],"--tracked-control")==0;
@@ -37,7 +48,7 @@ int main(int argc, char** argv) {
     int scene_mode = gpu_mode || (argc == 2 && strcmp(argv[1], "--scene") == 0);
     int evaluate_mode = scene_mode || (argc == 2 && strcmp(argv[1], "--evaluate") == 0);
     if (argc > 1 && !evaluate_mode && !capture_mode && !boundary_mode) {
-        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-boundary DIR]\n");
+        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-reset-mid DIR [FRAME]|--capture-boundary DIR]\n");
         return 1;
     }    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
@@ -129,8 +140,15 @@ int main(int argc, char** argv) {
         }
         capture_manifest = fopen(manifest_path, "w");
         if (!capture_manifest) { fprintf(stderr, "Capture manifest open failed\n"); goto cleanup; }
-        fprintf(capture_manifest, "protocol capture-v1 frames=%u size=%u context=eye0 inputs=gradient-stationary reset=frame0\n",
-                CAPTURE_FRAMES, PROBE_SIZE);
+        // Temporal-state probe (see vr/TEMPORAL-STATE.md): capture-reset-mid
+        // repeats the controlled capture with a second DLSSNR.Reset at the
+        // chosen frame (default 4). If reset clears all output-visible temporal
+        // state and the runtime is time-homogeneous, frames N..7 replay the
+        // run's own frames 0..7-N bit-identically.
+        fprintf(capture_manifest, "protocol %s frames=%u size=%u context=eye0 inputs=gradient-stationary reset=%s%u\n",
+                capture_reset_mode ? "capture-reset-mid-v1" : "capture-v1",
+                CAPTURE_FRAMES, PROBE_SIZE,
+                capture_reset_mode ? "frame0+frame" : "frame", capture_reset_mode ? capture_reset_frame : 0u);
         for (unsigned int frame = 0; frame < CAPTURE_FRAMES; ++frame) {
             CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
             CHECK_HR(ID3D12GraphicsCommandList_Reset(list, allocator, NULL));
@@ -138,7 +156,8 @@ int main(int argc, char** argv) {
                 for (unsigned int texture = 0; texture < 3; ++texture) { upload_texture(list, &eyes[0], texture); }
             }
             upload_texture(list, &eyes[0], 3); // fresh NaNs each evaluation
-            set_uint(eyes[0].params, "DLSSNR.Reset", frame == 0 ? 1u : 0u);
+            set_uint(eyes[0].params, "DLSSNR.Reset",
+                     (frame == 0 || (capture_reset_mode && frame == capture_reset_frame)) ? 1u : 0u);
             result = evaluate(list, features[0], eyes[0].params);
             printf("CaptureEvaluate frame=%u result=0x%x\n", frame, result); fflush(stdout);
             if (result != 1) { goto cleanup; }
@@ -158,7 +177,8 @@ int main(int argc, char** argv) {
         }
         fclose(capture_manifest);
         capture_manifest = NULL;
-        printf("PASS: reference capture frames=%u dir=%s context=eye0\n", CAPTURE_FRAMES, capture_dir);
+        printf("PASS: %s frames=%u dir=%s context=eye0\n",
+               capture_reset_mode ? "reset-mid capture" : "reference capture", CAPTURE_FRAMES, capture_dir);
         fflush(stdout);
     }
     if (boundary_mode) {

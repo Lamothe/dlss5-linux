@@ -68,7 +68,8 @@ frames differ in 66–69% of samples with mean absolute difference ≈
 0.0004–0.0006 (FP16 scale). Output vs input colour: mean absolute difference
 ≈ 0.0066 at frame 0 and frame 7. **Any future comparison must pin the frame
 index, the input set and the reset semantics** — the reference is the sequence,
-not a single image.
+not a single image. The reset/state contract itself is established in
+[TEMPORAL-STATE.md](TEMPORAL-STATE.md) (mid-stream reset probe).
 
 ## Dispatch investigation — how the model runs its kernels under Proton
 

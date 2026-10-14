@@ -40,6 +40,18 @@ case "$mode" in
     command="feature-probe.exe --capture capture-$label > probe-output.txt 2>&1"
     marker='^PASS: reference capture'
     ;;
+  capture-reset)
+    # Temporal-state probe (see vr/TEMPORAL-STATE.md): identical inputs with a
+    # second DLSSNR.Reset at the given frame (default 4); retained under
+    # vr/logs/temporal/<label>. Staged under resetmid-* to avoid colliding with
+    # a `capture` run of the same label.
+    label="${2:-run}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'capture-reset label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    frame="${3:-4}"
+    [[ "$frame" =~ ^[1-7]$ ]] || { echo 'capture-reset frame must be an integer in [1,7]' >&2; exit 2; }
+    command="feature-probe.exe --capture-reset-mid resetmid-$label $frame > probe-output.txt 2>&1"
+    marker='^PASS: reset-mid capture'
+    ;;
   boundary)
     # Decoder-boundary intermediate capture (see vr/DECODER-BOUNDARY.md): the
     # forwarder truncates every evaluation after the decoder launch and writes
@@ -53,7 +65,7 @@ case "$mode" in
     export DLSS_NVAPI_CUT=1
     export DLSS_NVAPI_CUT_FILE="nvapi-boundary-$label.txt"
     ;;
-  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene]' >&2; exit 1 ;;
+  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene|capture|capture-reset|boundary]' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
 export STEAM_COMPAT_DATA_PATH="$ROOT/vr/prefix"
@@ -142,6 +154,14 @@ if [[ "$mode" == capture ]]; then
   rm -rf "$ROOT/vr/logs/reference/$label"
   mv "capture-$label" "$ROOT/vr/logs/reference/$label"
   echo "Reference capture stored at vr/logs/reference/$label"
+fi
+
+# Reset-mid temporal captures are retained under vr/logs/temporal/<label>.
+if [[ "$mode" == capture-reset ]]; then
+  mkdir -p "$ROOT/vr/logs/temporal"
+  rm -rf "$ROOT/vr/logs/temporal/$label"
+  mv "resetmid-$label" "$ROOT/vr/logs/temporal/$label"
+  echo "Reset-mid capture stored at vr/logs/temporal/$label"
 fi
 
 # Boundary captures are retained under vr/logs/boundary/<label> together with

@@ -220,6 +220,9 @@ static int validate_readback(EyeInputs* eye, unsigned int index, unsigned int fr
 // Files: input-colour.bin (FP16x4), input-depth.bin (F32), input-motion.bin (FP16x2),
 // output-frame%02u.bin (FP16x4), manifest.txt (sizes + FNV-1a-64 digests).
 #define CAPTURE_FRAMES 8u
+// Mid-stream reset frame for the capture-reset-mid temporal probe: the second
+// DLSSNR.Reset lands here (see vr/TEMPORAL-STATE.md).
+#define CAPTURE_RESET_FRAME 4u
 static uint64_t capture_fnv(const unsigned char* data, size_t size) {
     uint64_t hash = 14695981039346656037ull;
     for (size_t i = 0; i < size; ++i) { hash ^= data[i]; hash *= 1099511628211ull; }
