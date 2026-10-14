@@ -62,19 +62,25 @@ equal `output-01` (same history, stationary inputs). It does not
 
 The parameter dumps locate it. The `scan` analysis in
 `vr/history-carrier-report.py` classifies every word position of the 120-eval
-parameter dump (`vr/logs/capture/nvapi-trace-eval-args-1.log`); its pinned
-result (`SCAN_PINS`, verified by `scan-mismatch` in `validate`): **exactly one
-word position varies per frame within a single eye — slot 1, word 25** of the
-launch parameter block — taking values `0,1,2,3,...` (monotonic per eye). A
-traced `capture-reset` run shows the sequence **`[0,1,2,3,0,1,2,3]`** across a
-mid-stream reset at frame 4: the counter is the frame index since the last
-`DLSSNR.Reset`.
+parameter dump (`vr/logs/capture/nvapi-trace-eval-args-1.log`) into an
+exhaustive partition (`SCAN_PINS`, verified by `scan-mismatch` in `validate`):
+1453 positions — 552 constant, 896 two-valued, and **5 multi-valued**. Of the
+multi-valued positions only **slot 1, word 25** varies *per frame*: the frame
+counter (60 values across the 120 evals, incrementing once per frame). The
+other four — slot 1 words 1–2 and the identical slot 154 words 11–12 — are one
+lazily initialised parameter pair **shared verbatim between the two launches**:
+zero at evals 0–1, then per-eye constants from eval 2 (the two eyes' values
+differ by 2). A traced `capture-reset` run shows the counter sequence
+**`[0,1,2,3,0,1,2,3]`** across a mid-stream reset at frame 4: the counter is
+the frame index since the last `DLSSNR.Reset`.
 
 `capture-history-replay2` perturbs frame 1 (uniform 1.0) and then re-injects the
-same `output-00` history at f2/f5. The f2/f5 outputs match `hist-replay` exactly
-despite the f1 perturbation — no content-dependent state beyond the history
-survives across frames. (Frame-indexed state invisible to this test is excluded
-by the slot-1-word-25 scan above, not by replay2 alone.)
+same `output-00` history at f2/f5. **All** later outputs (f2..f7) match
+`hist-replay` exactly despite the f1 perturbation (`replay2-trace`) — no
+content-dependent state beyond the history survives across frames.
+(Frame-indexed *parameter* state is excluded by the exhaustive slot scan above,
+not by replay2 alone; state carried in buffer contents — the history texture
+itself — is what the carrier experiments cover.)
 
 ## Reset frames ignore the history
 
@@ -107,6 +113,15 @@ at eval 2 and stay. So 886/896 track the eye order, and the `ABBA` pattern is
 the alternating submission order of the two eyes — not a rotation within one
 context. Each feature holds a static resource set.
 
+The exhaustive classifier also corrects one earlier claim: the first two-bucket
+scan reported "exactly one varying word position" while silently dropping
+within-eye toggles with disjoint value pairs. The four lazily initialised words
+above were found that way (the review that caught the blind spot is recorded in
+the stage notes); the self-test now plants that exact shape
+(`write_scan_fixture`) so the class scheme cannot regress. The parameter pair
+shared between slot 1 and slot 154 is recorded as a lead for pinning the
+history read/write kernels (the "Next" item), not yet interpreted.
+
 ## Validation
 
 `vr/history-carrier-report.py`:
@@ -119,11 +134,17 @@ context. Each feature holds a static resource set.
   sham identity, intervention effectiveness, the counter sequence, and the
   reset-frame replay. **PASS (10 runs, 28 checks).**
 - `self-test` builds a 4×4 synthetic fixture with the same relationships and
-  asserts **26 corruption controls** each fail with their pinned check (one is
+  asserts **31 corruption controls** each fail with their pinned check (one is
   deliberately non-isolated: `no-restart-divergence` also trips the anchors and
-  the sham check by construction). **PASS.**
-- hist-a's digests are externally anchored in the tool (below), so a coordinated
-  change to both files and manifest is still detectable.
+  the sham check by construction). The scan machinery, the counter anchor and
+  the cross-run input check each have dedicated controls, and the scan fixture
+  plants a hand-written ground-truth classification (`SCAN_FIXTURE_PINS`) that
+  includes the blind-spot toggle shape — the pins for the real trace are
+  tool-generated, so this synthetic ground truth is what validates the
+  classifier itself. **PASS.**
+- hist-a's digests are externally anchored in the tool (below) — all payloads
+  *and* its manifest and resource map — so a coordinated change to both files
+  and manifest is still detectable.
 - Provenance: the 10 runs were captured with the final probe build
   (`zig cc … -Werror`, PE sha256 prefix `609233eaf09f1988`). The earlier
   pre-rebuild runs are retained under `vr/logs/history-superseded-pre-rebuild/`
@@ -156,6 +177,24 @@ Anchored hist-a digest highlights (full table in the tool):
   154–155). The read point in the 156-slot sequence is likewise not pinned.
 - Intervention runs overwrite the history *texture*; if the model caches the
   history elsewhere at creation, the cache is not exercised differently here.
+- The `dlssnr_prev_output` identification rests on reading the resource map's
+  records; the map bytes are now anchored, but the name-to-allocation link and
+  the manifests' history metadata (`idx`/`rec`/`stage`/`w`/`h`/`fmt`, all
+  `va=0x0`) are shape-checked only, not cross-pinned to the map.
+- The f5 checkerboard's effect is not independently isolated: the required
+  divergence at f2..f7 is fully explained by the f2 uniform injection, so a
+  no-op f5 write would pass (an f2-only run would isolate it). Likewise the
+  injectreset write-landing has no in-run positive control (it relies on
+  command-list ordering before `evaluate()` and on the shared injection path
+  proven effective in `hist-inj`/`hist-replay2`), and `replay-counter-absent`
+  is meaningful only jointly with `replay2-trace`.
+- The readback copies are driver-lenient D3D12: `CopyTextureRegion` with a UAV
+  barrier only, no `COPY_SOURCE`/`COPY_DEST` state transitions (noted in the
+  code). The bit-exact identities and intervention effects are the empirical
+  validation.
+- The real-trace scan pins are generated by the validated classifier; the
+  classifier itself is checked against hand-written synthetic ground truth and
+  corruption controls, which is the limit of the anti-circularity argument.
 - This stage is behavioural evidence from the vendor runtime; no native
   temporal computation ran and no neural-rendered image was produced. Rights
   and data-handling caveats from earlier stages are unchanged; captures remain

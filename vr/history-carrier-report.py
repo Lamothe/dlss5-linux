@@ -136,6 +136,10 @@ ANCHORS = {
     "output-frame05.bin": (4147200, 0xbe6ebbf0d7da3676),
     "output-frame06.bin": (4147200, 0x61050c5427b0ea49),
     "output-frame07.bin": (4147200, 0xbbba397b954e15eb),
+    # The manifest anchors the whole per-file digest chain; the resource map
+    # pins the named allocation record the carrier binding is read from.
+    "manifest.txt": (2940, 0x3feafa9950561fa4),
+    "resource-map.txt": (1839, 0x40c49dbd3c193115),
 }
 
 # Externally anchored digests for the two traces (see TEMPORAL-HISTORY.md):
@@ -228,60 +232,91 @@ def launch_blobs(trace_path):
                 continue
             psize = int(m.group(1))
             blob = bytes.fromhex(m.group(2))
-            if len(blob) < psize:
-                raise ValueError("%s: truncated pmem" % trace_path)
+            if len(blob) != psize:
+                raise ValueError("%s: pmem length %d != psize %d"
+                                 % (trace_path, len(blob), psize))
             launches.append(blob)
     return launches
 
 
-# Binding-scan pins (computed by `scan` over the 120-eval parameter dump; see
-# TEMPORAL-HISTORY.md "The stage-9 'two memory halves' are the two features").
+# Binding-scan pins (computed with scan_trace over the 120-eval parameter
+# dump; see TEMPORAL-HISTORY.md "The stage-9 'two memory halves' are the two
+# features"). The class scheme itself is validated against hand-written
+# synthetic ground truth in self_test (SCAN_FIXTURE_PINS, write_scan_fixture),
+# which is what closes the generated-pins circularity for the classifier.
 SCAN_EVALS = 120
 SCAN_EYE = lambda i: ((i // 2) + (i % 2)) % 2  # submission order (frame+position)%2
 SCAN_PINS = {
-    "two_valued": 896,       # word positions taking exactly two values
-    "tracks_eye": 886,       # value is a pure function of the evaluation's eye
-    "one_time": 10,          # remaining two-valued positions (lazy scalars)
-    "addr_shaped": 881,      # two-valued AND 512-aligned in [0x10000, 2**32)
-    "addr_track": 881,       # address-shaped AND eye-tracking (all 881)
+    "total_words": 1453,       # every (slot, word) position in the dump
+    "constant": 552,           # one value across all 120 evaluations
+    "two_valued": 896,         # word positions taking exactly two values
+    "tracks_eye": 886,         # two-valued and a pure function of the eye
+    "one_time": 10,            # two-valued switches (lazy scalars)
+    "addr_shaped": 881,        # two-valued AND 512-aligned in [0x10000, 2**32)
+    "addr_track": 881,         # address-shaped AND eye-tracking (all 881)
     "addr_lazy": 0,
     "nonaddr_track": 5,
     "nonaddr_lazy": 10,
-    "per_eye_varying": [(1, 25)],  # positions varying per frame within one eye
-    "lazy_switch_evals": [2],      # eval index where the lazy scalars switch
+    # Three or more values: the frame counter plus one lazily initialised
+    # per-eye parameter pair that slot 1 and slot 154 share verbatim.
+    "multi_valued": [((1, 1), 3), ((1, 2), 3), ((1, 25), 60),
+                     ((154, 11), 3), ((154, 12), 3)],
+    "switch_evals": [2],       # every two-valued switches once, at eval 2
+}
+
+# Hand-written expected classification of write_scan_fixture()'s planted
+# positions — deliberately NOT derived from scan_trace, so a systematic
+# misclassification cannot validate itself.
+SCAN_FIXTURE_PINS = {
+    "total_words": 12,
+    "constant": 7,
+    "two_valued": 3,
+    "tracks_eye": 2,
+    "one_time": 1,
+    "addr_shaped": 1,
+    "addr_track": 1,
+    "addr_lazy": 0,
+    "nonaddr_track": 1,
+    "nonaddr_lazy": 1,
+    "multi_valued": [((1, 0), 8), ((1, 1), 4)],
+    "switch_evals": [2],
 }
 
 
 def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
     """Classify every word position of every slot across a parameter dump.
 
-    Returns the counts pinned in SCAN_PINS: two-valued positions, how many
-    track the eye order, how many are one-time lazy scalars (and where they
-    switch), how many two-valued positions are address-shaped, and which
-    positions vary per frame within a single eye.
+    The partition is exhaustive: each (slot, word) position is constant,
+    a two-valued eye-static pair, a two-valued switch (with the evals where
+    it switches), or multi-valued (three or more values — including a
+    within-eye toggle with disjoint value pairs, which a two-bucket scheme
+    would silently drop). Every position lands in exactly one class, so the
+    pinned counts leave no unclassified residue.
     """
     launches = launch_blobs(trace_path)
     if len(launches) != evals_expected * slots:
         raise ValueError("%s: %d launches, expected %d"
                          % (trace_path, len(launches), evals_expected * slots))
     evals = [launches[i * slots:(i + 1) * slots] for i in range(evals_expected)]
-    two = tracks = onetime = addr_shaped = 0
+    const = two = tracks = onetime = addr_shaped = 0
     addr_track = addr_lazy = nonaddr_track = nonaddr_lazy = 0
-    per_eye = []
-    lazy_switches = set()
+    multi = []
+    switch_evals = set()
+    total = 0
     for slot in range(slots):
         width = len(evals[0][slot])
-        if width % 8:
-            continue
+        if width % 8 or any(len(ev[slot]) != width for ev in evals):
+            raise ValueError("%s: ragged or unaligned slot %d" % (trace_path, slot))
         for w in range(width // 8):
+            total += 1
             seq = [int.from_bytes(ev[slot][w * 8:w * 8 + 8], "little")
                    for ev in evals]
             values = set(seq)
-            by_eye = {e: {seq[i] for i in range(evals_expected) if eye_fn(i) == e}
-                      for e in (0, 1)}
-            if len(values) > 2 and any(len(s) > 2 for s in by_eye.values()):
-                per_eye.append((slot, w))
-            if len(values) != 2:
+            if len(values) == 1:
+                const += 1
+                continue
+            if len(values) > 2:
+                multi.append(((slot, w), len(values)))
                 continue
             two += 1
             lo, hi = min(values), max(values)
@@ -294,7 +329,7 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
                 tracks += 1
             else:
                 onetime += 1
-                lazy_switches.update(
+                switch_evals.update(
                     i for i in range(1, evals_expected) if seq[i] != seq[i - 1])
             if addr and track:
                 addr_track += 1
@@ -305,6 +340,8 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
             else:
                 nonaddr_lazy += 1
     return {
+        "total_words": total,
+        "constant": const,
         "two_valued": two,
         "tracks_eye": tracks,
         "one_time": onetime,
@@ -313,8 +350,8 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
         "addr_lazy": addr_lazy,
         "nonaddr_track": nonaddr_track,
         "nonaddr_lazy": nonaddr_lazy,
-        "per_eye_varying": per_eye,
-        "lazy_switch_evals": sorted(lazy_switches),
+        "multi_valued": multi,
+        "switch_evals": sorted(switch_evals),
     }
 
 
@@ -365,10 +402,17 @@ def parse_manifest(path):
 
 # ---------------------------------------------------------------------------
 def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_path=None,
-             counter_anchor=None, scan_anchor=None):
-    """Runs every pinned check; returns (failed_names, notes)."""
+             counter_anchor=None, scan_anchor=None, scan_pins=None,
+             scan_evals=SCAN_EVALS, scan_eye=None, scan_slots=COUNTER_SLOTS):
+    """Runs every pinned check; returns (failed_names, notes).
+
+    scan_pins/scan_evals/scan_eye/scan_slots default to the pinned real-trace
+    scan; the self-test overrides them with a synthetic fixture whose
+    classification is hand-written ground truth (anti-circularity)."""
     failed = []
     notes = []
+    pins = SCAN_PINS if scan_pins is None else scan_pins
+    eye_fn = SCAN_EYE if scan_eye is None else scan_eye
 
     def fail(name, detail):
         if name not in failed:
@@ -562,15 +606,17 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
                 blob("hist-replay", "output-frame01.bin"):
             fail("replay-counter-absent", "f2 == f1")
 
-    # 14. Replay2: the f1 perturbation took effect but leaves no trace at the
-    #     shared-history frames (f2/f5 match hist-replay exactly).
+    # 14. Replay2: the f1 perturbation took effect but leaves no trace at any
+    #     later frame (f2..f7 match hist-replay exactly: the shared-history
+    #     injection at f2 restores the state, and nothing content-dependent
+    #     survives past it).
     if "hist-replay2" in table and "hist-replay" in table:
         for n in (1,):
             name = "output-frame%02u.bin" % n
             if have("hist-replay2", name) and have("hist-replay", name) and \
                     blob("hist-replay2", name) == blob("hist-replay", name):
                 fail("inject-ineffective", "replay2 f1 did not perturb")
-        for n in (2, 5):
+        for n in (2, 3, 4, 5, 6, 7):
             name = "output-frame%02u.bin" % n
             if not have("hist-replay2", name) or not have("hist-replay", name):
                 continue
@@ -593,7 +639,7 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
             if not have("hist-injreset", name) or not have("hist-a", want):
                 continue
             if blob("hist-injreset", name) != blob("hist-a", want):
-                fail("injectreset-not-ignored", "f%u == ref f%u" % (4 + k, k))
+                fail("injectreset-not-ignored", "f%u != ref f%u" % (4 + k, k))
 
     # 16. Counter: the traced reset run's frame-counter word (slot 1 word 25)
     #     must restart exactly at the reset frame (0,1,2,3,0,1,2,3), and the
@@ -639,11 +685,13 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
             except OSError as exc:
                 fail("scan-mismatch", str(exc))
         try:
-            got = scan_trace(scan_trace_path, SCAN_EVALS, SCAN_EYE)
+            got = scan_trace(scan_trace_path, scan_evals, eye_fn, slots=scan_slots)
         except (ValueError, OSError) as exc:
             fail("scan-mismatch", str(exc))
         else:
-            for key, want in SCAN_PINS.items():
+            if not pins:
+                fail("scan-mismatch", "no scan pins supplied")
+            for key, want in pins.items():
                 if got.get(key) != want:
                     fail("scan-mismatch", "%s: %r != %r" % (key, got.get(key), want))
 
@@ -737,10 +785,9 @@ def build_fixture(root, sizes):
     write_run("hist-replay", rep_out, list(rep_out),
               [(0, "stage-output00"), (2, "replay-output00"), (5, "replay-output00")],
               plain)
-    # Replay2: f1 perturbed (differs from replay's f1); f2/f5 identical to
-    # replay's despite the earlier perturbation.
-    rep2_out = [rep_out[0], buf(flat), rep_out[2], buf(flat), buf(flat),
-                rep_out[5], buf(flat), buf(flat)]
+    # Replay2: f1 perturbed (differs from replay's f1); f2..f7 identical to
+    # replay's despite the earlier perturbation (check 14 pins every frame).
+    rep2_out = [rep_out[0], buf(flat)] + list(rep_out[2:])
     write_run("hist-replay2", rep2_out, list(rep2_out),
               [(0, "stage-output00"), (1, "uniform-1.0"), (2, "replay-output00"),
                (5, "replay-output00")], plain)
@@ -768,11 +815,55 @@ def write_counter_trace(path, values):
         f.write("\n".join(lines) + "\n")
 
 
+def write_scan_fixture(path, blind_spot=True):
+    """Planted ground truth for scan_trace's classifier (anti-circularity):
+    8 evaluations x 3 slots x 4 words. Positions:
+      (0,1) two-valued eye-static pair (non-address)
+      (0,2) two-valued one-time switch at eval 2 (non-address)
+      (1,0) multi-valued per-frame counter (0..7)
+      (1,1) the classifier blind spot: per-frame toggle with disjoint
+            per-eye value pairs (4 values, 2 per eye); with blind_spot=False
+            it becomes constant, for the scan-classification control
+      (2,0) two-valued eye-static pair, address-shaped
+      everything else constant
+    The expected classification is hand-written as SCAN_FIXTURE_PINS.
+    """
+    eye = SCAN_EYE
+    lines = []
+    for i in range(8):
+        for slot in range(3):
+            pmem = bytearray(4 * 8)
+
+            def put(w, v):
+                pmem[w * 8:w * 8 + 8] = int(v).to_bytes(8, "little")
+
+            put(0, 0x11)
+            if slot == 0:
+                put(1, eye(i))
+                put(2, 0xAA if i >= 2 else 0xBB)
+            elif slot == 1:
+                put(0, i)
+                put(1, (10, 30, 20, 40)[(i % 2) + 2 * eye(i)] if blind_spot else 10)
+            elif slot == 2:
+                put(0, 0x10200 if eye(i) == 1 else 0x10000)
+            lines.append("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
+                         "params=0x3 psize=%d pn=%d pcap=0 pmem=%s"
+                         % (len(pmem), len(pmem), pmem.hex()))
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def fnv64_file(path):
+    with open(path, "rb") as f:
+        return fnv64(f.read())
+
+
 def anchors_for(root):
     out = {}
     rdir = os.path.join(root, "hist-a")
     for name in sorted(os.listdir(rdir)):
-        if not name.endswith(".bin"):
+        if not name.endswith(".bin") and \
+                name not in ("manifest.txt", "resource-map.txt"):
             continue
         with open(os.path.join(rdir, name), "rb") as f:
             data = f.read()
@@ -846,8 +937,16 @@ def self_test():
         fixture_anchors = anchors_for(tmp)
         counter_path = os.path.join(tmp, "counter-trace.log")
         write_counter_trace(counter_path, [0, 1, 2, 3, 0, 1, 2, 3])
-        failed, _ = validate(tmp, FIXTURE_SIZES, fixture_anchors,
-                             counter_trace=counter_path)
+        scan_path = os.path.join(tmp, "scan-trace.log")
+        write_scan_fixture(scan_path)
+        scan_kwargs = {"scan_trace_path": scan_path,
+                       "scan_anchor": fnv64_file(scan_path),
+                       "scan_pins": SCAN_FIXTURE_PINS,
+                       "scan_evals": 8, "scan_slots": 3}
+        base_kwargs = {"counter_trace": counter_path,
+                       "counter_anchor": fnv64_file(counter_path)}
+        base_kwargs.update(scan_kwargs)
+        failed, _ = validate(tmp, FIXTURE_SIZES, fixture_anchors, **base_kwargs)
         if failed:
             print("FAIL: baseline fixture rejected: %r" % failed)
             return 1
@@ -855,14 +954,20 @@ def self_test():
 
         controls_run = []
 
-        def control(name, mutate_fn, expect, isolated=True):
+        def control(name, mutate_fn, expect, isolated=True, **vkw):
             controls_run.append(name)
             root = os.path.join(tmp, name)
             shutil.copytree(tmp, root, ignore=shutil.ignore_patterns(name))
             trace = os.path.join(root, "counter-trace.log")
             mutate_fn(root, trace)
-            got, _ = validate(root, FIXTURE_SIZES, fixture_anchors,
-                              counter_trace=trace)
+            # counter_anchor defaults to None here: controls that rewrite the
+            # counter trace must isolate to the sequence check, and the anchor
+            # path itself is covered by the baseline plus its own control.
+            kw = {"counter_trace": trace, "counter_anchor": None}
+            kw.update(scan_kwargs)
+            kw["scan_trace_path"] = os.path.join(root, "scan-trace.log")
+            kw.update(vkw)
+            got, _ = validate(root, FIXTURE_SIZES, fixture_anchors, **kw)
             ok = expect in got and (got == [expect] if isolated else True)
             if not ok:
                 problems.append(name)
@@ -1029,6 +1134,34 @@ def self_test():
         def c_counter_short(root, trace):
             write_counter_trace(trace, [0, 1, 2, 3])
 
+        def c_input(root, trace):
+            # Cross-run input drift: not covered by any pair/anchor relation.
+            mutate(root, "hist-replay", "input-colour.bin", flip)
+            reseal(root, "hist-replay")
+
+        def c_counter_anchor(root, trace):
+            pass  # the wrong anchor is supplied via the control override
+
+        def c_scan_class(root, trace):
+            # Demote the planted blind-spot toggle to a constant: the
+            # classification pins must notice even though the file is
+            # internally consistent (anchor disabled to isolate).
+            write_scan_fixture(os.path.join(root, "scan-trace.log"),
+                               blind_spot=False)
+
+        def c_scan_anchor(root, trace):
+            # Byte-level trace drift that preserves every classification
+            # (a constant word changes value): only the anchor can catch it.
+            p = os.path.join(root, "scan-trace.log")
+            s = open(p, encoding="utf-8").read()
+            s = s.replace("1100000000000000", "1200000000000000", 1)
+            open(p, "w", encoding="utf-8").write(s)
+
+        def c_replay2_late(root, trace):
+            mutate(root, "hist-replay2", "history0-frame04.bin", flip)
+            mutate(root, "hist-replay2", "output-frame04.bin", flip)
+            reseal(root, "hist-replay2")
+
         control("bad-protocol", c_protocol, "protocol-mismatch")
         control("bad-manifest-line", c_format, "manifest-format")
         control("missing-bin", c_missing, "file-missing")
@@ -1055,6 +1188,12 @@ def self_test():
         control("injreset-not-ignored", c_injreset_effect, "injectreset-not-ignored")
         control("counter-not-reset", c_counter, "counter-reset-mismatch")
         control("counter-trace-short", c_counter_short, "counter-reset-mismatch")
+        control("input-drifted", c_input, "input-mismatch")
+        control("counter-anchor-broken", c_counter_anchor, "counter-anchor-mismatch",
+                counter_anchor=0xDEADBEEF)
+        control("scan-class-lost", c_scan_class, "scan-mismatch", scan_anchor=None)
+        control("scan-byte-flipped", c_scan_anchor, "scan-mismatch")
+        control("replay2-late-trace", c_replay2_late, "replay2-trace")
 
         if problems:
             print("FAIL: %d self-test control(s) missed" % len(problems))
