@@ -257,19 +257,39 @@ SCAN_PINS = {
     "addr_lazy": 0,
     "nonaddr_track": 5,
     "nonaddr_lazy": 10,
-    # Three or more values: the frame counter plus one lazily initialised
-    # per-eye parameter pair that slot 1 and slot 154 share verbatim.
-    "multi_valued": [((1, 1), 3), ((1, 2), 3), ((1, 25), 60),
-                     ((154, 11), 3), ((154, 12), 3)],
-    "switch_evals": [2],       # every two-valued switches once, at eval 2
+    # Three or more values, pinned as (position, distinct count, FNV of the
+    # full 120-eval value sequence): the frame counter plus one lazily
+    # initialised per-eye parameter pair that slot 1 and slot 154 share
+    # verbatim (see multi_shared). The sequence digests make readings like
+    # "increments once per frame" machine-checkable, not just observations.
+    "multi_valued": [((1, 1), 3, 0x3d4683fc9575b86b),
+                     ((1, 2), 3, 0xc4a62105b7292f2b),
+                     ((1, 25), 60, 0x6214fb4e0df33be5),
+                     ((154, 11), 3, 0x3d4683fc9575b86b),
+                     ((154, 12), 3, 0xc4a62105b7292f2b)],
+    "multi_shared": [((1, 1), (154, 11)), ((1, 2), (154, 12))],
+    "switch_evals": [2],       # the 10 non-track two-valued words each switch
+                               # exactly once, at eval 2
 }
+
+# Planted per-eval sequences for write_scan_fixture: these literals ARE the
+# ground truth (the fixture plants them and the pins below are computed from
+# them), deliberately independent of scan_trace's classification.
+FIX_COUNTER_SEQ = [0, 1, 2, 3, 4, 5, 6, 7]
+FIX_BLIND_SEQ = [10, 40, 30, 20, 10, 40, 30, 20]
+
+
+def seq_fnv(seq):
+    return fnv64(b"".join(int(v).to_bytes(8, "little") for v in seq))
+
 
 # Hand-written expected classification of write_scan_fixture()'s planted
 # positions — deliberately NOT derived from scan_trace, so a systematic
-# misclassification cannot validate itself.
+# misclassification cannot validate itself. Counts are literal; the sequence
+# digests are computed from the planted literal sequences above.
 SCAN_FIXTURE_PINS = {
     "total_words": 12,
-    "constant": 7,
+    "constant": 6,
     "two_valued": 3,
     "tracks_eye": 2,
     "one_time": 1,
@@ -278,7 +298,10 @@ SCAN_FIXTURE_PINS = {
     "addr_lazy": 0,
     "nonaddr_track": 1,
     "nonaddr_lazy": 1,
-    "multi_valued": [((1, 0), 8), ((1, 1), 4)],
+    "multi_valued": [((1, 0), 8, seq_fnv(FIX_COUNTER_SEQ)),
+                     ((1, 1), 4, seq_fnv(FIX_BLIND_SEQ)),
+                     ((2, 1), 4, seq_fnv(FIX_BLIND_SEQ))],
+    "multi_shared": [((1, 1), (2, 1))],
     "switch_evals": [2],
 }
 
@@ -316,10 +339,11 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
                 const += 1
                 continue
             if len(values) > 2:
-                multi.append(((slot, w), len(values)))
+                seq_bytes = b"".join(int(v).to_bytes(8, "little") for v in seq)
+                multi.append(((slot, w), len(values), fnv64(seq_bytes)))
                 continue
             two += 1
-            lo, hi = min(values), max(values)
+            hi = max(values)
             addr = all(0x10000 <= v < (1 << 32) and v % 512 == 0 for v in values)
             if addr:
                 addr_shaped += 1
@@ -339,6 +363,18 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
                 nonaddr_track += 1
             else:
                 nonaddr_lazy += 1
+    # Multi-valued positions carry a digest of their full value sequence, so
+    # pinned claims about the sequences (per-frame increments, initialisation
+    # boundaries) are machine-checkable rather than readings of the dump.
+    multi_seqs = {}
+    for pos, count, seq_bytes in multi:
+        multi_seqs[pos] = seq_bytes
+    shared = []
+    positions = [m[0] for m in multi]
+    for i, a in enumerate(positions):
+        for b in positions[i + 1:]:
+            if multi_seqs[a] == multi_seqs[b]:
+                shared.append((a, b))
     return {
         "total_words": total,
         "constant": const,
@@ -351,6 +387,7 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
         "nonaddr_track": nonaddr_track,
         "nonaddr_lazy": nonaddr_lazy,
         "multi_valued": multi,
+        "multi_shared": shared,
         "switch_evals": sorted(switch_evals),
     }
 
@@ -481,9 +518,11 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
             if fnv64(data) != got_fnv:
                 fail("digest-mismatch", "%s/%s fnv" % (run, name))
 
-    # 4. External anchors on hist-a.
+    # 4. External anchors on hist-a. An absent anchored name is a failure:
+    #    skip-on-missing would let a deleted resource map pass unnoticed.
     for name, (asize, afnv) in sorted(anchors.items()):
         if not have("hist-a", name):
+            fail("anchor-mismatch", "hist-a/%s missing" % name)
             continue
         data = blob("hist-a", name)
         if len(data) != asize or fnv64(data) != afnv:
@@ -761,6 +800,9 @@ def build_fixture(root, sizes):
                              % (frame, pattern, flat))
         with open(os.path.join(rdir, "manifest.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
+        with open(os.path.join(rdir, "resource-map.txt"), "w", encoding="utf-8") as f:
+            f.write("resource idx=0 rec=3 name=dlssnr_prev_output "
+                    "w=%d h=%d\n" % (sizes_side, sizes_side))
 
     plain = RUNS["hist-a"]["protocol"]
     reset4 = RUNS["hist-r4"]["protocol"]
@@ -820,10 +862,12 @@ def write_scan_fixture(path, blind_spot=True):
     8 evaluations x 3 slots x 4 words. Positions:
       (0,1) two-valued eye-static pair (non-address)
       (0,2) two-valued one-time switch at eval 2 (non-address)
-      (1,0) multi-valued per-frame counter (0..7)
+      (1,0) multi-valued per-frame counter (FIX_COUNTER_SEQ)
       (1,1) the classifier blind spot: per-frame toggle with disjoint
-            per-eye value pairs (4 values, 2 per eye); with blind_spot=False
-            it becomes constant, for the scan-classification control
+            per-eye value pairs (FIX_BLIND_SEQ, 4 values, 2 per eye);
+            with blind_spot=False it becomes constant, for the
+            scan-classification control
+      (2,1) a verbatim copy of (1,1) — exercises multi_shared
       (2,0) two-valued eye-static pair, address-shaped
       everything else constant
     The expected classification is hand-written as SCAN_FIXTURE_PINS.
@@ -842,10 +886,11 @@ def write_scan_fixture(path, blind_spot=True):
                 put(1, eye(i))
                 put(2, 0xAA if i >= 2 else 0xBB)
             elif slot == 1:
-                put(0, i)
-                put(1, (10, 30, 20, 40)[(i % 2) + 2 * eye(i)] if blind_spot else 10)
+                put(0, FIX_COUNTER_SEQ[i])
+                put(1, FIX_BLIND_SEQ[i] if blind_spot else 10)
             elif slot == 2:
                 put(0, 0x10200 if eye(i) == 1 else 0x10000)
+                put(1, FIX_BLIND_SEQ[i] if blind_spot else 10)
             lines.append("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
                          "params=0x3 psize=%d pn=%d pcap=0 pmem=%s"
                          % (len(pmem), len(pmem), pmem.hex()))
@@ -953,6 +998,7 @@ def self_test():
         print("baseline accepted")
 
         controls_run = []
+        checks_seen = set()
 
         def control(name, mutate_fn, expect, isolated=True, **vkw):
             controls_run.append(name)
@@ -968,6 +1014,7 @@ def self_test():
             kw["scan_trace_path"] = os.path.join(root, "scan-trace.log")
             kw.update(vkw)
             got, _ = validate(root, FIXTURE_SIZES, fixture_anchors, **kw)
+            checks_seen.update(got)
             ok = expect in got and (got == [expect] if isolated else True)
             if not ok:
                 problems.append(name)
@@ -1151,11 +1198,44 @@ def self_test():
 
         def c_scan_anchor(root, trace):
             # Byte-level trace drift that preserves every classification
-            # (a constant word changes value): only the anchor can catch it.
+            # (the constant word changes value in all 8 evals, so it stays
+            # constant): only the anchor can catch this.
             p = os.path.join(root, "scan-trace.log")
             s = open(p, encoding="utf-8").read()
-            s = s.replace("1100000000000000", "1200000000000000", 1)
+            s = s.replace("1100000000000000", "1200000000000000")
             open(p, "w", encoding="utf-8").write(s)
+
+        def c_scan_ragged(root, trace):
+            # One eval's slot shrinks from 4 to 3 words: scan_trace must
+            # reject the ragged slot rather than classify it (anchor disabled
+            # so only the raise path can fire).
+            p = os.path.join(root, "scan-trace.log")
+            lines = open(p, encoding="utf-8").read().splitlines()
+            pmem = bytearray(3 * 8)
+            lines[3] = ("launch id=0x5c52bb86 cmd=0x1 handle=0x2 grid=1,1,1 "
+                        "params=0x3 psize=%d pn=%d pcap=0 pmem=%s"
+                        % (len(pmem), len(pmem), pmem.hex()))
+            open(p, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+
+        def c_scan_pmem_size(root, trace):
+            # pmem length disagrees with psize: launch_blobs must reject it.
+            p = os.path.join(root, "scan-trace.log")
+            s = open(p, encoding="utf-8").read()
+            i = s.index("psize=32 pn=32")
+            s = s[:i] + "psize=31 pn=31" + s[i + len("psize=32 pn=32"):]
+            open(p, "w", encoding="utf-8").write(s)
+
+        def c_scan_count(root, trace):
+            # One launch line short of a full dump: the eval/slot count check
+            # must reject it.
+            p = os.path.join(root, "scan-trace.log")
+            lines = open(p, encoding="utf-8").read().splitlines()
+            open(p, "w", encoding="utf-8").write("\n".join(lines[:-1]) + "\n")
+
+        def c_anchor_file(root, trace):
+            # A deleted anchored non-payload file must fail loudly rather than
+            # be skipped by the anchor walk.
+            os.remove(os.path.join(root, "hist-a", "resource-map.txt"))
 
         def c_replay2_late(root, trace):
             mutate(root, "hist-replay2", "history0-frame04.bin", flip)
@@ -1193,7 +1273,16 @@ def self_test():
                 counter_anchor=0xDEADBEEF)
         control("scan-class-lost", c_scan_class, "scan-mismatch", scan_anchor=None)
         control("scan-byte-flipped", c_scan_anchor, "scan-mismatch")
+        control("scan-ragged-slot", c_scan_ragged, "scan-mismatch", scan_anchor=None)
+        control("scan-pmem-size", c_scan_pmem_size, "scan-mismatch", scan_anchor=None)
+        control("scan-count-short", c_scan_count, "scan-mismatch", scan_anchor=None)
+        control("anchor-file-missing", c_anchor_file, "anchor-mismatch")
         control("replay2-late-trace", c_replay2_late, "replay2-trace")
+
+        missing_checks = [c for c in CHECKS if c not in checks_seen]
+        if missing_checks:
+            problems.append("check-coverage")
+            print("FAIL check-coverage: never fired %r" % (missing_checks,))
 
         if problems:
             print("FAIL: %d self-test control(s) missed" % len(problems))
