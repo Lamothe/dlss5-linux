@@ -27,11 +27,20 @@ static void set_uint(void* params, const char* key, unsigned int value) {
 #include "gpu-scene.h"
 
 int main(int argc, char** argv) {
+    int capture_inject_mode = (argc == 3) && strcmp(argv[1], "--capture-history-inject") == 0;
+    int capture_sham_mode = (argc == 3) && strcmp(argv[1], "--capture-history-sham") == 0;
+    int capture_replay_mode = (argc == 3) && strcmp(argv[1], "--capture-history-replay") == 0;
+    int capture_replay2_mode = (argc == 3) && strcmp(argv[1], "--capture-history-replay2") == 0;
+    int capture_injectreset_mode = (argc == 3) && strcmp(argv[1], "--capture-history-injectreset") == 0;
+    int capture_history_mode = capture_inject_mode || capture_sham_mode ||
+        capture_replay_mode || capture_replay2_mode || capture_injectreset_mode ||
+        ((argc == 3 || argc == 4) && strcmp(argv[1], "--capture-history") == 0);
     int capture_reset_mode = (argc == 3 || argc == 4) && strcmp(argv[1], "--capture-reset-mid") == 0;
-    int capture_mode = capture_reset_mode || (argc == 3 && strcmp(argv[1], "--capture") == 0);
+    int capture_mode = capture_reset_mode || capture_history_mode ||
+                       (argc == 3 && strcmp(argv[1], "--capture") == 0);
     const char* capture_dir = capture_mode ? argv[2] : NULL;
     unsigned int capture_reset_frame = CAPTURE_RESET_FRAME;
-    if (capture_reset_mode && argc == 4) {
+    if ((capture_reset_mode || capture_history_mode) && argc == 4) {
         char* end = NULL;
         unsigned long parsed = strtoul(argv[3], &end, 10);
         if (!argv[3][0] || *end || parsed < 1 || parsed >= CAPTURE_FRAMES) {
@@ -48,10 +57,13 @@ int main(int argc, char** argv) {
     int scene_mode = gpu_mode || (argc == 2 && strcmp(argv[1], "--scene") == 0);
     int evaluate_mode = scene_mode || (argc == 2 && strcmp(argv[1], "--evaluate") == 0);
     if (argc > 1 && !evaluate_mode && !capture_mode && !boundary_mode) {
-        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-reset-mid DIR [FRAME]|--capture-boundary DIR]\n");
+        fprintf(stderr, "Usage: feature-probe.exe [--evaluate|--scene|--gpu-scene|--capture DIR|--capture-reset-mid DIR [FRAME]|--capture-history DIR [FRAME]|--capture-history-inject DIR|--capture-history-sham DIR|--capture-boundary DIR]\n");
         return 1;
     }    unsigned int frame_count = scene_mode ? 12u : PROBE_FRAMES;
     EyeInputs eyes[2] = {0};
+    HistoryProbe history = {0};
+    ID3D12Resource* inject_upload = NULL;
+    ID3D12Resource* inject_upload2 = NULL;
     FILE* capture_manifest = NULL;
     ID3D12Device* device = NULL;
     ID3D12CommandQueue* queue = NULL;
@@ -87,7 +99,10 @@ int main(int argc, char** argv) {
     }
 #define CHECK_HR(call) do { HRESULT hr = (call); if (FAILED(hr)) { fprintf(stderr, "%s => HRESULT 0x%08lx\n", #call, (unsigned long)hr); goto cleanup; } } while (0)
     CHECK_HR(D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void**)&device));
-    if (boundary_mode) { boundary_install(device); }
+    if (boundary_mode || capture_history_mode) { boundary_install(device); }
+    // Model allocations (NVSDK_NGX_D3D12_Init through feature creation) are
+    // recorded as phase 1; harness resources afterwards as phase 2.
+    boundary_phase = 1;
     D3D12_COMMAND_QUEUE_DESC queue_desc = {0};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     CHECK_HR(ID3D12Device_CreateCommandQueue(device, &queue_desc, &IID_ID3D12CommandQueue, (void**)&queue));
@@ -130,8 +145,14 @@ int main(int argc, char** argv) {
         fprintf(stderr, "GPU completion failed/timed out\n"); goto cleanup;
     }
     completed = 1;
+    // Everything created from here on is harness-side (phase 2).
+    boundary_phase = 2;
     if (capture_mode) {
         char manifest_path[512];
+        // Fence values must strictly increase: the create phase used 1 and the
+        // frame loop uses frame+fence_base. History mode inserts one init
+        // submit at value 2 and shifts the frame loop to 3..10.
+        unsigned int fence_base = capture_history_mode ? 3u : 2u;
         CreateDirectoryA(capture_dir, NULL);
         if (!prepare_eye(device, &eyes[0], 0, allocate)) { goto cleanup; }
         if (snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.txt", capture_dir) >= (int)sizeof(manifest_path)) {
@@ -146,9 +167,61 @@ int main(int argc, char** argv) {
         // state and the runtime is time-homogeneous, frames N..7 replay the
         // run's own frames 0..7-N bit-identically.
         fprintf(capture_manifest, "protocol %s frames=%u size=%u context=eye0 inputs=gradient-stationary reset=%s%u\n",
-                capture_reset_mode ? "capture-reset-mid-v1" : "capture-v1",
+                capture_history_mode ? "capture-history-v1" :
+                    (capture_reset_mode ? "capture-reset-mid-v1" : "capture-v1"),
                 CAPTURE_FRAMES, PROBE_SIZE,
-                capture_reset_mode ? "frame0+frame" : "frame", capture_reset_mode ? capture_reset_frame : 0u);
+                (capture_reset_mode || (capture_injectreset_mode) ||
+                 (capture_history_mode && argc == 4)) ? "frame0+frame" : "frame",
+                (capture_reset_mode || (capture_injectreset_mode) ||
+                 (capture_history_mode && argc == 4)) ? capture_reset_frame : 0u);
+        if (capture_history_mode) {
+            // Model-owned phase-1 textures (its history allocations) are read
+            // back after creation ("init", the reset-value candidate) and after
+            // every evaluation (see TEMPORAL-HISTORY.md).
+            if (!history_setup(device, &history)) { goto cleanup; }
+            if ((capture_inject_mode || capture_sham_mode || capture_replay_mode ||
+                 capture_replay2_mode || capture_injectreset_mode) &&
+                (history.count == 0 || history.size[0] == 0)) {
+                fprintf(stderr, "Intervention mode needs at least one history texture\n");
+                goto cleanup;
+            }
+            if (capture_inject_mode || capture_sham_mode || capture_replay_mode ||
+                capture_replay2_mode || capture_injectreset_mode) {
+                // Read-side intervention: overwrite the evaluated feature's
+                // history before frames 2 (uniform 1.0) and 5 (checkerboard);
+                // sham mode stages the history's own bytes instead.
+                if (!create_buffer(device, D3D12_HEAP_TYPE_UPLOAD, history.size[0],
+                                   &inject_upload)) {
+                    goto cleanup;
+                }
+                if (capture_replay2_mode &&
+                    !create_buffer(device, D3D12_HEAP_TYPE_UPLOAD, history.size[0],
+                                   &inject_upload2)) {
+                    goto cleanup;
+                }
+                printf("HISTORY-INJECT plan=frame2:%s,frame5:%s\n",
+                       capture_sham_mode ? "sham" : "uniform",
+                       capture_sham_mode ? "sham" : "checkerboard");
+                fflush(stdout);
+            }
+            if (history.count > 0) {
+                CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
+                CHECK_HR(ID3D12GraphicsCommandList_Reset(list, allocator, NULL));
+                history_record(list, &history);
+                CHECK_HR(ID3D12GraphicsCommandList_Close(list));
+                ID3D12CommandQueue_ExecuteCommandLists(queue, 1, command_lists);
+                completed = 0;
+                CHECK_HR(ID3D12CommandQueue_Signal(queue, fence, 2));
+                CHECK_HR(ID3D12Fence_SetEventOnCompletion(fence, 2, event));
+                if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0 ||
+                    ID3D12Fence_GetCompletedValue(fence) == UINT64_MAX) {
+                    fprintf(stderr, "History init GPU completion failed\n");
+                    goto cleanup;
+                }
+                completed = 1;
+                if (!history_dump(capture_dir, &history, capture_manifest, "init")) { goto cleanup; }
+            }
+        }
         for (unsigned int frame = 0; frame < CAPTURE_FRAMES; ++frame) {
             CHECK_HR(ID3D12CommandAllocator_Reset(allocator));
             CHECK_HR(ID3D12GraphicsCommandList_Reset(list, allocator, NULL));
@@ -156,29 +229,130 @@ int main(int argc, char** argv) {
                 for (unsigned int texture = 0; texture < 3; ++texture) { upload_texture(list, &eyes[0], texture); }
             }
             upload_texture(list, &eyes[0], 3); // fresh NaNs each evaluation
+            if (capture_inject_mode && history.count > 0 && (frame == 2 || frame == 5)) {
+                unsigned int pattern = (frame == 2) ? 0u : 1u;
+                if (!history_inject_upload(inject_upload, &history.layout[0], pattern)) {
+                    fprintf(stderr, "Inject upload failed frame=%u\n", frame);
+                    goto cleanup;
+                }
+                history_inject_record(list, &history, inject_upload, &history.layout[0]);
+                fprintf(capture_manifest,
+                        "history-inject frame=%u idx=0 pattern=%s bytes=%llu\n",
+                        frame, pattern == 0u ? "uniform-1.0" : "checkerboard-1.0/0.0",
+                        (unsigned long long)history.size[0]);
+                printf("HISTORY-INJECT frame=%u pattern=%s\n", frame,
+                       pattern == 0u ? "uniform-1.0" : "checkerboard-1.0/0.0");
+                fflush(stdout);
+            }
+            if (capture_sham_mode && history.count > 0 && (frame == 2 || frame == 5)) {
+                // Content-preserving control: same upload->texture copy, but
+                // staging the history's own bytes (captured after the previous
+                // evaluation) back into it.
+                if (!history_inject_sham(&history, inject_upload)) {
+                    fprintf(stderr, "Sham staging failed frame=%u\n", frame);
+                    goto cleanup;
+                }
+                history_inject_record(list, &history, inject_upload, &history.layout[0]);
+                fprintf(capture_manifest, "history-inject frame=%u idx=0 pattern=sham\n", frame);
+                printf("HISTORY-INJECT frame=%u pattern=sham\n", frame);
+                fflush(stdout);
+            }
+            if (capture_replay_mode && history.count > 0 && (frame == 2 || frame == 5)) {
+                // One-step recurrence test: the history buffer holds frame 0's
+                // history (= output-00, saved at frame 0). Re-injecting it with
+                // stationary inputs predicts output-NN == output-01 exactly if
+                // the history is the sole temporal state.
+                history_inject_record(list, &history, inject_upload, &history.layout[0]);
+                fprintf(capture_manifest,
+                        "history-inject frame=%u idx=0 pattern=replay-output00\n", frame);
+                printf("HISTORY-INJECT frame=%u pattern=replay-output00\n", frame);
+                fflush(stdout);
+            }
+            if (capture_replay2_mode && history.count > 0 && frame == 1) {
+                // Perturb frame 1 (uniform 1.0) with a dedicated buffer, so the
+                // saved output-00 bytes in inject_upload stay intact.
+                if (!history_inject_upload(inject_upload2, &history.layout[0], 0u)) {
+                    fprintf(stderr, "Replay2 pattern upload failed\n");
+                    goto cleanup;
+                }
+                history_inject_record(list, &history, inject_upload2, &history.layout[0]);
+                fprintf(capture_manifest,
+                        "history-inject frame=1 idx=0 pattern=uniform-1.0\n");
+                printf("HISTORY-INJECT frame=1 pattern=uniform-1.0\n");
+                fflush(stdout);
+            }
+            if (capture_replay2_mode && history.count > 0 && (frame == 2 || frame == 5)) {
+                // Same history as hist-replay at these frames; if the f2 output
+                // matches hist-replay's f2 output the earlier f1 perturbation
+                // did not matter (state = history + counter only).
+                history_inject_record(list, &history, inject_upload, &history.layout[0]);
+                fprintf(capture_manifest,
+                        "history-inject frame=%u idx=0 pattern=replay-output00\n", frame);
+                printf("HISTORY-INJECT frame=%u pattern=replay-output00\n", frame);
+                fflush(stdout);
+            }
+            if (capture_injectreset_mode && history.count > 0 && frame == 4) {
+                // Reset-frames-ignored-history test: a garbage history is
+                // injected immediately before a DLSSNR.Reset frame. If reset
+                // zeroes the history before the model reads it, the output
+                // must equal the zero-history frame-0 result.
+                if (!history_inject_upload(inject_upload, &history.layout[0], 0u)) {
+                    fprintf(stderr, "Injectreset upload failed\n");
+                    goto cleanup;
+                }
+                history_inject_record(list, &history, inject_upload, &history.layout[0]);
+                fprintf(capture_manifest,
+                        "history-inject frame=4 idx=0 pattern=uniform-1.0-at-reset\n");
+                printf("HISTORY-INJECT frame=4 pattern=uniform-1.0-at-reset\n");
+                fflush(stdout);
+            }
             set_uint(eyes[0].params, "DLSSNR.Reset",
-                     (frame == 0 || (capture_reset_mode && frame == capture_reset_frame)) ? 1u : 0u);
+                     (frame == 0 || ((capture_reset_mode || capture_injectreset_mode ||
+                                      (capture_history_mode && argc == 4)) &&
+                                     frame == capture_reset_frame)) ? 1u : 0u);
             result = evaluate(list, features[0], eyes[0].params);
             printf("CaptureEvaluate frame=%u result=0x%x\n", frame, result); fflush(stdout);
             if (result != 1) { goto cleanup; }
             ++eyes[0].successful_evaluations;
             record_readback(list, &eyes[0]);
+            if (capture_history_mode) { history_record(list, &history); }
             CHECK_HR(ID3D12GraphicsCommandList_Close(list));
             ID3D12CommandQueue_ExecuteCommandLists(queue, 1, command_lists);
             completed = 0;
-            CHECK_HR(ID3D12CommandQueue_Signal(queue, fence, (UINT64)frame + 2));
-            CHECK_HR(ID3D12Fence_SetEventOnCompletion(fence, (UINT64)frame + 2, event));
+            CHECK_HR(ID3D12CommandQueue_Signal(queue, fence, (UINT64)frame + fence_base));
+            CHECK_HR(ID3D12Fence_SetEventOnCompletion(fence, (UINT64)frame + fence_base, event));
             if (WaitForSingleObject(event, 30000) != WAIT_OBJECT_0 || ID3D12Fence_GetCompletedValue(fence) == UINT64_MAX) {
                 fprintf(stderr, "Capture GPU completion failed\n");
                 goto cleanup;
             }
             completed = 1;
             if (!capture_dump(capture_dir, &eyes[0], frame, capture_manifest)) { goto cleanup; }
+            if (capture_history_mode && history.count > 0) {
+                char tag[16];
+                if (snprintf(tag, sizeof(tag), "frame%02u", frame) >= (int)sizeof(tag)) {
+                    fprintf(stderr, "History tag too long\n");
+                    goto cleanup;
+                }
+                if (!history_dump(capture_dir, &history, capture_manifest, tag)) { goto cleanup; }
+            }
+            if ((capture_replay_mode || capture_replay2_mode) && history.count > 0 && frame == 0) {
+                // Save frame 0's history (= output-00) into the injection
+                // buffer; re-injected at frames 2 and 5 for the recurrence test.
+                if (!history_inject_sham(&history, inject_upload)) {
+                    fprintf(stderr, "Replay staging failed frame=%u\n", frame);
+                    goto cleanup;
+                }
+                fprintf(capture_manifest, "history-stage frame=0 source=history-readback\n");
+                printf("HISTORY-STAGE frame=0 saved=output00-bytes\n");
+                fflush(stdout);
+            }
         }
         fclose(capture_manifest);
         capture_manifest = NULL;
         printf("PASS: %s frames=%u dir=%s context=eye0\n",
-               capture_reset_mode ? "reset-mid capture" : "reference capture", CAPTURE_FRAMES, capture_dir);
+               capture_history_mode ? "history capture" :
+                   (capture_reset_mode ? "reset-mid capture" : "reference capture"),
+               CAPTURE_FRAMES, capture_dir);
         fflush(stdout);
     }
     if (boundary_mode) {
@@ -274,12 +448,27 @@ int main(int argc, char** argv) {
 cleanup:
     // Retain partial capture evidence (the launcher rejects runs without the PASS marker).
     if (capture_manifest) { fclose(capture_manifest); capture_manifest = NULL; }
+    // Resource map for the offline history binding (see TEMPORAL-HISTORY.md):
+    // retained on every exit path, including in-flight failures below. Only
+    // dumped when the recording hook was actually installed.
+    if (boundary_mode || capture_history_mode) {
+        char map_path[512];
+        const char* dir = capture_mode ? capture_dir : boundary_dir;
+        if (dir && snprintf(map_path, sizeof(map_path), "%s/resource-map.txt", dir) < (int)sizeof(map_path)) {
+            boundary_dump_map(map_path);
+        }
+    }
     // If submitted work did not finish, avoid destroying resources the GPU may still use.
     if (submitted && !completed) { fflush(NULL); ExitProcess(1); }
     for (unsigned int eye = 0; eye < 2; ++eye) { if (features[eye] && (eye == 0 || features[eye] != features[0])) { release(features[eye]); } }
     for (unsigned int eye = 0; eye < 2; ++eye) {
         if (!destroy_eye(&eyes[eye], destroy)) { exit_code = 1; }
     }
+    for (unsigned int i = 0; i < history.count && i < HISTORY_MAX; ++i) {
+        if (history.readback[i]) { ID3D12Resource_Release(history.readback[i]); }
+    }
+    if (inject_upload) { ID3D12Resource_Release(inject_upload); }
+    if (inject_upload2) { ID3D12Resource_Release(inject_upload2); }
     destroy_gpu_scene(&gpu_scene);
     if (core_ready) {
         int live_devices = -1;

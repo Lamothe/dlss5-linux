@@ -35,24 +35,74 @@ static const char* boundary_word_name[BOUNDARY_WORDS] = {
 
 #define BOUNDARY_RESOURCE_MAX 1024
 
+// Creation phase of a recorded resource (history-carrier binding, see
+// TEMPORAL-HISTORY.md): 0 = harness setup, 1 = model (NVSDK_NGX_D3D12_Init
+// through feature creation, where the model allocates its own tensors), 2 =
+// harness/test after that. The phase tag is what lets the analysis tell the
+// model's own allocations (e.g. its history textures) from the harness's.
+static LONG boundary_phase;
+
 typedef struct ResourceRecord {
     D3D12_GPU_VIRTUAL_ADDRESS va;
     UINT64 size;
     ID3D12Resource* resource;
+    UINT32 dimension;     // D3D12_RESOURCE_DIMENSION
+    UINT32 format;        // DXGI_FORMAT
+    UINT64 width;
+    UINT32 height;
+    UINT16 depth_or_array;
+    UINT16 mip_levels;
+    UINT32 initial_state; // D3D12_RESOURCE_STATES at creation
+    UINT32 phase;
 } ResourceRecord;
 
 static ResourceRecord boundary_resources[BOUNDARY_RESOURCE_MAX];
 static LONG boundary_resource_count;
 
-static void boundary_record_resource(ID3D12Resource* resource, const D3D12_RESOURCE_DESC* desc) {
-    LONG slot = InterlockedIncrement(&boundary_resource_count) - 1;
-    if (slot < 0 || slot >= BOUNDARY_RESOURCE_MAX) { return; }
-    boundary_resources[slot].va = ID3D12Resource_GetGPUVirtualAddress(resource);
-    boundary_resources[slot].size =
-        desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER ? desc->Width : 0;
-    boundary_resources[slot].resource = resource;
+static UINT64 boundary_format_bytes(UINT32 format) {
+    switch (format) {
+        case DXGI_FORMAT_R32G32B32A32_FLOAT: return 16;
+        case DXGI_FORMAT_R16G16B16A16_FLOAT: return 8;
+        case DXGI_FORMAT_R32_FLOAT:
+        case DXGI_FORMAT_R32_UINT:
+        case DXGI_FORMAT_R32_SINT:
+        case DXGI_FORMAT_R16G16_FLOAT: return 4;
+        case DXGI_FORMAT_R16_FLOAT:
+        case DXGI_FORMAT_R16_UINT: return 2;
+        default: return 0;
+    }
 }
 
+static void boundary_record_resource(ID3D12Device* device, ID3D12Resource* resource,
+                                     const D3D12_RESOURCE_DESC* desc,
+                                     D3D12_RESOURCE_STATES initial_state) {
+    ResourceRecord* record;
+    LONG slot = InterlockedIncrement(&boundary_resource_count) - 1;
+    if (slot < 0 || slot >= BOUNDARY_RESOURCE_MAX) { return; }
+    record = &boundary_resources[slot];
+    record->va = ID3D12Resource_GetGPUVirtualAddress(resource);
+    record->resource = resource;
+    record->dimension = (UINT32)desc->Dimension;
+    record->format = (UINT32)desc->Format;
+    record->width = desc->Width;
+    record->height = desc->Height;
+    record->depth_or_array = desc->DepthOrArraySize;
+    record->mip_levels = desc->MipLevels;
+    record->initial_state = (UINT32)initial_state;
+    record->phase = (UINT32)boundary_phase;
+    if (desc->Dimension == D3D12_RESOURCE_DIMENSION_BUFFER) {
+        record->size = desc->Width;
+    } else if (desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+        UINT64 bpp = boundary_format_bytes((UINT32)desc->Format);
+        record->size = bpp ? desc->Width * desc->Height * bpp : 0;
+    } else {
+        record->size = 0;
+    }
+    (void)device;
+}
+
+// Window resolution stays buffer-only, exactly as before: textures are never
+// matched by boundary_find even though they are recorded (and dumped) now.
 static const ResourceRecord* boundary_find(uint64_t va) {
     LONG count = boundary_resource_count;
     if (count > BOUNDARY_RESOURCE_MAX) { count = BOUNDARY_RESOURCE_MAX; }
@@ -60,11 +110,41 @@ static const ResourceRecord* boundary_find(uint64_t va) {
     // live record must win over the stale one.
     for (LONG i = count - 1; i >= 0; --i) {
         const ResourceRecord* record = &boundary_resources[i];
-        if (record->size > 0 && va >= record->va && va < record->va + record->size) {
+        if (record->dimension == D3D12_RESOURCE_DIMENSION_BUFFER && record->size > 0 &&
+            va >= record->va && va < record->va + record->size) {
             return record;
         }
     }
     return NULL;
+}
+
+// Full resource map (history-carrier binding): one line per recorded resource
+// with the fields the offline analysis needs to resolve launch-parameter
+// addresses to named/typed resources.
+static int boundary_dump_map(const char* path) {
+    FILE* out;
+    LONG count = boundary_resource_count;
+    if (count > BOUNDARY_RESOURCE_MAX) { count = BOUNDARY_RESOURCE_MAX; }
+    out = fopen(path, "w");
+    if (!out) {
+        fprintf(stderr, "Resource map open failed: %s\n", path);
+        return 0;
+    }
+    fprintf(out, "resource-map v1 records=%ld\n", count);
+    for (LONG i = 0; i < count; ++i) {
+        const ResourceRecord* record = &boundary_resources[i];
+        fprintf(out,
+                "res idx=%ld va=0x%llx size=%llu dim=%u fmt=%u w=%llu h=%u "
+                "depth=%u mips=%u init=%u phase=%u\n",
+                i, (unsigned long long)record->va, (unsigned long long)record->size,
+                record->dimension, record->format, (unsigned long long)record->width,
+                record->height, record->depth_or_array, record->mip_levels,
+                record->initial_state, record->phase);
+    }
+    fclose(out);
+    printf("RESOURCE-MAP records=%ld file=%s\n", count, path);
+    fflush(stdout);
+    return 1;
 }
 
 // Device vtable hooks: the model allocates its tensors through the device the
@@ -85,7 +165,7 @@ static HRESULT STDMETHODCALLTYPE boundary_hook_committed(
         This, heap_properties, heap_flags, desc, initial_state,
         optimized_clear_value, riid, resource);
     if (SUCCEEDED(hr) && resource && *resource && desc) {
-        boundary_record_resource((ID3D12Resource*)*resource, desc);
+        boundary_record_resource(This, (ID3D12Resource*)*resource, desc, initial_state);
     }
     return hr;
 }
@@ -99,7 +179,7 @@ static HRESULT STDMETHODCALLTYPE boundary_hook_placed(
         This, heap, heap_offset, desc, initial_state, optimized_clear_value,
         riid, resource);
     if (SUCCEEDED(hr) && resource && *resource && desc) {
-        boundary_record_resource((ID3D12Resource*)*resource, desc);
+        boundary_record_resource(This, (ID3D12Resource*)*resource, desc, initial_state);
     }
     return hr;
 }
@@ -423,6 +503,216 @@ done:
         if (windows[slot]) { ID3D12Resource_Release(windows[slot]); }
     }
     return success;
+}
+
+// History-carrier capture (see TEMPORAL-HISTORY.md): read the model's own
+// phase-1 textures (its `dlssnr_prev_output` history allocations) back after
+// creation ("init", the reset-value candidate) and after every evaluation, so
+// the offline analysis can compare history content against captured outputs.
+// Read-only copies; model-owned resources are never written, and only a UAV
+// barrier (no state transition) is issued on them.
+#define HISTORY_MAX 4u
+#define HISTORY_BYTES_MAX (16ull * 1024ull * 1024ull)
+
+typedef struct HistoryProbe {
+    ID3D12Resource* readback[HISTORY_MAX];
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout[HISTORY_MAX];
+    UINT64 size[HISTORY_MAX];        // readback buffer size (footprint, padded)
+    UINT64 va[HISTORY_MAX];
+    unsigned int record_index[HISTORY_MAX];
+    unsigned int count;
+} HistoryProbe;
+
+static int history_setup(ID3D12Device* device, HistoryProbe* hp) {
+    LONG total = boundary_resource_count;
+    if (total > BOUNDARY_RESOURCE_MAX) { total = BOUNDARY_RESOURCE_MAX; }
+    for (LONG i = 0; i < total && hp->count < HISTORY_MAX; ++i) {
+        const ResourceRecord* record = &boundary_resources[i];
+        D3D12_RESOURCE_DESC desc = {0};
+        UINT64 bpp;
+        if (record->phase != 1) { continue; }
+        if (record->dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D) { continue; }
+        if (record->size == 0 || record->size > HISTORY_BYTES_MAX) { continue; }
+        bpp = boundary_format_bytes(record->format);
+        if (!bpp) { continue; }
+        desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        desc.Width = record->width;
+        desc.Height = record->height;
+        desc.DepthOrArraySize = record->depth_or_array;
+        desc.MipLevels = record->mip_levels;
+        desc.Format = (DXGI_FORMAT)record->format;
+        desc.SampleDesc.Count = 1;
+        ID3D12Device_GetCopyableFootprints(device, &desc, 0, 1, 0,
+                                           &hp->layout[hp->count], NULL, NULL,
+                                           &hp->size[hp->count]);
+        if (!create_buffer(device, D3D12_HEAP_TYPE_READBACK, hp->size[hp->count],
+                           &hp->readback[hp->count])) {
+            return 0;
+        }
+        hp->record_index[hp->count] = (unsigned int)i;
+        hp->va[hp->count] = record->va;
+        ++hp->count;
+    }
+    printf("HISTORY-CANDIDATES count=%u\n", hp->count);
+    fflush(stdout);
+    return 1;
+}
+
+// Record one read-only copy of each history texture into its readback buffer.
+// A UAV barrier orders the copy behind the model's writes; no state transition
+// is issued on model-owned resources (their tracked state is unknown).
+static void history_record(ID3D12GraphicsCommandList* list, HistoryProbe* hp) {
+    for (unsigned int i = 0; i < hp->count; ++i) {
+        const ResourceRecord* record = &boundary_resources[hp->record_index[i]];
+        D3D12_RESOURCE_BARRIER barrier = {0};
+        D3D12_TEXTURE_COPY_LOCATION dst = {0}, src = {0};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+        barrier.UAV.pResource = record->resource;
+        ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
+        dst.pResource = hp->readback[i];
+        dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dst.PlacedFootprint = hp->layout[i];
+        src.pResource = record->resource;
+        src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        src.SubresourceIndex = 0;
+        ID3D12GraphicsCommandList_CopyTextureRegion(list, &dst, 0, 0, 0, &src, NULL);
+    }
+}
+
+static int history_dump(const char* dir, HistoryProbe* hp, FILE* manifest,
+                        const char* tag) {
+    for (unsigned int i = 0; i < hp->count; ++i) {
+        const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* layout = &hp->layout[i];
+        UINT64 row_bytes = (UINT64)layout->Footprint.Width *
+                           boundary_format_bytes((UINT32)layout->Footprint.Format);
+        size_t total = (size_t)(row_bytes * layout->Footprint.Height);
+        unsigned char* mapped = NULL;
+        unsigned char* tight = NULL;
+        D3D12_RANGE range = {0, (SIZE_T)hp->size[i]};
+        char name[64];
+        char path[512];
+        FILE* out;
+        uint64_t digest;
+        if (snprintf(name, sizeof(name), "history%u-%s.bin", i, tag) >= (int)sizeof(name)) {
+            fprintf(stderr, "History name too long\n");
+            return 0;
+        }
+        if (snprintf(path, sizeof(path), "%s/%s", dir, name) >= (int)sizeof(path)) {
+            fprintf(stderr, "History path too long\n");
+            return 0;
+        }
+        if (FAILED(ID3D12Resource_Map(hp->readback[i], 0, &range, (void**)&mapped))) {
+            fprintf(stderr, "History map failed %s\n", name);
+            return 0;
+        }
+        tight = (unsigned char*)malloc(total);
+        if (!tight) {
+            D3D12_RANGE no_write = {0, 0};
+            ID3D12Resource_Unmap(hp->readback[i], 0, &no_write);
+            return 0;
+        }
+        for (UINT64 y = 0; y < layout->Footprint.Height; ++y) {
+            memcpy(tight + (size_t)y * row_bytes,
+                   mapped + layout->Offset + (size_t)y * layout->Footprint.RowPitch,
+                   (size_t)row_bytes);
+        }
+        {
+            D3D12_RANGE no_write = {0, 0};
+            ID3D12Resource_Unmap(hp->readback[i], 0, &no_write);
+        }
+        out = fopen(path, "wb");
+        if (!out || fwrite(tight, 1, total, out) != total) {
+            fprintf(stderr, "History write failed %s\n", name);
+            if (out) { fclose(out); }
+            free(tight);
+            return 0;
+        }
+        fclose(out);
+        digest = capture_fnv(tight, total);
+        free(tight);
+        fprintf(manifest,
+                "history idx=%u rec=%u stage=%s va=0x%llx w=%llu h=%u fmt=%u "
+                "bytes=%zu file=%s fnv=0x%016llx\n",
+                i, hp->record_index[i], tag, (unsigned long long)hp->va[i],
+                (unsigned long long)layout->Footprint.Width, layout->Footprint.Height,
+                (unsigned int)layout->Footprint.Format, total, name,
+                (unsigned long long)digest);
+        printf("HISTORY idx=%u stage=%s bytes=%zu fnv=0x%016llx\n", i, tag, total,
+               (unsigned long long)digest);
+        fflush(stdout);
+    }
+    return 1;
+}
+
+// Intervention experiment (see TEMPORAL-HISTORY.md): overwrite the evaluated
+// feature's history texture with a synthetic pattern before evaluation, to
+// test whether its content is read at all. Pattern 0 = uniform FP16 1.0;
+// pattern 1 = 16-pixel checkerboard of FP16 1.0/0.0 (in-range values, so no
+// sanitisation excuse if the output fails to change).
+static int history_inject_upload(ID3D12Resource* upload,
+                                 const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* layout,
+                                 unsigned int pattern) {
+    unsigned char* mapped = NULL;
+    D3D12_RANGE no_read = {0, 0};
+    if (FAILED(ID3D12Resource_Map(upload, 0, &no_read, (void**)&mapped))) { return 0; }
+    for (UINT32 y = 0; y < layout->Footprint.Height; ++y) {
+        unsigned char* row = mapped + layout->Offset + (UINT64)y * layout->Footprint.RowPitch;
+        for (UINT32 x = 0; x < layout->Footprint.Width; ++x) {
+            uint16_t* pixel = (uint16_t*)(row + (UINT64)x * 8u); // RGBA16F
+            uint16_t value = 0x3c00u; // FP16 1.0
+            if (pattern == 1u) {
+                value = ((((x >> 4) + (y >> 4)) & 1u) != 0u) ? 0x3c00u : 0x0000u;
+            }
+            for (unsigned int c = 0; c < 4; ++c) { pixel[c] = value; }
+        }
+    }
+    ID3D12Resource_Unmap(upload, 0, NULL);
+    return 1;
+}
+
+static void history_inject_record(ID3D12GraphicsCommandList* list, HistoryProbe* hp,
+                                  ID3D12Resource* upload,
+                                  const D3D12_PLACED_SUBRESOURCE_FOOTPRINT* layout) {
+    // Only history index 0 (the evaluated feature's history) is overwritten;
+    // index 1 stays untouched as the static control.
+    const ResourceRecord* record = &boundary_resources[hp->record_index[0]];
+    D3D12_RESOURCE_BARRIER barrier = {0};
+    D3D12_TEXTURE_COPY_LOCATION dst = {0}, src = {0};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = record->resource;
+    ID3D12GraphicsCommandList_ResourceBarrier(list, 1, &barrier);
+    dst.pResource = record->resource;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.SubresourceIndex = 0;
+    src.pResource = upload;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint = *layout;
+    ID3D12GraphicsCommandList_CopyTextureRegion(list, &dst, 0, 0, 0, &src, NULL);
+}
+
+// Sham intervention (content-preserving): stage the history's own read-back
+// bytes into the injection upload buffer, so the same upload->texture copy runs
+// before the evaluation without changing any content. If the sham run
+// reproduces the reference bit-for-bit while the pattern runs diverge, the
+// causality is the injected *content*, not the copy machinery.
+static int history_inject_sham(HistoryProbe* hp, ID3D12Resource* upload) {
+    unsigned char* src = NULL;
+    unsigned char* dst = NULL;
+    D3D12_RANGE read = {0, (SIZE_T)hp->size[0]};
+    D3D12_RANGE no_read = {0, 0};
+    if (FAILED(ID3D12Resource_Map(hp->readback[0], 0, &read, (void**)&src))) { return 0; }
+    if (FAILED(ID3D12Resource_Map(upload, 0, &no_read, (void**)&dst))) {
+        D3D12_RANGE no_write = {0, 0};
+        ID3D12Resource_Unmap(hp->readback[0], 0, &no_write);
+        return 0;
+    }
+    memcpy(dst, src, (size_t)hp->size[0]);
+    ID3D12Resource_Unmap(upload, 0, NULL);
+    {
+        D3D12_RANGE no_write = {0, 0};
+        ID3D12Resource_Unmap(hp->readback[0], 0, &no_write);
+    }
+    return 1;
 }
 
 #endif // BOUNDARY_PROBE_H

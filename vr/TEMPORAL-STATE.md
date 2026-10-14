@@ -160,11 +160,15 @@ local under `vr/logs/`; nothing was pushed to GitHub.
 
 ## Next
 
-1. Bind the history carrier: find `dlssnr_prev_output`'s read/write points in
-   the 156-launch parameter dumps (stage 9) and its reset value.
-2. A boundary capture with a mid-stream reset to see which windows snap at the
-   reset frame (locating where history enters the pre-decoder pipeline).
-3. Native one-step recurrence replay: feed a captured frame's inputs plus the
-   previous captured output as history and compare against the vendor's next
-   frame — the temporal analogue of the bit-exact decoder replay
-   ([NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md)).
+The state's identity is now established in
+[TEMPORAL-HISTORY.md](TEMPORAL-HISTORY.md) (gate stage 13): the model's
+`dlssnr_prev_output` texture, written post-decoder with the frame's output,
+read during evaluation, reset to zero by `DLSSNR.Reset`, plus a frame counter
+(slot 1 word 25) that resets with it. Remaining:
+
+1. Native one-step recurrence replay: feed a captured frame's inputs, the
+   previous captured output as history and counter `N` to a native pipeline and
+   compare against the vendor's next frame — the temporal analogue of the
+   bit-exact decoder replay ([NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md)).
+2. Pin the read/write kernels in the 156-slot sequence to complete the state
+   map.

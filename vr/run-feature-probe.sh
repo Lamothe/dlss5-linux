@@ -52,6 +52,33 @@ case "$mode" in
     command="feature-probe.exe --capture-reset-mid resetmid-$label $frame > probe-output.txt 2>&1"
     marker='^PASS: reset-mid capture'
     ;;
+  capture-history)
+    # History-carrier capture (see vr/TEMPORAL-HISTORY.md): the reference
+    # protocol plus readback of the model's own history textures ("init" and
+    # per frame) and a full resource map. Optional frame arg adds a second
+    # DLSSNR.Reset at that frame. Retained under vr/logs/history/<label>.
+    label="${2:-run}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'capture-history label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    if [[ -n "${3:-}" ]]; then
+      frame="$3"
+      [[ "$frame" =~ ^[1-7]$ ]] || { echo 'capture-history frame must be an integer in [1,7]' >&2; exit 2; }
+      command="feature-probe.exe --capture-history capture-history-$label $frame > probe-output.txt 2>&1"
+    else
+      command="feature-probe.exe --capture-history capture-history-$label > probe-output.txt 2>&1"
+    fi
+    marker='^PASS: history capture'
+    ;;
+  capture-history-inject|capture-history-sham|capture-history-replay|capture-history-replay2|capture-history-injectreset)
+    # Read-side intervention (see vr/TEMPORAL-HISTORY.md): the capture-history
+    # protocol plus a history overwrite before frames 2 and 5 — synthetic
+    # patterns (inject), the history's own bytes (sham control), or frame 0's
+    # history bytes (replay: the one-step recurrence test). Retained under
+    # vr/logs/history/<label>.
+    label="${2:-run}"
+    [[ "$label" =~ ^[a-z0-9][a-z0-9-]{0,31}$ ]] || { echo 'history label must match [a-z0-9-]{1,32}' >&2; exit 2; }
+    command="feature-probe.exe --$mode capture-history-$label > probe-output.txt 2>&1"
+    marker='^PASS: history capture'
+    ;;
   boundary)
     # Decoder-boundary intermediate capture (see vr/DECODER-BOUNDARY.md): the
     # forwarder truncates every evaluation after the decoder launch and writes
@@ -65,7 +92,7 @@ case "$mode" in
     export DLSS_NVAPI_CUT=1
     export DLSS_NVAPI_CUT_FILE="nvapi-boundary-$label.txt"
     ;;
-  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene|capture|capture-reset|boundary]' >&2; exit 1 ;;
+  *) echo 'Usage: run-feature-probe.sh [create|evaluate|scene|gpu-scene|capture|capture-reset|capture-history|boundary]' >&2; exit 1 ;;
 esac
 export STEAM_COMPAT_CLIENT_INSTALL_PATH=/home/michael/.local/share/Steam
 export STEAM_COMPAT_DATA_PATH="$ROOT/vr/prefix"
@@ -162,6 +189,14 @@ if [[ "$mode" == capture-reset ]]; then
   rm -rf "$ROOT/vr/logs/temporal/$label"
   mv "resetmid-$label" "$ROOT/vr/logs/temporal/$label"
   echo "Reset-mid capture stored at vr/logs/temporal/$label"
+fi
+
+# History-carrier captures are retained under vr/logs/history/<label>.
+if [[ "$mode" == capture-history || "$mode" == capture-history-inject || "$mode" == capture-history-sham || "$mode" == capture-history-replay || "$mode" == capture-history-replay2 || "$mode" == capture-history-injectreset ]]; then
+  mkdir -p "$ROOT/vr/logs/history"
+  rm -rf "$ROOT/vr/logs/history/$label"
+  mv "capture-history-$label" "$ROOT/vr/logs/history/$label"
+  echo "History capture stored at vr/logs/history/$label"
 fi
 
 # Boundary captures are retained under vr/logs/boundary/<label> together with
