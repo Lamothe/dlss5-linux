@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-29 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-30 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Six per-slot contracts are covered:
+cut point (LADDER.md). Seven per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -51,6 +51,20 @@ cut point (LADDER.md). Six per-slot contracts are covered:
   — the 512-byte stride continuing). The write-set attribution pins
   exactly those two words (names-s28-s29.txt: w2 + w6, zero unattributed,
   stable across all three frames). It binds `block24.layer1.layer`.
+- slot 30 `cc_split_swin_16h_qkv_512_chained_fp8` (s29 -> s30): the
+  block24 qkv half — slot 26's counterpart at grid 4,4,4, the shared
+  handle's second geometry now exercised. It reads slot 29's output (w0
+  at 22,330,368 — address-equal to slot 29's w2) and consumes slot 29's
+  sync record (w5 at 51,200 — address-equal to slot 29's w6), writes its
+  output tensor at w1 (344,064 bytes at 22,674,432) and a sync record at
+  w6 (51,712 — the 512-byte stride continuing) whose changed extent is
+  256 bytes (names-s29-s30.txt, stable across all three frames). The
+  write-set attribution pins exactly those two words (w1 + w6, zero
+  unattributed). It binds `block24.layer2.layer` (917,568 B, the record
+  immediately after `block24.layer1.layer`). Its parameter block carries
+  two constant words at two distinct values: w3 the (24, 28) geometry
+  constant and w4 0xFFFFFFFCFFFFFFFC, where the same-shape slot 26
+  reserves its w4 as zero.
 
 Inputs come from retained evidence only:
 
@@ -66,7 +80,9 @@ Inputs come from retained evidence only:
   binds `block23.layer3.layer`, slot 28 binds `block24.layer0.layer` (the
   record immediately after `block23.layer3.layer`), slot 29 binds
   `block24.layer1.layer` (the record immediately after `block24.layer0.layer`
-  — the record-ordering pattern repeats in block24) — all exact
+  — the record-ordering pattern repeats in block24), slot 30 binds
+  `block24.layer2.layer` (the record immediately after `block24.layer1.layer`)
+  — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
 
@@ -77,7 +93,7 @@ never launched by the vendor — pinned) is replayed at the live geometry as a
 variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
-27, 28 and 29, 192 B at slot 26). Controls: skip (no launch), wrong (weights rotated
+27, 28 and 29, 192 B at slot 26, 256 B at slot 30). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
 
@@ -142,10 +158,14 @@ CLS_ZERO = "zero"
 # slot's parameter block in index order: pool (working-pool address, replayed
 # at the same pool offset), weights (weight-heap record start, the extracted
 # record replayed at our allocation), constant (passed through from the
-# captured block, value pinned), zero (reserved, must be 0). sync_bytes is the
-# sync record's changed extent, measured per slot in the ladder write-sets
-# (LADDER-NAMES.md segments; 96/96/192/96/96/96 for slots 24/25/26/27/28/29) — the fp8
+# captured block, value pinned per word in constant_values), zero (reserved,
+# must be 0). sync_bytes is the sync record's changed extent, measured per
+# slot in the ladder write-sets (LADDER-NAMES.md segments;
+# 96/96/192/96/96/96/256 for slots 24/25/26/27/28/29/30) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly.
+# constant_values maps constant-word index to its pinned value (a block can
+# carry more than one, at more than one value: slot 30's w4 is
+# 0xFFFFFFFCFFFFFFFC where the same-shape slot 26's w4 is reserved zero).
 CONTRACTS: dict[int, dict[str, Any]] = {
     24: dict(
         slot=24,
@@ -154,7 +174,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_ffwd_inpview_512_fp8",
         tag_live="tilesync", tag_sibling="fp8",
         record_name="block23.layer0.layer", record_bytes=524288,
-        constant_value=0x1C00000018,   # recovered (24, 28) geometry overrides
+        constant_values={3: 0x1C00000018},   # recovered (24, 28) geometry overrides
         word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
                       CLS_ZERO, CLS_ZERO, CLS_POOL),
         output_word=1, sync_word=6, sync_bytes=96,
@@ -166,7 +186,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_ffwd_proj_inpview_512_fp8",
         tag_live="chained", tag_sibling="fp8",
         record_name="block23.layer1.layer", record_bytes=263168,
-        constant_value=0x1C00000018,
+        constant_values={4: 0x1C00000018},
         word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
         output_word=2, sync_word=6, sync_bytes=96,
@@ -178,7 +198,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_qkv_512_fp8",
         tag_live="chained", tag_sibling="fp8",
         record_name="block23.layer2.layer", record_bytes=917568,
-        constant_value=0x1C00000018,
+        constant_values={3: 0x1C00000018},
         word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
                       CLS_ZERO, CLS_POOL, CLS_POOL),
         output_word=1, sync_word=6, sync_bytes=192,
@@ -190,7 +210,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_proj_512_fp8",
         tag_live="chained", tag_sibling="fp8",
         record_name="block23.layer3.layer", record_bytes=263168,
-        constant_value=0x1C00000018,
+        constant_values={4: 0x1C00000018},
         word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
         output_word=2, sync_word=6, sync_bytes=96,
@@ -202,7 +222,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_ffwd_512_fp8",
         tag_live="chained", tag_sibling="fp8",
         record_name="block24.layer0.layer", record_bytes=524288,
-        constant_value=0x1C00000018,
+        constant_values={3: 0x1C00000018},
         word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
                       CLS_POOL, CLS_ZERO, CLS_POOL),
         output_word=1, sync_word=6, sync_bytes=96,
@@ -214,11 +234,23 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         name_sibling="cc_split_swin_16h_ffwd_proj_512_fp8",
         tag_live="chained", tag_sibling="fp8",
         record_name="block24.layer1.layer", record_bytes=263168,
-        constant_value=0x1C00000018,
+        constant_values={4: 0x1C00000018},
         word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
         output_word=2, sync_word=6, sync_bytes=96,
         input_label=28, reference_label=29),
+    30: dict(
+        slot=30,
+        psize=56,
+        name_live="cc_split_swin_16h_qkv_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_qkv_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        record_name="block24.layer2.layer", record_bytes=917568,
+        constant_values={3: 0x1C00000018, 4: 0xFFFFFFFCFFFFFFFC},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
+                      CLS_CONSTANT, CLS_POOL, CLS_POOL),
+        output_word=1, sync_word=6, sync_bytes=256,
+        input_label=29, reference_label=30),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -418,7 +450,7 @@ def setup(data: bytes, inventory: dict[str, Any],
             base.require(words[index] == 0,
                          f"slot{slot}-words: reserved word non-zero")
         elif cls == CLS_CONSTANT:
-            base.require(words[index] == contract["constant_value"],
+            base.require(words[index] == contract["constant_values"][index],
                          f"slot{slot}-words: constant word mismatch")
 
     # Per-slot grid, read at the slot's own launch position: handles are
@@ -1043,6 +1075,10 @@ def self_test() -> dict[str, Any]:
         base.require(contract["slot"] == slot, "self-test: contract slot key")
         base.require(len(contract["word_classes"]) == contract["psize"] // 8,
                      f"self-test: contract {slot} class table length")
+        base.require(set(contract["constant_values"]) ==
+                     {index for index, cls in enumerate(contract["word_classes"])
+                      if cls == CLS_CONSTANT},
+                     f"self-test: contract {slot} constant words")
         base.require(contract["word_classes"].count(CLS_WEIGHTS) == 1,
                      f"self-test: contract {slot} weights word count")
         base.require(contract["word_classes"][contract["output_word"]] == CLS_POOL and
@@ -1054,7 +1090,7 @@ def self_test() -> dict[str, Any]:
                      f"self-test: contract {slot} output/sync words distinct")
         base.require(len(set(entry_plan(contract))) == 2 * FRAMES,
                      f"self-test: contract {slot} plan distinct entries")
-        contract_checks += 7
+        contract_checks += 8
     known_answers += contract_checks
 
     return dict(diff_known_answers=3, verdict_controls=12,
@@ -1116,7 +1152,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24,25,26,27,28,29}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24,25,26,27,28,29,30}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
