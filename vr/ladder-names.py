@@ -63,7 +63,7 @@ POOL_RE = re.compile(
     r"^pool-frame=(\d+) bytes=(\d+) file=(\S+) fnv=0x([0-9a-f]{16}) "
     r"va=0x([0-9a-f]+) res_va=0x([0-9a-f]+) res_size=(\d+)$")
 LAUNCH_RE = re.compile(
-    r"launch id=0x5c52bb86 .*handle=(0x[0-9a-f]+) grid=\S+ params=\S+ "
+    r"launch id=0x5c52bb86 .*handle=(0x[0-9a-f]+) grid=(\S+) params=\S+ "
     r"psize=(\d+) pn=(\d+) pcap=(\d+) pmem=([0-9a-f]*)")
 CREATED_RE = re.compile(r"created .*name=(\S+) handle=(0x[0-9a-f]+)")
 
@@ -160,19 +160,19 @@ def read_trace(path: Path, inventory: int = INVENTORY) -> dict[str, Any]:
     """
     require(path.is_file(), "trace: trace missing")
     names: dict[str, str] = {}
-    launches: list[tuple[str, int, int, str]] = []
+    launches: list[tuple[str, int, int, str, str]] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if match := CREATED_RE.search(line):
             names[match.group(2)] = match.group(1)
         if match := LAUNCH_RE.search(line):
-            handle, psize, pn, pcap, pmem = match.groups()
-            launches.append((handle, int(psize), int(pcap), pmem))
+            handle, grid, psize, pn, pcap, pmem = match.groups()
+            launches.append((handle, int(psize), int(pcap), pmem, grid))
     require(len(names) > 0, "trace: no created names")
     clears = [h for h, n in names.items() if n == CLEAR_NAME]
     require(len(clears) == 1, "trace: clear kernel handle")
     clear = clears[0]
-    evals: list[list[tuple[str, int, int, str]]] = []
-    current: list[tuple[str, int, int, str]] = []
+    evals: list[list[tuple[str, int, int, str, str]]] = []
+    current: list[tuple[str, int, int, str, str]] = []
     for launch in launches:
         if launch[0] == clear and current:
             evals.append(current)
@@ -191,7 +191,7 @@ def pool_bindings(trace: dict[str, Any], eval_index: int,
                   pool_va: int, pool_size: int) -> list[dict[str, Any]]:
     """Every pool-resident (slot, kernel, word, offset) of one eval."""
     bindings: list[dict[str, Any]] = []
-    for slot, (handle, psize, pcap, pmem) in enumerate(
+    for slot, (handle, psize, pcap, pmem, _grid) in enumerate(
             trace["evals"][eval_index]):
         require(pcap == 0 and len(pmem) == 2 * psize, "words: pmem length")
         # Words are read 8 bytes at a time: a non-multiple size would raise

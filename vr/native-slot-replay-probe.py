@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24 and 25 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-26 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Two per-slot contracts are covered:
+cut point (LADDER.md). Three per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -16,7 +16,14 @@ cut point (LADDER.md). Two per-slot contracts are covered:
   output (w0) and a residual input (w1), consumes slot 24's sync record
   (w7 — the chained handoff), writes its output tensor at w2 (344,064
   bytes) and a 96-byte sync record at w6. The write-set attribution pins
-  exactly those two words (names-s24-s25.txt: w2 + w6, zero unattributed).
+  exactly those two words (names-s24-s25.txt: w2 + w6, zero unattributed);
+- slot 26 `cc_split_swin_16h_qkv_512_chained_fp8` (s25 -> s26): the
+  transformer block's qkv half. It reads slot 25's output (w0), consumes
+  slot 25's sync record (w5), writes its output tensor at w1 (344,064
+  bytes) and a sync record at w6 whose changed extent is 192 bytes
+  (names-s23-s56.txt, stable across all three frames). The kernel handle
+  is shared with slot 30 at a different geometry (grid 4,3,4 here, 4,4,4
+  there), so the grid is pinned at the slot's own launch position.
 
 Inputs come from retained evidence only:
 
@@ -28,19 +35,20 @@ Inputs come from retained evidence only:
 - the weight bytes are extracted from the model DLL's WEIGHTS_HT resource
   through the measured heap layout (record payloads concatenated at 512-byte
   alignment): slot 24 binds `block23.layer0.layer`, slot 25 binds
-  `block23.layer1.layer` — both exact record-start landings under the
-  decoder-anchored layout (DECODER-BOUNDARY.md word 7 at
-  `block39.layer0.layer`).
+  `block23.layer1.layer`, slot 26 binds `block23.layer2.layer` — all exact
+  record-start landings under the decoder-anchored layout
+  (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
 
 Primary claim (execute mode): for each slot's vendor-launched variant the
 native pool readback equals the vendor's captured pool byte-for-byte over
 the whole 62,684,160-byte pool. Each contract's fp8 sibling (created but
 never launched by the vendor — pinned) is replayed at the live geometry as a
 variant probe: its output tensor must match, and its sync record is recorded
-per entry (the decoder stage found the same tilesync-only 96-byte record at
-out2). Controls: skip (no launch), wrong (weights rotated inwards), tail
-(bytes beyond the record replaced by a different pattern — bounding weight
-reads to the record).
+per entry (the decoder stage found the same family record at out2; the
+record's changed extent is per slot — 96 B at the decoder, slots 24 and 25,
+192 B at slot 26). Controls: skip (no launch), wrong (weights rotated
+inwards), tail (bytes beyond the record replaced by a different pattern —
+bounding weight reads to the record).
 
 This stage uses stored learned weight bytes through extracted records
 (bounded model-weight computation, NATIVE-FP8.md precedent) and is not a
@@ -89,13 +97,11 @@ FRAMES = 3
 ANCHOR_RECORD = "block39.layer0.layer"
 HEAP_SIZE = 147719680
 OUTPUT_BYTES = 344064   # binding extent 24x28x512 (LADDER-NAMES.md segments)
-SYNC_BYTES = 96         # chained sync record extent (LADDER-NAMES.md segments)
 ROTATE_BYTES = 1024
 TAIL_BYTES = 4096
 EXEC_TAIL = 0xA5
 TAIL_TAIL = 0x5A
 GUARD_WORDS = launch.GUARD_WORDS
-
 CLS_POOL = "pool"
 CLS_WEIGHTS = "weights"
 CLS_CONSTANT = "constant"
@@ -105,7 +111,10 @@ CLS_ZERO = "zero"
 # slot's parameter block in index order: pool (working-pool address, replayed
 # at the same pool offset), weights (weight-heap record start, the extracted
 # record replayed at our allocation), constant (passed through from the
-# captured block, value pinned), zero (reserved, must be 0).
+# captured block, value pinned), zero (reserved, must be 0). sync_bytes is the
+# sync record's changed extent, measured per slot in the ladder write-sets
+# (LADDER-NAMES.md segments; 96/96/192 for slots 24/25/26) — the fp8 sibling's
+# divergence from the reference is enforced to equal it exactly.
 CONTRACTS: dict[int, dict[str, Any]] = {
     24: dict(
         slot=24,
@@ -117,7 +126,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         constant_value=0x1C00000018,   # recovered (24, 28) geometry overrides
         word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
                       CLS_ZERO, CLS_ZERO, CLS_POOL),
-        output_word=1, sync_word=6,
+        output_word=1, sync_word=6, sync_bytes=96,
         input_label=23, reference_label=24),
     25: dict(
         slot=25,
@@ -129,8 +138,20 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         constant_value=0x1C00000018,
         word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
-        output_word=2, sync_word=6,
+        output_word=2, sync_word=6, sync_bytes=96,
         input_label=24, reference_label=25),
+    26: dict(
+        slot=26,
+        psize=56,
+        name_live="cc_split_swin_16h_qkv_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_qkv_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        record_name="block23.layer2.layer", record_bytes=917568,
+        constant_value=0x1C00000018,
+        word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
+                      CLS_ZERO, CLS_POOL, CLS_POOL),
+        output_word=1, sync_word=6, sync_bytes=192,
+        input_label=25, reference_label=26),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -241,7 +262,7 @@ def heap_word_scan(trace: dict[str, Any], heap_va: int, heap_size: int,
               if name != "<heap-total>"}
     total = at_start = mid = 0
     for evaluations in trace["evals"]:
-        for _handle, psize, _pcap, pmem in evaluations:
+        for _handle, psize, _pcap, pmem, _grid in evaluations:
             block = bytes.fromhex(pmem)
             for position in range(0, len(block) // 8 * 8, 8):
                 word = struct.unpack_from("<Q", block, position)[0]
@@ -254,12 +275,23 @@ def heap_word_scan(trace: dict[str, Any], heap_va: int, heap_size: int,
     return dict(total=total, at_record_start=at_start, mid_record=mid)
 
 
-def read_grid(text: str, handle: str, label: str) -> tuple[int, int, int]:
-    grids = {(int(m.group(2)), int(m.group(3)), int(m.group(4)))
-             for m in GRID_RE.finditer(text) if m.group(1) == handle}
-    base.require(grids, f"grid: {label} has no launches")
-    base.require(len(grids) == 1, f"grid: {label} launch geometry varies")
-    return grids.pop()
+def parse_grid(raw: str) -> tuple[int, int, int]:
+    """The launch grid of one slot record (three decimal components)."""
+    parts = raw.split(",")
+    base.require(len(parts) == 3 and
+                 all(p.isascii() and p.isdigit() for p in parts),
+                 "grid: malformed geometry")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
+def following_records(layout: dict[str, dict[str, int]], record_name: str,
+                      record_bytes: int) -> list[str]:
+    """Records starting at this record's payload end, rounded up to the
+    heap's 512-byte record alignment (payloads need not be aligned:
+    `block23.layer2.layer` is followed by 448 bytes of padding)."""
+    record_end = layout[record_name]["heap_offset"] + record_bytes
+    return [name for name, entry in layout.items()
+            if entry["heap_offset"] == (record_end + 511) // 512 * 512]
 
 
 def setup(data: bytes, inventory: dict[str, Any],
@@ -300,7 +332,7 @@ def setup(data: bytes, inventory: dict[str, Any],
                      f"slot{slot}-dump: eval count")
         pmems = []
         for evaluation in trace["evals"]:
-            handle, seen_size, _pcap, pmem = evaluation[slot]
+            handle, seen_size, _pcap, pmem, _grid = evaluation[slot]
             base.require(handle == handles[label][live],
                          f"slot{slot}-identity: slot {slot} is not the live launch")
             base.require(seen_size == psize and len(pmem) == 2 * psize,
@@ -322,13 +354,22 @@ def setup(data: bytes, inventory: dict[str, Any],
             base.require(words[index] == contract["constant_value"],
                          f"slot{slot}-words: constant word mismatch")
 
-    # Per-run grid, resolved through each trace's own created handle. The
+    # Per-slot grid, read at the slot's own launch position: handles are
+    # shared across slots at different geometries (the slot-26 qkv kernel runs
+    # at 4,3,4 here and 4,4,4 at slot 30), so the position — not the handle —
+    # is the geometry's identity. Pinned across evaluations and runs. The
     # vendor launches only the live variant at this slot; the fp8 sibling is
     # replayed at the same geometry (NATIVE-VENDOR-COMPARE.md precedent).
-    grids = {live: read_grid(trace_text[in_label], handles[in_label][live], live)}
-    base.require(grids[live] == read_grid(trace_text[ref_label],
-                                          handles[ref_label][live], live),
-                 f"grid: {live} differs between runs")
+    slot_grids = {label: {parse_grid(evaluation[slot][4])
+                          for evaluation in traces[label]["evals"]}
+                  for label in (in_label, ref_label)}
+    base.require(len(slot_grids[in_label]) == 1,
+                 f"grid: {in_label} launch geometry varies")
+    base.require(len(slot_grids[ref_label]) == 1,
+                 f"grid: {ref_label} launch geometry varies")
+    base.require(slot_grids[in_label] == slot_grids[ref_label],
+                 "grid: geometry differs between runs")
+    grids = {live: slot_grids[in_label].pop(), sibling: None}
     grids[sibling] = grids[live]
     # The fp8 sibling is created but never launched by the vendor: it has no
     # launch contract of its own (pinned per trace, each with its own handle).
@@ -413,9 +454,7 @@ def setup(data: bytes, inventory: dict[str, Any],
                      scan["total"] == scan["at_record_start"],
                      "weight-heap: weight pointer off record start")
     record = base.span(weights, layout[record_name]["payload_at"], record_bytes)
-    following = [name for name, entry in layout.items()
-                 if entry["heap_offset"] == layout[record_name]["heap_offset"]
-                 + record_bytes]
+    following = following_records(layout, record_name, record_bytes)
     base.require(len(following) == 1, f"slot{slot}-weight: no following record")
     tail_live = base.span(weights, layout[following[0]]["payload_at"],
                           min(TAIL_BYTES, layout[following[0]]["payload_bytes"]))
@@ -537,15 +576,17 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     else:
         extent = (-1, -1, 0)
 
-    # Region verdicts: the output tensor binding and the 96-byte sync record.
+    # Region verdicts: the output tensor binding and the sync record (its
+    # changed extent per slot, contract["sync_bytes"]).
+    sync_bytes = contract["sync_bytes"]
     output_start = setup_data["pool_offsets"][contract["output_word"]]
     sync_start = setup_data["pool_offsets"][contract["sync_word"]]
     main_match, main_diffs, main_first = compare.diff_stats(
         reference[output_start:output_start + OUTPUT_BYTES],
         pool_region[output_start:output_start + OUTPUT_BYTES])
-    sync = pool_region[sync_start:sync_start + SYNC_BYTES]
+    sync = pool_region[sync_start:sync_start + sync_bytes]
     _sync_match, sync_diff_count, _sync_first = compare.diff_stats(
-        reference[sync_start:sync_start + SYNC_BYTES], sync)
+        reference[sync_start:sync_start + sync_bytes], sync)
 
     entry = {
         "entry": entry_id, "frame": frame, "kernel": plan["kernels"][tag],
@@ -557,9 +598,9 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
         "input_fnv": f"0x{names.fnv1a64(input_region):016x}",
         "main_match": main_match, "main_diff_count": main_diffs,
         "main_first_diff": main_first,
-        "sync_matches_reference": sync == reference[sync_start:sync_start + SYNC_BYTES],
+        "sync_matches_reference": sync == reference[sync_start:sync_start + sync_bytes],
         "sync_diff_count": sync_diff_count,
-        "sync_from_input": sync == input_region[sync_start:sync_start + SYNC_BYTES],
+        "sync_from_input": sync == input_region[sync_start:sync_start + sync_bytes],
         "sync_fnv": f"0x{names.fnv1a64(sync):016x}",
         "pool_unchanged": unchanged, "pool_input_diff_count": unchanged_count,
         "change_first": extent[0], "change_last": extent[1],
@@ -590,7 +631,7 @@ def validate_entry(entry: dict[str, Any]) -> None:
 
 
 def enforced_failures(mode: str, entries: list[dict[str, Any]],
-                      live_name: str, sync_start: int) -> list[str]:
+                      live_name: str, sync_bytes: int) -> list[str]:
     labels: list[str] = []
     for entry in entries:
         name = entry["entry"]
@@ -606,13 +647,14 @@ def enforced_failures(mode: str, entries: list[dict[str, Any]],
             else:
                 if not entry["main_match"]:
                     labels.append(f"{'main-mismatch' if mode == 'execute' else 'tail-main-mismatch'}:{name}")
-                elif (entry["pool_diff_count"] != SYNC_BYTES or
-                      entry["sync_diff_count"] != SYNC_BYTES):
+                elif (entry["pool_diff_count"] != sync_bytes or
+                      entry["sync_diff_count"] != sync_bytes):
                     # The fp8 sibling's divergence from the reference must be
-                    # exactly the sync record (the tilesync/chained family
-                    # trait). Equal difference counts inside the record and
-                    # over the whole pool prove confinement: every differing
-                    # byte lies within the record.
+                    # exactly the sync record's changed extent (the
+                    # tilesync/chained family trait, measured per slot in the
+                    # ladder write-sets). Equal difference counts inside the
+                    # record and over the whole pool prove confinement: every
+                    # differing byte lies within the record.
                     labels.append(f"sibling-divergence:{name}")
         elif mode == "skip":
             if not entry["pool_unchanged"]:
@@ -666,7 +708,7 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             progress["entries"] = entries
 
     failures = enforced_failures(mode, entries, contract["name_live"],
-                                plan["setup"]["pool_offsets"][contract["sync_word"]])
+                                contract["sync_bytes"])
     return dict(
         native=True, device="NVIDIA GeForce RTX 4070 Ti SUPER",
         driver_api_version=version, mode=mode, slot=contract["slot"],
@@ -680,8 +722,8 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             f"whole-pool byte match against the s{contract['reference_label']} "
             f"vendor capture (execute, tail: {contract['tag_live']} variant)",
             "main-tensor byte match for the fp8 sibling, with its "
-            f"divergence confined to the {SYNC_BYTES}-byte sync record "
-            f"(w{contract['sync_word']})",
+            f"divergence confined to the {contract['sync_bytes']}-byte sync "
+            f"record (w{contract['sync_word']})",
             f"pool bit-identical to input and non-match against "
             f"s{contract['reference_label']} (skip)",
             f"non-match against s{contract['reference_label']} and pool changed "
@@ -694,7 +736,8 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             f"tail 0x{TAIL_TAIL:02X})",
             "fp8 sibling replayed at the live variant's geometry "
             "(the vendor creates but never launches it: sibling_launches pinned 0)",
-            f"96-byte sync record at w{contract['sync_word']} per entry: "
+            f"{contract['sync_bytes']}-byte sync record at "
+            f"w{contract['sync_word']} per entry: "
             f"matches reference / matches input",
         ],
         setup={key: value for key, value in plan["setup"].items()
@@ -718,6 +761,7 @@ def pair(first: Path, second: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 SYNC_FIXTURE = 48640   # fixture pool offset for the sync record
+FIXTURE_SYNC_BYTES = 96   # fixture sync record extent
 FIXTURE_LIVE = "fixture-live-kernel"
 FIXTURE_SIBLING = "fixture-sibling-kernel"
 
@@ -752,7 +796,7 @@ def self_test() -> dict[str, Any]:
     # Verdict controls: each corruption must raise exactly its pinned label.
     controls = 0
     base.require(enforced_failures("execute", [make_entry()],
-                             FIXTURE_LIVE, SYNC_FIXTURE) == [],
+                             FIXTURE_LIVE, FIXTURE_SYNC_BYTES) == [],
                  "self-test: clean execute rejected")
     for name, mode, overrides, expected in (
             ("execute mismatch", "execute", dict(pool_match=False, pool_diff_count=1,
@@ -782,29 +826,29 @@ def self_test() -> dict[str, Any]:
                   pool_fnv="0x3", pool_first_diff=SYNC_FIXTURE,
                   main_match=False, main_diff_count=1,
                   sync_matches_reference=False, sync_from_input=True,
-                  sync_diff_count=SYNC_BYTES),
+                  sync_diff_count=FIXTURE_SYNC_BYTES),
              "main-mismatch:e0"),
             ("sibling tail mismatch", "tail",
              dict(kernel=FIXTURE_SIBLING, mode="tail", pool_match=False,
                   pool_diff_count=96, pool_fnv="0x3",
                   pool_first_diff=SYNC_FIXTURE, main_match=False,
                   main_diff_count=1, sync_matches_reference=False,
-                  sync_from_input=True, sync_diff_count=SYNC_BYTES),
+                  sync_from_input=True, sync_diff_count=FIXTURE_SYNC_BYTES),
              "tail-main-mismatch:e0"),
             ("sibling divergence extent", "execute",
              dict(kernel=FIXTURE_SIBLING, pool_match=False,
-                  pool_diff_count=SYNC_BYTES + 4, pool_fnv="0x3",
+                  pool_diff_count=FIXTURE_SYNC_BYTES + 4, pool_fnv="0x3",
                   pool_first_diff=SYNC_FIXTURE,
-                  sync_matches_reference=False, sync_diff_count=SYNC_BYTES),
+                  sync_matches_reference=False, sync_diff_count=FIXTURE_SYNC_BYTES),
              "sibling-divergence:e0"),
             ("sibling sync divergence", "execute",
              dict(kernel=FIXTURE_SIBLING, pool_match=False,
-                  pool_diff_count=SYNC_BYTES, pool_fnv="0x3",
+                  pool_diff_count=FIXTURE_SYNC_BYTES, pool_fnv="0x3",
                   pool_first_diff=SYNC_FIXTURE,
                   sync_matches_reference=False, sync_diff_count=3),
              "sibling-divergence:e0")):
         labels = enforced_failures(mode, [make_entry(**overrides)],
-                                FIXTURE_LIVE, SYNC_FIXTURE)
+                                FIXTURE_LIVE, FIXTURE_SYNC_BYTES)
         base.require(expected in labels, f"self-test: {name} not detected")
         base.require(len(labels) == 1, f"self-test: {name} over-detected")
         controls += 1
@@ -856,11 +900,12 @@ def self_test() -> dict[str, Any]:
         base.require(expected in labels, f"self-test: pair {name} not detected")
         controls += 1
 
-    # Weight-layout known answer: two payloads force the 512-byte alignment.
+    # Weight-layout known answer: three payloads force the 512-byte alignment
+    # (rec0 300 B at heap 0, rec1 700 B at 512, rec2 100 B at 1536).
     container = bytearray(struct.pack("<Q", 0))
     expected_offsets = []
     heap = 0
-    for index, payload in enumerate((300, 700)):
+    for index, payload in enumerate((300, 700, 100)):
         name = f"rec{index}".encode()
         container += struct.pack("<Q", len(name)) + name
         record = struct.pack("<QQI", 40 + payload, payload, 1) + bytes(payload) + \
@@ -877,7 +922,36 @@ def self_test() -> dict[str, Any]:
         base.require(layout[f"rec{index}"]["heap_offset"] == offset and
                      layout[f"rec{index}"]["payload_bytes"] == payload,
                      f"self-test: layout record {index}")
-    known_answers += 3
+    known_answers += 4
+
+    # following_records known answers: the lookup matches the payload end
+    # rounded up to the 512-byte record alignment — exactly. In this fixture
+    # rec0's unaligned 300-byte payload is followed by 212 bytes of padding
+    # before rec1 (at 512), and rec1's 700-byte payload by 324 bytes before
+    # rec2 (at 1536). The fourth case pins exactness: with a 200-byte
+    # hypothetical end (rounded to 1024) nothing is returned even though rec2
+    # exists beyond it — the lookup is not "first record at or past the end".
+    base.require(following_records(layout, "rec0", 300) == ["rec1"],
+                 "self-test: following record across padding")
+    base.require(following_records(layout, "rec1", 700) == ["rec2"],
+                 "self-test: following record across second padding")
+    base.require(following_records(layout, "rec2", 100) == [],
+                 "self-test: following record at heap end")
+    base.require(following_records(layout, "rec1", 200) == [],
+                 "self-test: following record past rounded end")
+    known_answers += 4
+
+    # parse_grid known answer and malformed-form control.
+    base.require(parse_grid("4,3,4") == (4, 3, 4), "self-test: grid parse")
+    known_answers += 1
+    try:
+        parse_grid("4,3")
+    except ValueError as error:
+        base.require(str(error) == "grid: malformed geometry",
+                     "self-test: grid form wrong message")
+        controls += 1
+    else:
+        raise ValueError("fixture grid corruption accepted")
 
     # Metadata known answer and malformed-form control.
     info = struct.pack("<BBH", 3, 0x19, 56) + \
@@ -906,14 +980,18 @@ def self_test() -> dict[str, Any]:
         base.require(contract["word_classes"][contract["output_word"]] == CLS_POOL and
                      contract["word_classes"][contract["sync_word"]] == CLS_POOL,
                      f"self-test: contract {slot} region word class")
+        base.require(0 < contract["sync_bytes"] <= 512,
+                     f"self-test: contract {slot} sync extent")
         base.require(len(entry_plan(contract)) == 2 * FRAMES,
                      f"self-test: contract {slot} plan length")
-    known_answers += 2
+    known_answers += 6
 
     return dict(diff_known_answers=3, verdict_controls=12,
                 consistency_controls=6, pair_controls=5,
-                layout_known_answers=3, metadata_known_answers=1,
-                contract_known_answers=2,
+                layout_known_answers=4, following_known_answers=4,
+                metadata_known_answers=1,
+                grid_known_answers=1,
+                contract_known_answers=6,
                 corruption_controls=controls,
                 known_answers=known_answers,
                 gpu_kernels_launched=0)
@@ -967,7 +1045,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24,25}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24,25,26}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
