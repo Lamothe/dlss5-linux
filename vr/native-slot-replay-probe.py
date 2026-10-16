@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-32 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-33 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Nine per-slot contracts are covered:
+cut point (LADDER.md). Ten per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -96,6 +96,23 @@ cut point (LADDER.md). Nine per-slot contracts are covered:
   directly after `block24.layer3.layer`, the record-ordering walk
   continuing into block25). Its parameter block is the slot-28 word
   map exactly (no second constant: w5 is reserved zero).
+- slot 33 `cc_split_swin_16h_ffwd_proj_512_chained_fp8` (s32 -> s33):
+  the block25 ffwd-proj pair's second half — the `ffwd_proj` counterpart
+  to slots 25 and 29 (same 72-byte block and grid 8,3,1). It reads slot
+  32's output (w0 at 23,362,560) and a residual input (w1 at 23,018,496,
+  the buffer slot 31 wrote its output to), consumes slot 32's sync record
+  (w7 at 52,736 — address-equal to slot 32's w6, the chained handoff) and
+  writes its output tensor at w2 (344,064 bytes at 23,706,624) plus a
+  96-byte sync record at w6 (53,248 — the 512-byte stride continuing).
+  The write-set attribution pins exactly those two words
+  (names-s32-s33.txt: w2 + w6, zero unattributed, stable across all
+  three frames). It binds `block25.layer1.layer` (263,168 B at heap
+  offset 11,194,880 — the record directly after `block25.layer0.layer`,
+  the record-ordering walk continuing through block25's pair). Its
+  parameter block is slot 25's word map exactly (as at slot 29; w8
+  reserved zero: the
+  0xFFFFFFFCFFFFFFFC constant does not recur in block25's ffwd->proj
+  pair, remaining confined to block24's qkv->proj pair).
 
 Inputs come from retained evidence only:
 
@@ -116,7 +133,9 @@ Inputs come from retained evidence only:
   slot 31 binds `block24.layer3.layer` (the record immediately after
   `block24.layer2.layer`, at heap offset 10,407,424), slot 32 binds
   `block25.layer0.layer` (the record immediately after
-  `block24.layer3.layer`)
+  `block24.layer3.layer`), slot 33 binds `block25.layer1.layer` (the
+  record immediately after `block25.layer0.layer`, at heap offset
+  11,194,880)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -128,7 +147,7 @@ never launched by the vendor — pinned) is replayed at the live geometry as a
 variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
-27, 28, 29, 31 and 32, 192 B at slot 26, 256 B at slot 30). Controls: skip (no launch), wrong (weights rotated
+27, 28, 29, 31, 32 and 33, 192 B at slot 26, 256 B at slot 30). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
 
@@ -196,7 +215,7 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). sync_bytes is the sync record's changed extent, measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96 for slots 24/25/26/27/28/29/30/31/32) — the fp8
+# 96/96/192/96/96/96/256/96/96/96 for slots 24/25/26/27/28/29/30/31/32/33) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly.
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
@@ -312,6 +331,18 @@ CONTRACTS: dict[int, dict[str, Any]] = {
                       CLS_POOL, CLS_ZERO, CLS_POOL),
         output_word=1, sync_word=6, sync_bytes=96,
         input_label=31, reference_label=32),
+    33: dict(
+        slot=33,
+        psize=72,
+        name_live="cc_split_swin_16h_ffwd_proj_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_ffwd_proj_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        record_name="block25.layer1.layer", record_bytes=263168,
+        constant_values={4: 0x1C00000018},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
+        output_word=2, sync_word=6, sync_bytes=96,
+        input_label=32, reference_label=33),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1213,7 +1244,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24,25,26,27,28,29,30,31,32}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..33}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
