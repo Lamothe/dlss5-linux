@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-33 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-34 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Ten per-slot contracts are covered:
+cut point (LADDER.md). Eleven per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -22,8 +22,11 @@ cut point (LADDER.md). Ten per-slot contracts are covered:
   slot 25's sync record (w5), writes its output tensor at w1 (344,064
   bytes) and a sync record at w6 whose changed extent is 192 bytes
   (names-s23-s56.txt, stable across all three frames). The kernel handle
-  is shared with slot 30 at a different geometry (grid 4,3,4 here, 4,4,4
-  there), so the grid is pinned at the slot's own launch position;
+  is the `qkv_512` family's shared handle — all sixteen qkv launches of
+  both transformer intervals (slots 26/30/34/38/42/46/50/54 and
+  102/106/110/114/118/122/126/130) use it at exactly two geometries (grid
+  4,3,4 here and at slots 34/42/50/102/110/118/126, 4,4,4 at slots
+  30/38/46/54/106/114/122/130), so the grid is pinned at the slot's own launch position;
 - slot 27 `cc_split_swin_16h_proj_512_chained_fp8` (s26 -> s27): the
   transformer block's proj half (the qkv-proj pair's second half). It
   reads slot 26's output (w0) and a residual input (w1, the address slot
@@ -111,8 +114,29 @@ cut point (LADDER.md). Ten per-slot contracts are covered:
   the record-ordering walk continuing through block25's pair). Its
   parameter block is slot 25's word map exactly (as at slot 29; w8
   reserved zero: the
-  0xFFFFFFFCFFFFFFFC constant does not recur in block25's ffwd->proj
-  pair, remaining confined to block24's qkv->proj pair).
+  0xFFFFFFFCFFFFFFFC value does not recur in block25's ffwd->proj
+  pair; slot 34's w4 below shows the qkv-side constant value varies
+  per pair rather than being confined to block24's qkv->proj pair).
+- slot 34 `cc_split_swin_16h_qkv_512_chained_fp8` (s33 -> s34): the
+  block25 qkv half — slot 26's counterpart, the `qkv->proj` pair's first
+  half. It reads slot 33's output (w0 at 23,706,624 — address-equal to
+  slot 33's w2) and consumes slot 33's sync record (w5 at 53,248 —
+  address-equal to slot 33's w6, the chained handoff at the qkv shape's
+  w5 position), writes its output tensor at w1 (344,064 bytes at
+  24,050,688) and a sync record at w6 (53,760 — the 512-byte stride
+  continuing) whose changed extent is 192 bytes (names-s33-s34.txt,
+  stable across all three frames). The write-set attribution pins exactly
+  those two words (w1 + w6, zero unattributed). It binds
+  `block25.layer2.layer` (917,568 B at heap offset 11,458,048 — the
+  record directly after `block25.layer1.layer`, the record-ordering walk
+  holding through block25's pair). The kernel handle is the shared
+  `qkv_512` handle (the sixteen qkv launches at the two geometries in the
+  slot-26 note), so the grid is resolved at the slot's own launch
+  position (4,3,4 here, the slot-26 geometry; slot 30's was 4,4,4). Its
+  parameter block carries two constant words: w3 the (24, 28) geometry
+  constant and w4 0x00000000FFFFFFFC — the low dword only, where slot
+  30's same-shape w4 is 0xFFFFFFFCFFFFFFFC and slot 26's is zero, so the
+  qkv-side second constant's value varies per pair.
 
 Inputs come from retained evidence only:
 
@@ -135,7 +159,8 @@ Inputs come from retained evidence only:
   `block25.layer0.layer` (the record immediately after
   `block24.layer3.layer`), slot 33 binds `block25.layer1.layer` (the
   record immediately after `block25.layer0.layer`, at heap offset
-  11,194,880)
+  11,194,880), slot 34 binds `block25.layer2.layer` (the record
+  immediately after `block25.layer1.layer`, at heap offset 11,458,048)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -147,7 +172,7 @@ never launched by the vendor — pinned) is replayed at the live geometry as a
 variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
-27, 28, 29, 31, 32 and 33, 192 B at slot 26, 256 B at slot 30). Controls: skip (no launch), wrong (weights rotated
+27, 28, 29, 31, 32 and 33, 192 B at slots 26 and 34, 256 B at slot 30). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
 
@@ -215,12 +240,12 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). sync_bytes is the sync record's changed extent, measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96 for slots 24/25/26/27/28/29/30/31/32/33) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192 for slots 24/25/26/27/28/29/30/31/32/33/34) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly.
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
 # are 0xFFFFFFFCFFFFFFFC where the same-shape slots 26/27 reserve those
-# words as zero).
+# words as zero; slot 34's w4 is 0x00000000FFFFFFFC — the low dword only).
 CONTRACTS: dict[int, dict[str, Any]] = {
     24: dict(
         slot=24,
@@ -343,6 +368,18 @@ CONTRACTS: dict[int, dict[str, Any]] = {
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
         output_word=2, sync_word=6, sync_bytes=96,
         input_label=32, reference_label=33),
+    34: dict(
+        slot=34,
+        psize=56,
+        name_live="cc_split_swin_16h_qkv_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_qkv_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        record_name="block25.layer2.layer", record_bytes=917568,
+        constant_values={3: 0x1C00000018, 4: 0x00000000FFFFFFFC},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
+                      CLS_CONSTANT, CLS_POOL, CLS_POOL),
+        output_word=1, sync_word=6, sync_bytes=192,
+        input_label=33, reference_label=34),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1244,7 +1281,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..33}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..34}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
