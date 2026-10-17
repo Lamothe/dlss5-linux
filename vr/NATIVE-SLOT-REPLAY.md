@@ -1,10 +1,10 @@
-# Native pre-decoder kernel replay (slots 24-43) — 15-17/10/2026
+# Native pre-decoder kernel replay (slots 24-44) — 15-17/10/2026
 
 ## Result
 
-**Twenty pre-decoder kernel launches (slots 24–43; six distinct kernel
+**Twenty-one pre-decoder kernel launches (slots 24–44; six distinct kernel
 names — slots 26/30/34/38/42 share one kernel across two geometries, slots
-27/31/35/39/43, 28/32/36/40 and 29/33/37/41 reuse kernels at the same geometry) of the
+27/31/35/39/43, 28/32/36/40/44 and 29/33/37/41 reuse kernels at the same geometry) of the
 vendor's 156-launch sequence now replay
 natively on Linux and reproduce the vendor's own captured state
 byte-for-byte.** Each kernel's launch is rebuilt from its captured parameter
@@ -36,6 +36,7 @@ bytes on all three frames, in both execute runs, for all twenty slots**.
 | 41 | `cc_split_swin_16h_ffwd_proj_512_chained_fp8` | reads output-of-slot-40 w0 + residual w1 + previous sync w7; writes output w2 (344,064 B) + sync w6 (96 B) | s40→s41 | (8,3,1) |
 | 42 | `cc_split_swin_16h_qkv_512_chained_fp8` | reads output-of-slot-41 w0 + previous sync w5; writes output w1 (344,064 B) + sync w6 (192 B) | s41→s42 | (4,3,4) |
 | 43 | `cc_split_swin_16h_proj_512_chained_fp8` | reads output-of-slot-42 w0 + residual w1 + previous sync w7; writes output w2 (344,064 B) + sync w6 (96 B) | s42→s43 | (8,3,1) |
+| 44 | `cc_split_swin_16h_ffwd_512_chained_fp8` | reads output-of-slot-43 w0 + previous sync w4; writes output w1 (344,064 B) + sync w6 (96 B) | s43→s44 | (4,3,2) |
 
 Slot 25 is the `ffwd→proj` pair's second half and the first kernel with the
 **chained sync handoff**: it consumes slot 24's sync record (w7 at pool
@@ -506,7 +507,7 @@ record rename would not disturb any run's verdicts.
 
 ## Variant finding: the tilesync/chained sync record
 
-All twenty contracts' fp8 siblings (`..._512_fp8`) are **created but never
+All twenty-one contracts' fp8 siblings (`..._512_fp8`) are **created but never
 launched by the vendor** (pinned: 0 launches in every trace), so they have no
 launch contract of their own; each is replayed at the live variant's geometry
 as a variant probe. In every case the sibling's **output tensor matches the
@@ -583,7 +584,7 @@ the `pair` command persists its result as `pair.json` beside the first run.
 Self-test: **25 corruption controls** (12 verdict, 6 consistency, 5 pair, 1
 metadata, 1 grid) each rejected with its pinned label or message, plus **173
 known answers** (3 diff, 4 layout, 4 following-record, 1 metadata, 1 grid,
-and 8 contract-table shape checks per contract — 160 across the twenty
+and 8 contract-table shape checks per contract — 168 across the twenty-one
 contracts, counted per contract rather than per table). The contract table's shape is itself
 pinned (slot key equals the table key, class-table length = parameter size,
 constant words carry a pinned entry for exactly the constant-class indices
@@ -644,7 +645,7 @@ touch-ups are comment-only, below):
   `vr/NATIVE-SLOT-REPLAY.md` and `vr/native-slot-replay-probe.py`; no
   functional probe code changed after the runs (the post-review rechecks
   pair `0a0ee5fc…` and `200f1e07…` under the final source).
-- `python3 vr/native-slot-replay-probe.py self-test` (173 known answers),
+- `python3 vr/native-slot-replay-probe.py self-test` (181 known answers),
   `python3 vr/ladder-report.py self-test` (19 controls) and `python3
   vr/ladder-names.py self-test` (14 controls) all pass.
 
@@ -1411,17 +1412,34 @@ extent measured **96 B** (the proj norm), pinned
 from the s42→s43 write-set
 and enforced as the sibling's divergence (the sync record at w6, 58,368 —
 the 512-byte stride continuing), stable across all three frames. The
-natural next candidate is slot 44 (`cc_split_swin_16h_ffwd_512_chained_fp8` —
-block28's `ffwd` half, the next `ffwd→proj` pair's first half at grid (4,3,2),
-block (32,8,1); the
-kernel name, creation geometry and slot-44 launch position are fixed by the
-s43 trace's own created/launch records) and its weight record
-`block28.layer0.layer`
-(524,288 B at heap offset 16,576,512 — 16,313,344 + 263,168 at the
-512 boundary, the block24/26 layer3→next-block pattern repeating)
-follows the established pattern, its w5 predicted reserved zero (every
-`ffwd` half measured so far reserves the word), to be
-confirmed from the s44 capture. The
+slot-44 `ffwd` half (block28's, `cc_split_swin_16h_ffwd_512_chained_fp8` at
+grid (4,3,2), block (32,8,1)) is now replayed byte-for-byte and confirms
+every word-map, record-binding, sync-extent and constant prediction. Its
+parameter block (psize 56) is the slot-28/32/36/40 `ffwd` word map exactly
+(POOL, POOL, WEIGHTS, CONSTANT, POOL, ZERO, POOL): w0 input (31,521,792 —
+address-equal to slot 43's w2 output), w1 output (31,865,856 — one stride
+past its input, the regular output spacing), w2 weights, w3 the (24, 28)
+geometry constant `0x1C00000018`, w4 sync-in (58,368 — address-equal to
+slot 43's w6, the chained handoff), w5 reserved zero (every `ffwd` half
+reserves the word; the `ffwd→proj` pair carries no second constant) and w6
+sync-out (58,880 — the 512-byte stride continuing: 57,856 → 58,368 → 58,880).
+Its weight record `block28.layer0.layer` (524,288 B at heap offset 16,576,512
+— 16,313,344 + 263,168 at the 512 boundary, the block24/26 layer3→next-block
+pattern repeating) is confirmed by the probe's live DLL walk. The sync extent
+measured **96 B** (the `ffwd` norm), pinned from the s43→s44 write-set and
+enforced as the sibling's divergence (the fp8 control's pool differs from the
+reference by exactly 96 bytes — the sync record — on all three frames), stable
+across all three frames. The execute pair is bit-identical (the a/b runs share
+one run_sha256). The
+natural next candidate is slot 45 (`cc_split_swin_16h_ffwd_proj_512_chained_fp8`
+— block28's `ffwd→proj` pair's second half at grid (8,3,1), the
+slot-29/33/37/41 word map), its weight record `block28.layer1.layer`
+(263,168 B at heap offset 17,100,800 — 16,576,512 + 524,288 at the 512
+boundary) and its w5/w8 predicted reserved zero (no `ffwd-proj` half carries
+the pair second constant). The constant cycle's next test is block28's
+`qkv→proj` pair (slots 46/47), predicted at the double form
+(`0xFFFFFFFCFFFFFFFC`) after block23-27's absent/double/low/high cycle, to be
+confirmed at those stages. The
 temporal/history state (`prev_output`, counter) then connects the kernels
 into a full native evaluation for the native-vs-vendor comparison of the
 whole pipeline.
