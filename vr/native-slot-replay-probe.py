@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-45 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-46 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Twenty-two per-slot contracts are covered:
+cut point (LADDER.md). Twenty-three per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -301,9 +301,10 @@ cut point (LADDER.md). Twenty-two per-slot contracts are covered:
   absent/double/low-dword/high-dword cycle (block23 absent, block24 double,
   block25 low, block26 high) — block27's measured pair (slot 42's w4 and
   slot 43's w8 both reserved zero) completes the cycle's absent step; the cycle
-  predicts block28's pair at the
-  double-dword form (slot 46's w4 and slot 47's w8) and block29's at the
-  low-dword form, to be confirmed at the following stages.
+  predicted block28's pair at the
+  double-dword form (slot 46's w4, since measured at
+  0xFFFFFFFCFFFFFFFC; slot 47's w8 is the pair's remaining test) and
+  block29's at the low-dword form, to be confirmed at the following stages.
 
 - slot 43 `cc_split_swin_16h_proj_512_chained_fp8` (s42 -> s43): the
   block27 proj half — the qkv-proj pair's second half at grid (8,3,1), block
@@ -325,6 +326,47 @@ cut point (LADDER.md). Twenty-two per-slot contracts are covered:
   partner slot 42's w4 likewise), so block27's qkv-proj pair carries no
   second constant — the cycle hypothesis' absent step now measured in both
   halves of block23's and block27's pairs.
+- slot 44 `cc_split_swin_16h_ffwd_512_chained_fp8` (s43 -> s44): the
+  block28 ffwd half — the next `ffwd->proj` pair's first half. It reads
+  slot 43's output (w0 at 31,521,792 — address-equal to slot 43's w2),
+  consumes slot 43's sync record (w4 at 58,368 — address-equal to slot
+  43's w6, the chained handoff at the ffwd shape's w4 position), writes
+  its output tensor at w1 (344,064 bytes at 31,865,856) and a 96-byte
+  sync record at w6 (58,880 — the 512-byte stride continuing). The
+  write-set attribution pins exactly those two words (names-s43-s44.txt:
+  w1 + w6, zero unattributed, stable across all three frames). It binds
+  `block28.layer0.layer` (524,288 B at heap offset 16,576,512 — the
+  record immediately after `block27.layer3.layer`). Its parameter block
+  is the slot-28/32/36/40 word map exactly (w5 reserved zero).
+- slot 45 `cc_split_swin_16h_ffwd_proj_512_chained_fp8` (s44 -> s45):
+  the block28 ffwd-proj pair's second half — the `ffwd_proj` counterpart
+  to slots 25/29/33/37/41 (same 72-byte block and grid 8,3,1). It reads
+  slot 44's output (w0 at 31,865,856) and a residual input (w1 at
+  31,521,792, the buffer slot 43 wrote its output to), consumes slot
+  44's sync record (w7 at 58,880 — address-equal to slot 44's w6, the
+  chained handoff) and writes its output tensor at w2 (344,064 bytes at
+  32,209,920) plus a 96-byte sync record at w6 (59,392 — the 512-byte
+  stride continuing). The write-set attribution pins exactly those two
+  words (names-s44-s45.txt: w2 + w6, zero unattributed). It binds
+  `block28.layer1.layer` (263,168 B at heap offset 17,100,800). Its
+  parameter block is the slot-25/29/33/37/41 word map exactly (w5/w8
+  reserved zero: the `ffwd->proj` pair carries no second constant).
+- slot 46 `cc_split_swin_16h_qkv_512_chained_fp8` (s45 -> s46): the
+  block28 qkv half — the `qkv->proj` pair's first half at the shared
+  handle's second geometry (grid 4,4,4, the slot-30/38 counterpart). It
+  reads slot 45's output (w0 at 32,209,920 — address-equal to slot 45's
+  w2) and consumes slot 45's sync record (w5 at 59,392 — address-equal
+  to slot 45's w6, the chained handoff at the qkv shape's w5 position),
+  writes its output tensor at w1 (344,064 bytes at 32,553,984) and a
+  sync record at w6 (59,904 — the 512-byte stride continuing) whose
+  changed extent is 256 bytes (names-s45-s46.txt: w1 + w6, zero
+  unattributed — the slot-30/38 extent recurring at the second
+  geometry). It binds `block28.layer2.layer` (917,568 B at heap offset
+  17,363,968). Its parameter block is the slot-26/30/34/38/42 word map
+  exactly, with w4 carrying block28's pair second constant at
+  0xFFFFFFFCFFFFFFFC — the double form, the cycle's block28 prediction
+  now measured in the qkv half (slot 47's w8 is the remaining test of
+  the pair, block29's pair predicted at the low-dword form).
 
 Inputs come from retained evidence only:
 
@@ -366,7 +408,13 @@ Inputs come from retained evidence only:
   `block27.layer2.layer` (the record immediately after
   `block27.layer1.layer`, at heap offset 15,395,328), slot 43 binds
   `block27.layer3.layer` (the record immediately after
-  `block27.layer2.layer`, at heap offset 16,313,344)
+  `block27.layer2.layer`, at heap offset 16,313,344), slot 44 binds
+  `block28.layer0.layer` (the record immediately after
+  `block27.layer3.layer`, at heap offset 16,576,512), slot 45 binds
+  `block28.layer1.layer` (the record immediately after
+  `block28.layer0.layer`, at heap offset 17,100,800), slot 46 binds
+  `block28.layer2.layer` (the record immediately after
+  `block28.layer1.layer`, at heap offset 17,363,968)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -379,7 +427,7 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44 and 45, 192 B at slots 26, 34
-and 42, 256 B at slots 30 and 38). Controls: skip (no launch), wrong (weights rotated
+and 42, 256 B at slots 30, 38 and 46). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
 
@@ -447,8 +495,8 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). sync_bytes is the sync record's changed extent, measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly.
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
@@ -457,8 +505,9 @@ CLS_ZERO = "zero"
 # low dword only; slot 38's w4 and slot 39's w8 are 0xFFFFFFFC00000000 — the
 # high dword only; slots 42's w4 and 43's w8 are reserved zero like slots
 # 26's/27's — block27's qkv-proj pair carries no second constant (block23's
-# pair likewise; the
-# absent/double/low/high cycle per pair measures block27 at the absent step).
+# pair likewise), and slot 46's w4 is 0xFFFFFFFCFFFFFFFC — the double form,
+# the absent/double/low/high cycle's predicted block28 step now measured in
+# the qkv half (slot 47's w8 is the pair's remaining test).
 # One value per qkv-proj pair where
 # present, shared by both halves).
 CONTRACTS: dict[int, dict[str, Any]] = {
@@ -808,6 +857,34 @@ CONTRACTS: dict[int, dict[str, Any]] = {
                       CLS_CONSTANT, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_ZERO),
         output_word=2, sync_word=6, sync_bytes=96,
         input_label=44, reference_label=45),
+    46: dict(
+        slot=46,
+        psize=56,
+        name_live="cc_split_swin_16h_qkv_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_qkv_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block28's qkv-proj pair's first half (the slot-26/30/34/38/42
+        # word map, same 56-byte block) at the shared qkv handle's second
+        # geometry (grid 4,4,4 — the slot-30/38 counterpart). Measured
+        # from the s46 capture: word classes (POOL, POOL, WEIGHTS,
+        # CONSTANT, CONSTANT, POOL, POOL): w0 input (pool+32,209,920 —
+        # address-equal to slot 45's w2), w1 output (pool+32,553,984 —
+        # one stride past its input, the regular output spacing), w2
+        # weights, w3 the (24, 28) geometry constant, w4 the pair second
+        # constant at 0xFFFFFFFCFFFFFFFC (the double form — the cycle's
+        # block28 prediction, confirmed in the qkv half), w5 sync-in
+        # (pool+59,392 — address-equal to slot 45's w6, the chained
+        # handoff) and w6 sync-out (pool+59,904 — the 512-byte stride
+        # continuing: 58,880 -> 59,392 -> 59,904). Its weights word lands
+        # on the layout walk's next record start (block28.layer2.layer,
+        # 917,568 B at heap offset 17,363,968 = 17,100,800 + 263,168,
+        # already 512-aligned so no padding intervenes).
+        record_name="block28.layer2.layer", record_bytes=917568,
+        constant_values={3: 0x1C00000018, 4: 0xFFFFFFFCFFFFFFFC},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_CONSTANT,
+                      CLS_CONSTANT, CLS_POOL, CLS_POOL),
+        output_word=1, sync_word=6, sync_bytes=256,
+        input_label=45, reference_label=46),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1709,7 +1786,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..45}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..46}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)

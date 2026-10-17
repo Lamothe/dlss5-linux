@@ -1,9 +1,9 @@
-# Native pre-decoder kernel replay (slots 24-45) — 15-17/10/2026
+# Native pre-decoder kernel replay (slots 24-46) — 15-18/10/2026
 
 ## Result
 
-**Twenty-two pre-decoder kernel launches (slots 24–45; six distinct kernel
-names — slots 26/30/34/38/42 share one kernel across two geometries, slots
+**Twenty-three pre-decoder kernel launches (slots 24–46; six distinct kernel
+names — slots 26/30/34/38/42/46 share one kernel across two geometries, slots
 27/31/35/39/43, 28/32/36/40/44 and 29/33/37/41/45 reuse kernels at the same geometry) of the
 vendor's 156-launch sequence now replay
 natively on Linux and reproduce the vendor's own captured state
@@ -12,7 +12,7 @@ block and executed through the **native Linux CUDA driver** on the RTX 4070
 Ti SUPER — no Windows code, DirectX or Proton — and the native pool state
 after the launch equals the vendor's ladder capture at the matching cut point
 ([LADDER.md](LADDER.md)) over the **whole 62,684,160-byte pool: 0 differing
-bytes on all three frames, in both execute runs, for all twenty slots**.
+bytes on all three frames, in both execute runs, for all twenty-three slots**.
 
 | Slot | Kernel (NVAPI-ARGS.md) | Contract | Cut | Grid |
 |---|---|---|---|---|
@@ -38,6 +38,7 @@ bytes on all three frames, in both execute runs, for all twenty slots**.
 | 43 | `cc_split_swin_16h_proj_512_chained_fp8` | reads output-of-slot-42 w0 + residual w1 + previous sync w7; writes output w2 (344,064 B) + sync w6 (96 B) | s42→s43 | (8,3,1) |
 | 44 | `cc_split_swin_16h_ffwd_512_chained_fp8` | reads output-of-slot-43 w0 + previous sync w4; writes output w1 (344,064 B) + sync w6 (96 B) | s43→s44 | (4,3,2) |
 | 45 | `cc_split_swin_16h_ffwd_proj_512_chained_fp8` | reads output-of-slot-44 w0 + residual w1 + previous sync w7; writes output w2 (344,064 B) + sync w6 (96 B) | s44→s45 | (8,3,1) |
+| 46 | `cc_split_swin_16h_qkv_512_chained_fp8` | reads output-of-slot-45 w0 + previous sync w5; writes output w1 (344,064 B) + sync w6 (256 B) | s45→s46 | (4,4,4) |
 
 Slot 25 is the `ffwd→proj` pair's second half and the first kernel with the
 **chained sync handoff**: it consumes slot 24's sync record (w7 at pool
@@ -365,7 +366,7 @@ capture semantics were invented:
 | parameter block | trace slot dump (56 B / 72 B), pinned equal across evals, runs and the capture sidecar |
 | input pool state | the capture after slot n−1 (exactly what slot n reads) |
 | reference pool state | the capture after slot n |
-| weight bytes | `block23.layer0.layer` (524,288 B) / `block23.layer1.layer` (263,168 B) / `block23.layer2.layer` (917,568 B) / `block23.layer3.layer` (263,168 B) / `block24.layer0.layer` (524,288 B) / `block24.layer1.layer` (263,168 B) / `block24.layer2.layer` (917,568 B) / `block24.layer3.layer` (263,168 B) / `block25.layer0.layer` (524,288 B) / `block25.layer1.layer` (263,168 B) / `block25.layer2.layer` (917,568 B) / `block25.layer3.layer` (263,168 B) / `block26.layer0.layer` (524,288 B) / `block26.layer1.layer` (263,168 B) / `block26.layer2.layer` (917,568 B) / `block26.layer3.layer` (263,168 B) / `block27.layer0.layer` (524,288 B) / `block27.layer1.layer` (263,168 B) / `block27.layer2.layer` (917,568 B) / `block27.layer3.layer` (263,168 B) from the DLL's WEIGHTS_HT resource |
+| weight bytes | `block23.layer0.layer` (524,288 B) / `block23.layer1.layer` (263,168 B) / `block23.layer2.layer` (917,568 B) / `block23.layer3.layer` (263,168 B) / `block24.layer0.layer` (524,288 B) / `block24.layer1.layer` (263,168 B) / `block24.layer2.layer` (917,568 B) / `block24.layer3.layer` (263,168 B) / `block25.layer0.layer` (524,288 B) / `block25.layer1.layer` (263,168 B) / `block25.layer2.layer` (917,568 B) / `block25.layer3.layer` (263,168 B) / `block26.layer0.layer` (524,288 B) / `block26.layer1.layer` (263,168 B) / `block26.layer2.layer` (917,568 B) / `block26.layer3.layer` (263,168 B) / `block27.layer0.layer` (524,288 B) / `block27.layer1.layer` (263,168 B) / `block27.layer2.layer` (917,568 B) / `block27.layer3.layer` (263,168 B) / `block28.layer0.layer` (524,288 B) / `block28.layer1.layer` (263,168 B) / `block28.layer2.layer` (917,568 B) from the DLL's WEIGHTS_HT resource |
 
 The slot-25 word map (72-byte block, 9 words): w0 output-of-slot-24, w1
 residual input, w2 output, w3 weights, w4 the recovered `(24, 28)` geometry
@@ -442,6 +443,20 @@ block27's `qkv`-proj pair carries no second constant): w0
 output-of-slot-42 (31,177,728), w1 residual input (30,833,664), w2 output
 (31,521,792), w3 weights, w4 the `(24, 28)` constant, w5 reserved 0, w6
 sync out (58,368), w7 sync in (slot 42's record at 57,856), w8 reserved 0.
+The slot-44 word map (56-byte block, 7 words) is slot 28's shape exactly:
+w0 output-of-slot-43 (31,521,792), w1 output (31,865,856), w2 weights, w3
+the `(24, 28)` constant, w4 sync in (slot 43's record at 58,368), w5
+reserved 0, w6 sync out (58,880). The slot-45 word map (72-byte block, 9
+words) is slot 25's shape exactly (w5/w8 reserved zero — block28's
+`ffwd`-proj pair carries no second constant): w0 output-of-slot-44
+(31,865,856), w1 residual input (31,521,792), w2 output (32,209,920), w3
+weights, w4 the `(24, 28)` constant, w5 reserved 0, w6 sync out (59,392),
+w7 sync in (slot 44's record at 58,880), w8 reserved 0. The slot-46 word
+map (56-byte block, 7 words) is slot 30's shape exactly (the qkv block's w4
+second constant): w0 output-of-slot-45 (32,209,920), w1 output
+(32,553,984), w2 weights, w3 the `(24, 28)` constant, w4
+`0xFFFFFFFCFFFFFFFC` — block28's pair value at the double form — w5 sync
+in (slot 45's record at 59,392), w6 sync out (59,904).
 
 ## The weight-heap layout
 
@@ -453,8 +468,8 @@ slot 26's word 2, slot 27's word 3, slot 28's word 2, slot 29's word 3,
 slot 30's word 2, slot 31's word 3, slot 32's word 2, slot 33's word 3,
 slot 34's word 2, slot 35's word 3, slot 36's word 2, slot 37's word 3,
 slot 38's word 2, slot 39's word 3, slot 40's word 2, slot 41's word 3,
-slot 42's word 2 and
-slot 43's word 3
+slot 42's word 2, slot 43's word 3, slot 44's word 2, slot 45's word 3 and
+slot 46's word 2
 all land **exactly at
 their record
 payload starts** (`block23.layer0.layer` at heap offset 6,733,312;
@@ -483,10 +498,14 @@ directly after layer0's 524,288-byte payload (14,607,872 + 524,288);
 `block27.layer2.layer` at 15,395,328 — directly after layer1's 263,168-byte
 payload (15,132,160 + 263,168); `block27.layer3.layer` at 16,313,344 —
 directly after layer2 at the 448-byte alignment boundary (15,395,328 +
-917,568 + 448), so the
+917,568 + 448); `block28.layer0.layer` at 16,576,512 — directly after
+layer3's 263,168-byte payload at the 512 boundary (16,313,344 + 263,168);
+`block28.layer1.layer` at 17,100,800 — directly after layer0's 524,288-byte
+payload (16,576,512 + 524,288); `block28.layer2.layer` at 17,363,968 —
+directly after layer1's 263,168-byte payload (17,100,800 + 263,168), so the
 record
 order is the DLL's declaration order, block24 repeats block23's
-layer0-3 shape, and blocks 25, 26 and 27 are repeating that shape again). layer2's
+layer0-3 shape, and blocks 25, 26, 27 and 28 are repeating that shape again). layer2's
 917,568-byte payload is not
 512-aligned: the following record starts 448 bytes later at the alignment
 boundary (arithmetic from the probe's live DLL walk, which enforces exactly
@@ -495,12 +514,13 @@ is alignment-aware. Beyond the anchors, the probe
 computes and enforces the structural claim itself (`setup.heap_scan`, retained
 in every run's evidence): every heap-pointing parameter word of every scanned
 trace lands at a record payload start — **459 of 459 in each scan record,
-zero mid-record** (the scans cover the s23–s43 traces; s24, s25, s26, s27,
-s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, s38, s39, s40, s41 and s42 are each
+zero mid-record** (the scans cover the s23–s46 traces; s24, s25, s26, s27,
+s28, s29, s30, s31, s32, s33, s34, s35, s36, s37, s38, s39, s40, s41, s42,
+s43, s44 and s45 are each
 scanned
 by two
 adjacent contracts' setups). The binding's *identity*
-(`block27.layer3.layer`, 263,168 B at slot 43) is enforced at runtime and
+(`block28.layer2.layer`, 917,568 B at slot 46) is enforced at runtime and
 named in the source contract table; what the evidence retains is the
 binding's *content* and *position* — `setup.record_sha256` and
 `setup.heap_offset` — plus the enforced equality to the layout walk, so a
@@ -508,35 +528,35 @@ record rename would not disturb any run's verdicts.
 
 ## Variant finding: the tilesync/chained sync record
 
-All twenty-two contracts' fp8 siblings (`..._512_fp8`) are **created but never
+All twenty-three contracts' fp8 siblings (`..._512_fp8`) are **created but never
 launched by the vendor** (pinned: 0 launches in every trace), so they have no
 launch contract of their own; each is replayed at the live variant's geometry
 as a variant probe. In every case the sibling's **output tensor matches the
 reference byte-for-byte** but its **sync record is left at the input state**
 (`sync_from_input` true on every sibling entry) while the live variant (tilesync at
 slot 24, chained at slots 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-38, 39, 40, 41, 42 and 43) writes it. That divergence confinement
+38, 39, 40, 41, 42, 43, 44, 45 and 46) writes it. That divergence confinement
 is **enforced** (`sibling-divergence`): the differences inside the sync
 record must equal the total difference count over the whole pool — which
 proves every differing byte lies within the record — and the record itself
 must differ in **every byte of its changed extent**. The extent is **per
-slot, not a constant**: 96 B at slots 24, 25, 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41 and 43,
+slot, not a constant**: 96 B at slots 24, 25, 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44 and 45,
 **192 B at slots 26, 34 and 42**
-and **256 B at slots 30 and 38** (each predicted from the independent ladder
+and **256 B at slots 30, 38 and 46** (each predicted from the independent ladder
 write-set and confirmed exactly by
 the replay's sibling divergence — two sources, one number). The tilesync-only
-sync record is now observed at twenty-one sites — the decoder's out2, and slots
-24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42 and 43 — a family trait of the `*_tilesync_*` / `*_chained_*`
+sync record is now observed at twenty-four sites — the decoder's out2, and slots
+24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 and 46 — a family trait of the `*_tilesync_*` / `*_chained_*`
 kernels' chain handoff.
 
 ## Controls
 
-| Mode | Slot 24 | Slot 25 | Slot 26 | Slot 27 | Slot 28 | Slot 29 | Slot 30 | Slot 31 | Slot 32 | Slot 33 | Slot 34 | Slot 35 | Slot 36 | Slot 37 | Slot 38 | Slot 39 | Slot 40 | Slot 41 | Slot 42 | Slot 43 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `execute` ×2 | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** |
-| `skip` (no launch) | pool bit-identical to input and non-matching — diff counts **344,085 / 344,104 / 344,110**, exactly the ladder write-set counts | same, diffs **340,602 / 341,160 / 341,167** = the s24→s25 ladder counts | same, diffs **342,905 / 342,801 / 342,841** = the s25→s26 ladder counts | same, diffs **340,726 / 341,250 / 341,150** = the s26→s27 ladder counts | same, diffs **344,027 / 344,077 / 344,069** = the s27→s28 ladder counts | same, diffs **341,165 / 341,559 / 341,526** = the s28→s29 ladder counts | same, diffs **343,293 / 343,253 / 343,275** = the s29→s30 ladder counts | same, diffs **340,970 / 341,345 / 341,358** = the s30→s31 ladder counts | same, diffs **342,117 / 342,432 / 342,376** = the s31→s32 ladder counts | same, diffs **340,754 / 341,134 / 341,144** = the s32→s33 ladder counts | same, diffs **342,020 / 341,782 / 341,773** = the s33→s34 ladder counts | same, diffs **340,617 / 340,872 / 340,885** = the s34→s35 ladder counts | same, diffs **342,288 / 341,759 / 341,735** = the s35→s36 ladder counts | same, diffs **340,998 / 342,180 / 342,179** = the s36→s37 ladder counts | same, diffs **341,836 / 342,467 / 342,490** = the s37→s38 ladder counts | same, diffs **340,575 / 341,602 / 341,525** = the s38→s39 ladder counts | same, diffs **342,483 / 342,991 / 342,940** = the s39→s40 ladder counts | same, diffs **341,529 / 341,682 / 341,833** = the s40→s41 ladder counts | same, diffs **341,857 / 342,616 / 342,726** = the s41→s42 ladder counts | same, diffs **341,031 / 341,654 / 341,826** = the s42→s43 ladder counts |
-| `wrong` (weights rotated inwards 1,024 B) | rejects in all entries (319,425–319,537 bytes differ), pool changed from input (dead-launch detection) | rejects (319,545–319,658 bytes differ), pool changed from input | rejects (341,086–342,203 bytes differ), pool changed from input | rejects (342,666–342,849 bytes differ), pool changed from input | rejects (343,654–343,784 bytes differ), pool changed from input | rejects (343,429–343,791 bytes differ), pool changed from input | rejects (341,008–341,728 bytes differ), pool changed from input | rejects (343,233–343,398 bytes differ), pool changed from input | rejects (340,696–340,891 bytes differ), pool changed from input | rejects (342,186–342,308 bytes differ), pool changed from input | rejects (339,481–340,740 bytes differ), pool changed from input | rejects (342,832–343,015 bytes differ), pool changed from input | rejects (340,920–341,551 bytes differ), pool changed from input | rejects (341,331–342,654 bytes differ), pool changed from input | rejects (339,569–340,249 bytes differ), pool changed from input | rejects (342,908–343,043 bytes differ), pool changed from input | rejects (341,039–341,235 bytes differ), pool changed from input | rejects (342,327–342,472 bytes differ), pool changed from input | rejects (340,161–340,730 bytes differ), pool changed from input | rejects (342,490–342,698 bytes differ), pool changed from input |
-| `tail` (bytes beyond the record replaced 0x5A vs 0xA5) | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record |
+| Mode | Slot 24 | Slot 25 | Slot 26 | Slot 27 | Slot 28 | Slot 29 | Slot 30 | Slot 31 | Slot 32 | Slot 33 | Slot 34 | Slot 35 | Slot 36 | Slot 37 | Slot 38 | Slot 39 | Slot 40 | Slot 41 | Slot 42 | Slot 43 | Slot 44 | Slot 45 | Slot 46 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `execute` ×2 | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** |
+| `skip` (no launch) | pool bit-identical to input and non-matching — diff counts **344,085 / 344,104 / 344,110**, exactly the ladder write-set counts | same, diffs **340,602 / 341,160 / 341,167** = the s24→s25 ladder counts | same, diffs **342,905 / 342,801 / 342,841** = the s25→s26 ladder counts | same, diffs **340,726 / 341,250 / 341,150** = the s26→s27 ladder counts | same, diffs **344,027 / 344,077 / 344,069** = the s27→s28 ladder counts | same, diffs **341,165 / 341,559 / 341,526** = the s28→s29 ladder counts | same, diffs **343,293 / 343,253 / 343,275** = the s29→s30 ladder counts | same, diffs **340,970 / 341,345 / 341,358** = the s30→s31 ladder counts | same, diffs **342,117 / 342,432 / 342,376** = the s31→s32 ladder counts | same, diffs **340,754 / 341,134 / 341,144** = the s32→s33 ladder counts | same, diffs **342,020 / 341,782 / 341,773** = the s33→s34 ladder counts | same, diffs **340,617 / 340,872 / 340,885** = the s34→s35 ladder counts | same, diffs **342,288 / 341,759 / 341,735** = the s35→s36 ladder counts | same, diffs **340,998 / 342,180 / 342,179** = the s36→s37 ladder counts | same, diffs **341,836 / 342,467 / 342,490** = the s37→s38 ladder counts | same, diffs **340,575 / 341,602 / 341,525** = the s38→s39 ladder counts | same, diffs **342,483 / 342,991 / 342,940** = the s39→s40 ladder counts | same, diffs **341,529 / 341,682 / 341,833** = the s40→s41 ladder counts | same, diffs **341,857 / 342,616 / 342,726** = the s41→s42 ladder counts | same, diffs **341,031 / 341,654 / 341,826** = the s42→s43 ladder counts | same, diffs **342,613 / 343,155 / 343,140** = the s43→s44 ladder counts | same, diffs **340,586 / 341,494 / 341,395** = the s44→s45 ladder counts | same, diffs **341,677 / 342,212 / 342,214** = the s45→s46 ladder counts |
+| `wrong` (weights rotated inwards 1,024 B) | rejects in all entries (319,425–319,537 bytes differ), pool changed from input (dead-launch detection) | rejects (319,545–319,658 bytes differ), pool changed from input | rejects (341,086–342,203 bytes differ), pool changed from input | rejects (342,666–342,849 bytes differ), pool changed from input | rejects (343,654–343,784 bytes differ), pool changed from input | rejects (343,429–343,791 bytes differ), pool changed from input | rejects (341,008–341,728 bytes differ), pool changed from input | rejects (343,233–343,398 bytes differ), pool changed from input | rejects (340,696–340,891 bytes differ), pool changed from input | rejects (342,186–342,308 bytes differ), pool changed from input | rejects (339,481–340,740 bytes differ), pool changed from input | rejects (342,832–343,015 bytes differ), pool changed from input | rejects (340,920–341,551 bytes differ), pool changed from input | rejects (341,331–342,654 bytes differ), pool changed from input | rejects (339,569–340,249 bytes differ), pool changed from input | rejects (342,908–343,043 bytes differ), pool changed from input | rejects (341,039–341,235 bytes differ), pool changed from input | rejects (342,327–342,472 bytes differ), pool changed from input | rejects (340,161–340,730 bytes differ), pool changed from input | rejects (342,490–342,698 bytes differ), pool changed from input | rejects (340,856–341,150 bytes differ), pool changed from input | rejects (342,399–342,648 bytes differ), pool changed from input | rejects (340,296–341,393 bytes differ), pool changed from input |
+| `tail` (bytes beyond the record replaced 0x5A vs 0xA5) | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record |
 
 Two cross-tool agreements pin the numbers: the skip diff counts equal the
 independent `ladder-report diff` changed-byte counts to the byte, and the
@@ -559,7 +579,10 @@ sync, slots 26→27: 340,630/341,154/341,054 tensor + 96 sync, slots 27→28:
 342,387/342,895/342,844 tensor + 96 sync, slots 40→41:
 341,433/341,586/341,737 tensor + 96 sync, slots 41→42:
 341,665/342,424/342,534 tensor + 192 sync, slots 42→43:
-340,935/341,558/341,730 tensor + 96 sync — every interval with a names
+340,935/341,558/341,730 tensor + 96 sync, slots 43→44:
+342,517/343,059/343,044 tensor + 96 sync, slots 44→45:
+340,490/341,398/341,299 tensor + 96 sync, slots 45→46:
+341,421/341,956/341,958 tensor + 256 sync — every interval with a names
 file, complete; the s23→s24 attribution predates the names tool and is
 stated in the slot-24 section above; the fp8
 siblings show the tensor-only counts, exactly the sync extent less).
@@ -567,7 +590,7 @@ siblings show the tensor-only counts, exactly the sync extent less).
 ## Method
 
 `vr/native-slot-replay-probe.py` now carries a **per-slot contract table**
-(`CONTRACTS`, `--slot {24..43}`): parameter-block size and word classes
+(`CONTRACTS`, `--slot {24..46}`): parameter-block size and word classes
 (pool / weights / constant / zero; constant words pinned per word in
 `constant_values` — a block can carry more than one, at more than one
 value), output and sync word indices and the
@@ -578,14 +601,14 @@ slot's own launch position (handles are shared across slots at different
 geometries). The replay substitutes our own device addresses at the vendor's
 own pool offsets; guards sit around every allocation and the weight buffer is
 immutable-checked. Evidence
-(`vr/logs/slot-replay/s{24..43}/{a,b,skip,wrong,tail}`) retains digests and
+(`vr/logs/slot-replay/s{24..46}/{a,b,skip,wrong,tail}`) retains digests and
 bounded windows only (windows are written before verdicts on any mismatch);
 the `pair` command persists its result as `pair.json` beside the first run.
 
 Self-test: **25 corruption controls** (12 verdict, 6 consistency, 5 pair, 1
-metadata, 1 grid) each rejected with its pinned label or message, plus **173
+metadata, 1 grid) each rejected with its pinned label or message, plus **197
 known answers** (3 diff, 4 layout, 4 following-record, 1 metadata, 1 grid,
-and 8 contract-table shape checks per contract — 176 across the twenty-two
+and 8 contract-table shape checks per contract — 184 across the twenty-three
 contracts, counted per contract rather than per table). The contract table's shape is itself
 pinned (slot key equals the table key, class-table length = parameter size,
 constant words carry a pinned entry for exactly the constant-class indices
@@ -598,6 +621,61 @@ entry, each rejection with its pinned message; the corruptions are
 development-time in-memory mutations, not retained self-test fixtures).
 
 ## Evidence
+
+Runs on 17-18/10/2026 across the slot-44, slot-45 and slot-46 stages (the
+`Gate stage 36`–`Gate stage 38` commits; the stages ran without their own
+evidence blocks, so this block documents the retained artefacts for all
+three; the contract-46 entry, usage text and docstring bullets predate the
+slot-46 runs, the post-run touch-ups are comment-only, below):
+
+- `vr/logs/ladder/{s44,s44b,s45,s45b,s46,s46b}` — the slot-44/45/46
+  reference captures (validated: cut accounting, pool digests, the
+  slot-aware output canary, input digests; `ladder-report.py pair` enforces
+  byte-equal pools with a fail-closed exit — its passing reports are
+  retained as `pair-s44-s44b.json`, `pair-s45-s45b.json` and
+  `pair-s46-s46b.json`, pool digests equal across runs, all three pool
+  frames byte-identical). Traces
+  `vr/logs/capture/nvapi-trace-ladder-s{44,45,46}{,b}.log` (each slot's
+  parameter dump is stable across evaluations and identical between the
+  runs; the capture sidecars' three records match it byte-for-byte —
+  enforced by every replay run's setup).
+- `vr/logs/ladder/diff-s43-s44.json`, `diff-s44-s45.json`,
+  `diff-s45-s46.json` and `vr/logs/ladder/names-s43-s44.txt`,
+  `names-s44-s45.txt`, `names-s45-s46.txt` — the measured write-sets (2
+  segments per frame, zero unattributed: 342,517/343,059/343,044 tensor +
+  96 sync at s43→s44, 340,490/341,398/341,299 tensor + 96 sync at
+  s44→s45, 341,421/341,956/341,958 tensor + 256 sync at s45→s46).
+- `vr/logs/slot-replay/s{44,45,46}/…` — the five replay runs per slot
+  (execute ×2, skip, wrong, tail) plus the persisted pair results
+  (`a/pair.json`, bit-identical, equal `run.json` SHA-256s `d0825bd5…`
+  (s44), `c9223c37…` (s45), `888e0e71…` (s46)); the skip/wrong/tail
+  signatures match the mode contracts (skip pool bit-identical to input
+  and non-matching, wrong changed from input and non-matching, tail output
+  unchanged beyond the record).
+- **Post-run source-neutrality:** the only post-run probe-source changes
+  are comment-only documentation (the cycle-prediction passages, the
+  cumulative enumerations and the weight-bytes list, all fixed in the
+  review round) — no functional probe code changed after the runs; the
+  slot-46 execute run was re-taken under the post-review source
+  (`s46/recheck-under-slot46-final-source`) and pairs bit-identical with
+  the retained `s46/a` (equal `run.json` SHA-256 `888e0e71…`).
+- **Review round:** independent review FAIL → fixed (one pass). The pass
+  found 17 must-fix — cumulative enumerations not extended through slot 46
+  (the contract counts and slot ranges, the sync-extent lists, the
+  weight-bytes table and word maps, the weight-heap anchors/payload
+  list/scan range/binding identity, the variant-finding lists, the
+  Controls table and cross-tool intervals, the scope bullets and
+  read-inference list), two stale cycle-prediction passages (slot 46's w4
+  is measured now), one stale usage range and two write-set citations
+  without retained artefacts (the s43→s44 and s44→s45 names/diff files are
+  generated and retained) — and 3 advisory (the missing evidence block,
+  the per-stage self-test counts and a stale phrase), all now fixed. The
+  fixes are documentation in `vr/NATIVE-SLOT-REPLAY.md` and comment-only
+  documentation in `vr/native-slot-replay-probe.py`; no functional probe
+  code changed after the runs.
+- `python3 vr/native-slot-replay-probe.py self-test` (197 known answers),
+  `python3 vr/ladder-report.py self-test` (19 controls) and `python3
+  vr/ladder-names.py self-test` (14 controls) all pass.
 
 Runs on 17/10/2026 against the final source of the slot-43 stage (the
 contract-43 entry, usage text and docstrings predate the runs; the post-run
@@ -646,7 +724,7 @@ touch-ups are comment-only, below):
   `vr/NATIVE-SLOT-REPLAY.md` and `vr/native-slot-replay-probe.py`; no
   functional probe code changed after the runs (the post-review rechecks
   pair `0a0ee5fc…` and `200f1e07…` under the final source).
-- `python3 vr/native-slot-replay-probe.py self-test` (189 known answers),
+- `python3 vr/native-slot-replay-probe.py self-test` (173 known answers),
   `python3 vr/ladder-report.py self-test` (19 controls) and `python3
   vr/ladder-names.py self-test` (14 controls) all pass.
 
@@ -1224,9 +1302,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Scope and limitations
 
-- The claim covers **twenty launches of the 156** (slots 24–43; six distinct
-  kernel names, one shared across two geometries (26/30/34/38/42) and three reused at
-  the same geometry (27/31/35/39/43, 28/32/36/40, 29/33/37/41)), one resolution
+- The claim covers **twenty-three launches of the 156** (slots 24–46; six distinct
+  kernel names, one shared across two geometries (26/30/34/38/42/46) and three reused at
+  the same geometry (27/31/35/39/43, 28/32/36/40/44, 29/33/37/41/45)), one resolution
   (720×720, eye0), three frames under the stationary-input protocol. The
   method is generic — the parameter block, geometry, word classes and weight
   record are all contract fields now — but each remaining kernel still needs
@@ -1252,15 +1330,18 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   slot 40's w0 and w4 reads (output of slot 39, previous sync),
   slot 41's w0, w1 and w7 reads (output, residual, previous sync),
   slot 42's w0 and w5 reads (output of slot 41, previous sync),
-  slot 43's w0, w1 and w7 reads (output of slot 42, residual, previous sync)
+  slot 43's w0, w1 and w7 reads (output of slot 42, residual, previous sync),
+  slot 44's w0 and w4 reads (output of slot 43, previous sync),
+  slot 45's w0, w1 and w7 reads (output, residual, previous sync),
+  slot 46's w0 and w5 reads (output of slot 45, previous sync)
   and slots 28/29's w0 and (w4/w7) reads — slot 29
   additionally its residual w1 — are inferred from the attribution (those words never change) and the
   word map, not from a measured read-set.
-- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96 B for slots 24–43) are the records'
+- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256 B for slots 24–46) are the records'
   **changed** extents under
   this protocol; records whose unchanged bytes extend further are not
   excluded.
-- This stage uses stored learned weight bytes through twenty extracted records
+- This stage uses stored learned weight bytes through twenty-three extracted records
   (bounded model-weight computation, [NATIVE-FP8.md](NATIVE-FP8.md)
   precedent) and is **not** a neural-rendered image. Proprietary
   reuse/publication rights remain unresolved; evidence retains digests and
@@ -1270,7 +1351,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 Repeat the replay for the remaining named kernels of
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
-transformer interval's further `qkv`/`proj`/`ffwd` pairs (44–56), the ViT
+transformer interval's further `qkv`/`proj`/`ffwd` pairs (47–56), the ViT
 stage (57–98), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
 [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md) and slot 154 (the final
@@ -1278,21 +1359,21 @@ blend) writes only outside the working pool. Each remaining kernel needs a
 reference capture at its
 own cut point (`run-feature-probe.sh ladder sN N`) plus one contract entry,
 and occasionally a small probe generalisation (slot 26 needed per-slot grid
-resolution and an alignment-aware record lookup). Slots 24–43 now cover
-five complete `ffwd→proj` pairs (block23, block24, block25, block26 and
-block27) and
+resolution and an alignment-aware record lookup). Slots 24–46 now cover
+six complete `ffwd→proj` pairs (block23, block24, block25, block26,
+block27 and block28) and
 five complete `qkv→proj`
 pairs (block23: slots 26/27, block24: 30/31, block25: 34/35, block26: 38/39,
-block27: 42/43), so
+block27: 42/43; block28's pair is half-covered at slot 46), so
 the pair pattern, the chained sync handoff (with its
-per-slot word position: w5 at slots 26/30/34/38/42, w7 at slots 25/27/29/31/33/35/37/39/41/43, w4 at
-slots 28/32/36/40)
+per-slot word position: w5 at slots 26/30/34/38/42/46, w7 at slots 25/27/29/31/33/35/37/39/41/43/45, w4 at
+slots 28/32/36/40/44)
 and the record-ordering pattern are established: each block repeats
 block23's layer0-3 record shape in declaration order, so each remaining
 slot's weight
 record is predictable from its parameter block's weights word plus the
 layout walk — and slots 29's, 30's, 31's, 32's, 33's, 34's, 35's, 36's, 37's,
-38's, 39's, 40's, 41's, 42's and 43's
+38's, 39's, 40's, 41's, 42's, 43's, 44's, 45's and 46's
 bindings measured exactly those
 predictions (`block24.layer1.layer` at heap offset 9,226,240,
 `block24.layer2.layer` at 9,489,408, `block24.layer3.layer` at 10,407,424,
@@ -1301,19 +1382,26 @@ predictions (`block24.layer1.layer` at heap offset 9,226,240,
 12,376,064, `block26.layer0.layer` at 12,639,232, `block26.layer1.layer`
 at 13,163,520, `block26.layer2.layer` at 13,426,688, `block26.layer3.layer`
 at 14,344,704, `block27.layer0.layer` at 14,607,872, `block27.layer1.layer`
-at 15,132,160, `block27.layer2.layer` at 15,395,328 and
-`block27.layer3.layer` at 16,313,344). The qkv→proj pair's
-second constant is now measured in both halves of all three carrying pairs
+at 15,132,160, `block27.layer2.layer` at 15,395,328,
+`block27.layer3.layer` at 16,313,344, `block28.layer0.layer` at 16,576,512,
+`block28.layer1.layer` at 17,100,800 and
+`block28.layer2.layer` at 17,363,968). The qkv→proj pair's
+second constant is now measured in both halves of all three fully-measured
+carrying pairs
 (block24
 at `0xFFFFFFFCFFFFFFFC`, block25 at `0x00000000FFFFFFFC`, block26 at
-`0xFFFFFFFC00000000` — slot 38's w4 and slot 39's w8 alike);
+`0xFFFFFFFC00000000` — slot 38's w4 and slot 39's w8 alike) and in the qkv
+half of block28's pair (slot 46's w4 at `0xFFFFFFFCFFFFFFFC`);
 it is absent from block23's pair (both halves measured), every `ffwd→proj`
 half and block27's pair (slot 42's w4 and slot 43's w8 both measured
 reserved zero) — one value per
 pair where present, shared by both halves wherever measured (block24,
-block25 and block26). The three carrying pairs'
+block25 and block26). The carrying pairs'
 values are the double, low-dword-only and high-dword-only forms of the same
-marker dword (`0xFFFFFFFC`).
+marker dword (`0xFFFFFFFC`) on a repeating absent/double/low/high cycle
+(block23 absent, block24 double, block25 low, block26 high, block27 absent,
+block28 double at slot 46's w4), predicting block29's pair at the
+low-dword form.
 The
 slot 40
 (`cc_split_swin_16h_ffwd_512_chained_fp8` — block27's ffwd half, the next
@@ -1384,9 +1472,10 @@ blocks
 marker dword), the five measured pairs complete one four-step
 absent/double/low/high cycle across blocks 23-27 — measured over those
 blocks, a hypothesis beyond; the cycle
-predicts
-block28's pair at the double form (slot 46's w4 and slot 47's w8
-`0xFFFFFFFCFFFFFFFC`) and block29's at the low-dword form, to be confirmed
+predicted
+block28's pair at the double form (slot 46's w4 — since measured at
+`0xFFFFFFFCFFFFFFFC` — and slot 47's w8, the pair's remaining test) and
+block29's at the low-dword form, to be confirmed
 at those stages. The
 slot 43
 (`cc_split_swin_16h_proj_512_chained_fp8` — block27's `qkv→proj` pair's
@@ -1449,12 +1538,35 @@ boundary) is confirmed by the probe's live DLL walk. The sync extent measured
 **96 B** (the `ffwd-proj` norm), pinned from the s44→s45 write-set and enforced
 as the sibling's divergence (the fp8 control's pool differs from the reference
 by exactly 96 bytes on all three frames). The execute pair is bit-identical.
-The natural next candidate is slot 46 (`cc_split_swin_16h_qkv_512_chained_fp8`
-— block28's `qkv` half, the `qkv→proj` pair's first half at grid (4,3,4), the
-slot-26/30/34/38/42 word map) — and, with slot 47, **the constant cycle's next
-test**: block28's `qkv→proj` pair is predicted at the double form (w4/w8
-`0xFFFFFFFCFFFFFFFC`) after block23-27's absent/double/low/high cycle, to be
-confirmed at those stages. The
+The slot-46 `qkv` half (block28's,
+`cc_split_swin_16h_qkv_512_chained_fp8` at grid (4,4,4), the shared qkv
+handle's second geometry — the slot-30/38 counterpart) is now replayed
+byte-for-byte and confirms the slot-26/30/34/38/42 word map,
+record-binding, sync-extent and constant prediction. Its parameter block
+(psize 56) is (POOL, POOL, WEIGHTS, CONSTANT, CONSTANT, POOL, POOL):
+w0 input (32,209,920 — address-equal to slot 45's w2), w1 output
+(32,553,984 — one stride past its input, the regular output spacing), w3
+the (24, 28) geometry constant `0x1C00000018`, w4 the pair second constant
+at **`0xFFFFFFFCFFFFFFFC`** — the double form, the absent/double/low/high
+cycle's predicted block28 step now measured in the qkv half (slot 47's w8
+is the pair's remaining test), w5 sync-in (59,392 — address-equal to slot
+45's w6, the chained handoff) and w6 sync-out (59,904 — the 512-byte
+stride continuing: 58,880 → 59,392 → 59,904). Its weight record
+`block28.layer2.layer` (917,568 B at heap offset 17,363,968 — 17,100,800
++ 263,168, already 512-aligned so no padding intervenes) is confirmed by
+the probe's live DLL walk. The sync extent measured **256 B** (the
+grid-4,4,4 qkv norm of slots 30/38 — slot 30's extent recurring at the
+second geometry, where the grid-4,3,4 slots 26/34/42 carry 192), pinned
+from the s45→s46 write-set (the first changed range, 59,904–60,160, on all
+three frames) and enforced as the sibling's divergence (the fp8 control's
+pool differs from the reference by exactly 256 bytes on all three frames).
+The execute pair is bit-identical.
+The natural next candidate is slot 47
+(`cc_split_swin_16h_proj_512_chained_fp8` — block28's `qkv→proj` pair's
+second half at grid (8,3,1), the slot-27/31/35/39/43 word map), whose w8
+is **the constant cycle's next test** at the pair level (predicted
+`0xFFFFFFFCFFFFFFFC`, matching slot 46's w4 — block29's pair then tests
+the cycle's low-dword step at slots 50/51). The
 temporal/history state (`prev_output`, counter) then connects the kernels
 into a full native evaluation for the native-vs-vendor comparison of the
 whole pipeline.
