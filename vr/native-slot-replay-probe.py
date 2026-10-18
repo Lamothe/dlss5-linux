@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-54 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-55 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Thirty-one per-slot contracts are covered:
+cut point (LADDER.md). Thirty-two per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -504,6 +504,28 @@ cut point (LADDER.md). Thirty-one per-slot contracts are covered:
   0xFFFFFFFC00000000 — the high-dword form, the absent/double/low/high
   cycle's block30 step (block23 absent / 24 double / 25 low / 26 high /
   27 absent / 28 double / 29 low / 30 high).
+- slot 55 `cc_split_swin_16h_proj_pool_512_chained_fp8` (s54 -> s55): the
+  block30 `qkv`-proj pair's second half in the `proj_pool` variant — the
+  first 80-byte block (10 words; every earlier block is 56 or 72 bytes) and
+  the first kernel with a second output tensor. It reads slot 54's output
+  (w0 at 35,306,496 — address-equal to slot 54's w1) and a residual input
+  (w1 at 34,962,432 — the buffer slot 53 wrote its output to, the input
+  slot 54 itself read), consumes slot 54's sync record (w5 at 64,000 —
+  address-equal to slot 54's w6, the chained handoff), writes its output
+  tensor at w2 (344,064 bytes at 52,313,088), the pooled output tensor at
+  w3 (98,304 bytes at 26,803,200 — the `proj_pool` name's pool expansion)
+  and a sync record at w6 (64,512 — the 512-byte stride continuing:
+  63,488 -> 64,000 -> 64,512) whose changed extent is 96 bytes. The
+  write-set attribution pins exactly those three words (names-s54-s55.txt:
+  w2 + w3 + w6, zero unattributed, stable across all three frames). It
+  binds `block30.layer3.layer` (263,168 B at heap offset 22,240,256 — the
+  record immediately after `block30.layer2.layer`). Its parameter block is
+  a new ten-word shape (pool, pool, pool, pool, weights, pool, pool,
+  constant, constant, constant): w7 the pair's second constant at
+  0xFFFFFFFC00000000 — block30's high-dword step at the proj half's own
+  word position, now measured in both halves of the pair — w8 the (24, 28)
+  geometry constant and w9 a (12, 16) constant (the pooled tensor's
+  geometry: 12x16x512 = 98,304 bytes).
 
 Inputs come from retained evidence only:
 
@@ -567,7 +589,9 @@ Inputs come from retained evidence only:
   20,534,784), slot 53 binds `block30.layer1.layer` (the record
   immediately after `block30.layer0.layer`, at heap offset 21,059,072),
   slot 54 binds `block30.layer2.layer` (the record immediately after
-  `block30.layer1.layer`, at heap offset 21,322,240)
+  `block30.layer1.layer`, at heap offset 21,322,240), slot 55 binds
+  `block30.layer3.layer` (the record immediately after
+  `block30.layer2.layer`, at heap offset 22,240,256)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -579,7 +603,7 @@ never launched by the vendor — pinned) is replayed at the live geometry as a
 variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
-27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52 and 53, 192 B at slots 26, 34,
+27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
 42 and 50, 256 B at slots 30, 38, 46 and 54). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
@@ -646,10 +670,13 @@ CLS_ZERO = "zero"
 # at the same pool offset), weights (weight-heap record start, the extracted
 # record replayed at our allocation), constant (passed through from the
 # captured block, value pinned per word in constant_values), zero (reserved,
-# must be 0). sync_bytes is the sync record's changed extent, measured per
+# must be 0). extra_outputs lists (word, span) pairs of further written
+# output tensors beyond the primary output_word binding (slot 55's pooled
+# tensor at w3, 98,304 bytes). sync_bytes is the sync record's changed extent,
+# measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly.
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
@@ -663,8 +690,9 @@ CLS_ZERO = "zero"
 # block28 step measured in both halves, and slot 50's w4 and slot 51's w8
 # are both 0x00000000FFFFFFFC — the low-dword form, block29's step now
 # measured in both halves too, and slot 54's w4 is 0xFFFFFFFC00000000 —
-# the high-dword form, block30's step measured in the qkv half (the
-# block's proj_pool half is slot 55's claim)).
+# the high-dword form, block30's step measured in the qkv half — slot 55's
+# w7 carries the same value at the proj_pool half's own word position, the
+# pair's step now measured in both halves).
 # One value per qkv-proj pair where
 # present, shared by both halves).
 CONTRACTS: dict[int, dict[str, Any]] = {
@@ -1288,6 +1316,41 @@ CONTRACTS: dict[int, dict[str, Any]] = {
                       CLS_CONSTANT, CLS_POOL, CLS_POOL),
         output_word=1, sync_word=6, sync_bytes=256,
         input_label=53, reference_label=54),
+    55: dict(
+        slot=55,
+        psize=80,
+        name_live="cc_split_swin_16h_proj_pool_512_chained_fp8",
+        name_sibling="cc_split_swin_16h_proj_pool_512_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block30's proj_pool half — the qkv-proj pair's second half in the
+        # `proj_pool` variant (the first 80-byte block, 10 words, and the
+        # first kernel with a second output tensor). Measured from the s55
+        # capture: word classes (POOL, POOL, POOL, POOL, WEIGHTS, POOL,
+        # POOL, CONSTANT, CONSTANT, CONSTANT), w0 input (35,306,496 —
+        # address-equal to slot 54's w1), w1 residual (34,962,432 — the
+        # buffer slot 53 wrote its output to), w2 output (52,313,088 —
+        # 24x28x512 = 344,064 bytes), w3 pooled output (26,803,200 —
+        # 12x16x512 = 98,304 bytes, the `proj_pool` name's pool expansion),
+        # w4 weights on the layout walk's next record start
+        # (`block30.layer3.layer`, 263,168 B at heap offset 22,240,256),
+        # w5 sync-in (64,000 — address-equal to slot 54's w6, the chained
+        # handoff) and w6 sync-out (64,512 — the 512-byte stride
+        # continuing: 63,488 -> 64,000 -> 64,512), w7 the pair's second
+        # constant at 0xFFFFFFFC00000000 (block30's high-dword step at the
+        # proj half's own word position, now measured in both halves), w8
+        # the (24, 28) constant 0x1C00000018 and w9 the (12, 16) pooled
+        # geometry constant 0x000000100000000C. The sync extent measured
+        # 96 B (span 64,512 -> 64,608), and the write-set is three segments
+        # per frame (w2 344,064 B, w3 98,304 B, w6 96 B), zero unattributed.
+        record_name="block30.layer3.layer", record_bytes=263168,
+        constant_values={7: 0xFFFFFFFC00000000, 8: 0x1C00000018,
+                         9: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_CONSTANT, CLS_CONSTANT,
+                      CLS_CONSTANT),
+        output_word=2, extra_outputs=((3, 98304),),
+        sync_word=6, sync_bytes=96,
+        input_label=54, reference_label=55),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1712,14 +1775,27 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     else:
         extent = (-1, -1, 0)
 
-    # Region verdicts: the output tensor binding and the sync record (its
-    # changed extent per slot, contract["sync_bytes"]).
+    # Region verdicts: every output tensor binding (the primary word plus any
+    # extra output words — slot 55's pooled tensor writes a second one) and
+    # the sync record (its changed extent per slot, contract["sync_bytes"]).
+    # main_match and main_diff_count aggregate every output region;
+    # main_first_diff stays the primary output region's own first-difference
+    # offset (region-relative, diagnostic only) so the field keeps one
+    # unambiguous coordinate system under multi-region contracts.
     sync_bytes = contract["sync_bytes"]
-    output_start = setup_data["pool_offsets"][contract["output_word"]]
     sync_start = setup_data["pool_offsets"][contract["sync_word"]]
-    main_match, main_diffs, main_first = compare.diff_stats(
-        reference[output_start:output_start + OUTPUT_BYTES],
-        pool_region[output_start:output_start + OUTPUT_BYTES])
+    main_match, main_diffs, main_first = True, 0, -1
+    for index, (word, span) in enumerate(
+            ((contract["output_word"], OUTPUT_BYTES),
+             *contract.get("extra_outputs", ()))):
+        output_start = setup_data["pool_offsets"][word]
+        region_match, region_diffs, region_first = compare.diff_stats(
+            reference[output_start:output_start + span],
+            pool_region[output_start:output_start + span])
+        main_match = main_match and region_match
+        main_diffs += region_diffs
+        if index == 0:
+            main_first = region_first
     sync = pool_region[sync_start:sync_start + sync_bytes]
     _sync_match, sync_diff_count, _sync_first = compare.diff_stats(
         reference[sync_start:sync_start + sync_bytes], sync)
@@ -1857,7 +1933,8 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             "guards_intact and weights_immutable on every entry",
             f"whole-pool byte match against the s{contract['reference_label']} "
             f"vendor capture (execute, tail: {contract['tag_live']} variant)",
-            "main-tensor byte match for the fp8 sibling, with its "
+            f"main-tensor{'' if not contract.get('extra_outputs') else 's'} "
+            "byte match for the fp8 sibling, with its "
             f"divergence confined to the {contract['sync_bytes']}-byte sync "
             f"record (w{contract['sync_word']})",
             f"pool bit-identical to input and non-match against "
@@ -2118,8 +2195,14 @@ def self_test() -> dict[str, Any]:
                      f"self-test: contract {slot} constant words")
         base.require(contract["word_classes"].count(CLS_WEIGHTS) == 1,
                      f"self-test: contract {slot} weights word count")
+        extras = contract.get("extra_outputs", ())
         base.require(contract["word_classes"][contract["output_word"]] == CLS_POOL and
-                     contract["word_classes"][contract["sync_word"]] == CLS_POOL,
+                     contract["word_classes"][contract["sync_word"]] == CLS_POOL and
+                     len({word for word, _span in extras}) == len(extras) and
+                     all(contract["word_classes"][word] == CLS_POOL and
+                         word not in (contract["output_word"],
+                                      contract["sync_word"]) and span > 0
+                         for word, span in extras),
                      f"self-test: contract {slot} region word class")
         base.require(0 < contract["sync_bytes"] <= 512,
                      f"self-test: contract {slot} sync extent")
@@ -2189,7 +2272,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..54}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..55}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
