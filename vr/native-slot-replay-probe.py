@@ -304,7 +304,8 @@ cut point (LADDER.md). Twenty-seven per-slot contracts are covered:
   predicted block28's pair at the
   double-dword form (slot 46's w4 and slot 47's w8, both since measured at
   0xFFFFFFFCFFFFFFFC) and
-  block29's at the low-dword form, to be confirmed at that stage.
+  block29's at the low-dword form (slot 50's w4 since measured at
+  0x00000000FFFFFFFC).
 
 - slot 43 `cc_split_swin_16h_proj_512_chained_fp8` (s42 -> s43): the
   block27 proj half — the qkv-proj pair's second half at grid (8,3,1), block
@@ -381,7 +382,8 @@ cut point (LADDER.md). Twenty-seven per-slot contracts are covered:
   parameter block is the slot-27/31/35/39/43 word map exactly, with w8
   carrying block28's pair second constant at 0xFFFFFFFCFFFFFFFC — the double
   form, the cycle's block28 step now measured in both halves (slot 46's w4
-  alike); block29's pair predicted at the low-dword form.
+  alike); block29's pair at the low-dword form (slot 50's w4 since measured
+  at 0x00000000FFFFFFFC).
 - slot 48 `cc_split_swin_16h_ffwd_512_chained_fp8` (s47 -> s48): the
   block29 ffwd half — the next `ffwd->proj` pair's first half at grid
   (4,3,2), block (32,8,1) (the slot-28/32/36/40/44 counterpart). It reads
@@ -485,7 +487,9 @@ Inputs come from retained evidence only:
   `block29.layer0.layer` (the record immediately after
   `block28.layer3.layer`, at heap offset 18,545,152), slot 49 binds
   `block29.layer1.layer` (the record immediately after
-  `block29.layer0.layer`, at heap offset 19,069,440)
+  `block29.layer0.layer`, at heap offset 19,069,440), slot 50 binds
+  `block29.layer2.layer` (the record immediately after
+  `block29.layer1.layer`, at heap offset 19,332,608)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -578,7 +582,9 @@ CLS_ZERO = "zero"
 # 26's/27's — block27's qkv-proj pair carries no second constant (block23's
 # pair likewise), and slot 46's w4 and slot 47's w8 are both
 # 0xFFFFFFFCFFFFFFFC — the double form, the absent/double/low/high cycle's
-# block28 step measured in both halves.
+# block28 step measured in both halves, and slot 50's w4 is
+# 0x00000000FFFFFFFC — the low-dword form, block29's step measured in the
+# qkv half (slot 51's w8 tests the same form in the proj half).
 # One value per qkv-proj pair where
 # present, shared by both halves).
 CONTRACTS: dict[int, dict[str, Any]] = {
@@ -976,8 +982,9 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         # and w8 the pair second constant at 0xFFFFFFFCFFFFFFFC — the double
         # form. The absent/double/low/high cycle's predicted block28 step is
         # now measured in BOTH halves (slot 46's w4 carries the same value),
-        # so the pair shares one constant; block29's pair then tests the
-        # cycle's low-dword step at slots 50/51. Its weights word lands on
+        # so the pair shares one constant; block29's pair then took the
+        # cycle's low-dword step at slot 50 (w4 since measured at
+        # 0x00000000FFFFFFFC), slot 51 testing the proj half. Its weights word lands on
         # the layout walk's next record start (block28.layer3.layer,
         # 263,168 B at heap offset 18,281,984 = 17,363,968 + 917,568 + 448
         # at the alignment boundary, the layer2->3 pattern of blocks 23-27
