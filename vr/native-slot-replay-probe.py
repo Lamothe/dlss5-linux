@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-57 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-58 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Thirty-four per-slot contracts are covered:
+cut point (LADDER.md). Thirty-five per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -577,6 +577,32 @@ cut point (LADDER.md). Thirty-four per-slot contracts are covered:
   extracted from DLL fatbin container 5 — each family is created from its
   own cubin (the traces pin one per family) and container 4 carries the
   transformer interval's kernels only.
+- slot 58 `cc_vit_1d_ffn_expand_publish_fp8` (s57 -> s58): the ViT
+  interval's first weighted kernel — the opening `ffn_expand` of the ViT
+  block pattern (`ffn_expand` -> `ffn_contract` -> `qkv` -> `attention` ->
+  `projection`, a five-slot cycle) and the first contract to bind a weight
+  record of the ViT block records. Measured from the s58 capture: word
+  classes (POOL, ZERO, POOL, WEIGHTS, ZERO, ZERO, ZERO, POOL, CONSTANT),
+  w0 input (52,853,760 — address-equal to slot 57's w1, the repacked head
+  tensor read back as the ViT block's input), w2 output (34,372,608 —
+  786,432 bytes, the 384x2048 fp8 expansion of the 384x512 input: the
+  extent closes exactly at slot 63's w2 binding at 35,159,040, the next
+  `ffn_expand` output's base, and the next block's extent repeats the same
+  786,432), w3 weights on the layout walk's next record start
+  (`block31.layer0.layer`, 4,194,320 B at heap offset 23,028,224 —
+  22,503,424 + 524,304 rounded up at the 512 boundary, block31's first
+  record and the first ViT record), w7 sync-out (65,024 — the 512-byte
+  stride continuing: 64,512 -> 65,024) and w8 the (12, 16) constant
+  0x000000100000000C (slot 55's w9 / slot 56's w4 / slot 57's w2
+  recurring); w1, w4, w5 and w6 are reserved zero — no sync-in word is
+  bound at all (unlike every `chained` transformer half). The sync extent
+  measured 256 bytes (span 65,024 -> 65,280) and the write-set is two
+  segments per frame (names-s57-s58.txt: w2 with 779,794/779,827/779,876
+  changed bytes inside the 786,432-byte binding, w7 256 B changed,
+  zero unattributed). The `publish` variant is the live one at the
+  interval's opening slot (the later `ffn_expand` launches use the
+  `chained` variant at their own slots); the fp8 variant is created but
+  never launched — pinned sibling.
 
 Inputs come from retained evidence only:
 
@@ -644,7 +670,10 @@ Inputs come from retained evidence only:
   `block30.layer3.layer` (the record immediately after
   `block30.layer2.layer`, at heap offset 22,240,256), slot 56 binds
   `block30.layer4.layer` (the record immediately after
-  `block30.layer3.layer`, at heap offset 22,503,424)
+  `block30.layer3.layer`, at heap offset 22,503,424), slot 58 binds
+  `block31.layer0.layer` (the record immediately after
+  `block30.layer4.layer`, at heap offset 23,028,224 — the ViT records'
+  first; slot 57's repack block is weights-less)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -657,7 +686,7 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46 and 54 — and 0 B at slot 56, the
+42 and 50, 256 B at slots 30, 38, 46, 54 and 58 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -754,8 +783,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -1509,6 +1538,46 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         input_word=0, input_bytes=196608,
         sync_word=None, sync_bytes=0,
         input_label=56, reference_label=57),
+    58: dict(
+        slot=58,
+        psize=72,
+        name_live="cc_vit_1d_ffn_expand_publish_fp8",
+        name_sibling="cc_vit_1d_ffn_expand_fp8",
+        tag_live="publish", tag_sibling="fp8",
+        # The ViT interval's first weighted kernel — the opening ffn_expand
+        # of the ViT block pattern (ffn_expand -> ffn_contract -> qkv ->
+        # attention -> projection, a five-slot cycle) and the first contract
+        # to bind one of the ViT block records. Measured from the s58
+        # capture: word classes (POOL, ZERO, POOL, WEIGHTS, ZERO, ZERO,
+        # ZERO, POOL, CONSTANT), w0 input (52,853,760 — address-equal to
+        # slot 57's w1, the repacked head tensor), w2 output
+        # (34,372,608 — 786,432 bytes, the 384x2048 fp8 expansion of the
+        # 384x512 input; the extent closes exactly at slot 63's w2 binding
+        # at 35,159,040, the next ffn_expand output's base), w3 weights on
+        # the layout walk's next record start (`block31.layer0.layer`,
+        # 4,194,320 B at heap offset 23,028,224 — 22,503,424 + 524,304
+        # rounded up at the 512 boundary, block31's first record and the
+        # first ViT record), w7 sync-out (65,024 — the 512-byte stride
+        # continuing: 64,512 -> 65,024) and w8 the (12, 16) constant
+        # 0x000000100000000C (slot 55's w9 / slot 56's w4 / slot 57's w2
+        # recurring); w1, w4, w5 and w6 are reserved zero — no sync-in
+        # word is bound (the interval's opening publish writes the chain's
+        # first record without consuming one). The sync extent measured
+        # 256 B (span 65,024 -> 65,280) and the write-set is two segments
+        # per frame (names-s57-s58.txt: w2 with 779,794/779,827/779,876
+        # changed bytes inside the 786,432-byte binding, w7 256 B changed,
+        # zero unattributed). The `publish` variant is live at the
+        # interval's opening slot — the later ffn_expand launches use the
+        # `chained` variant at their own slots — and the fp8 variant is
+        # created but never launched (pinned sibling).
+        container=5,
+        record_name="block31.layer0.layer", record_bytes=4194320,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_ZERO, CLS_POOL, CLS_WEIGHTS, CLS_ZERO,
+                      CLS_ZERO, CLS_ZERO, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=786432,
+        sync_word=7, sync_bytes=256,
+        input_label=57, reference_label=58),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -2662,7 +2731,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..57}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..58}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
