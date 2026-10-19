@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-55 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-56 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Thirty-two per-slot contracts are covered:
+cut point (LADDER.md). Thirty-three per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -526,6 +526,30 @@ cut point (LADDER.md). Thirty-two per-slot contracts are covered:
   word position, now measured in both halves of the pair — w8 the (24, 28)
   geometry constant and w9 a (12, 16) constant (the pooled tensor's
   geometry: 12x16x512 = 98,304 bytes).
+- slot 56 `cc_split_swin_16h_final_head_512_wait_fp8` (s55 -> s56): the
+  transformer interval's final head and the first `wait`-family kernel —
+  the first slot that consumes a sync record without writing one — in the
+  smallest of the replayed contracts' parameter blocks (40 bytes, five
+  words; every earlier contract block is 56, 72 or 80 bytes). It reads
+  slot 55's pooled output
+  (w0 at 26,803,200 — address-equal to slot 55's w3, the `proj_pool`
+  expansion) and waits on slot 55's sync record (w3 at 64,512 —
+  address-equal to slot 55's w6, the chained handoff) without writing a
+  sync record of its own: the write-set attribution pins exactly one word
+  (names-s55-s56.txt: w1 only, zero unattributed, stable across all three
+  frames) and the sync record's extent is byte-unchanged across the cut.
+  It writes its output tensor at w1 (196,608 bytes at 52,657,152 — 384
+  512-wide rows, twice the pooled input's 192; immediately past slot 55's
+  w2 output, 52,313,088 + 344,064, and closing exactly at slot 57's output
+  binding w1 at 52,853,760 — the `cc_vit_1d_repack_2d_to_1d_fp8` launch
+  that opens the ViT interval reads that extent back as its own input).
+  It binds `block30.layer4.layer` (524,304 B at heap offset 22,503,424 —
+  the record immediately after `block30.layer3.layer`, block30's fifth
+  record: 22,240,256 + 263,168 at the 512 boundary; the transformer
+  interval's last weight record, `block31.layer0.layer` at 23,028,224
+  opening the ViT records). Its parameter block is a new five-word shape
+  (pool, pool, weights, pool, constant): w4 the (12, 16) pooled geometry
+  constant 0x000000100000000C — slot 55's w9 value recurring at the head.
 
 Inputs come from retained evidence only:
 
@@ -591,7 +615,9 @@ Inputs come from retained evidence only:
   slot 54 binds `block30.layer2.layer` (the record immediately after
   `block30.layer1.layer`, at heap offset 21,322,240), slot 55 binds
   `block30.layer3.layer` (the record immediately after
-  `block30.layer2.layer`, at heap offset 22,240,256)
+  `block30.layer2.layer`, at heap offset 22,240,256), slot 56 binds
+  `block30.layer4.layer` (the record immediately after
+  `block30.layer3.layer`, at heap offset 22,503,424)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -604,7 +630,10 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46 and 54). Controls: skip (no launch), wrong (weights rotated
+42 and 50, 256 B at slots 30, 38, 46 and 54 — and 0 B at slot 56, the
+first `wait`-family kernel: it waits on w3's record without writing one,
+so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
+the first contract to need it). Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
 bounding weight reads to the record).
 
@@ -672,12 +701,16 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes). sync_bytes is the sync record's changed extent,
+# tensor at w3, 98,304 bytes); the primary binding's own extent is
+# OUTPUT_BYTES unless the contract pins output_bytes (slot 56's 196,608-byte
+# final-head tensor). sync_bytes is the sync record's changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55) — the fp8
-# sibling's divergence from the reference is enforced to equal it exactly.
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56) — the fp8
+# sibling's divergence from the reference is enforced to equal it exactly
+# (0 at slot 56: the wait family waits on w3's record without writing one,
+# so the pin enforces whole-pool sibling equality).
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
 # are 0xFFFFFFFCFFFFFFFC where the same-shape slots 26/27 reserve those
@@ -1351,6 +1384,39 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, extra_outputs=((3, 98304),),
         sync_word=6, sync_bytes=96,
         input_label=54, reference_label=55),
+    56: dict(
+        slot=56,
+        psize=40,
+        name_live="cc_split_swin_16h_final_head_512_wait_fp8",
+        name_sibling="cc_split_swin_16h_final_head_512_fp8",
+        tag_live="wait", tag_sibling="fp8",
+        # The transformer interval's final head — the first `wait`-family
+        # kernel (no sync record written) and the first five-word contract
+        # block (40 bytes). Measured from the s56 capture: word classes (POOL,
+        # POOL, WEIGHTS, POOL, CONSTANT), w0 input (26,803,200 —
+        # address-equal to slot 55's w3, the pooled tensor), w1 output
+        # (52,657,152 — immediately past slot 55's w2 output:
+        # 52,313,088 + 344,064), w2 weights, w3 the sync record it waits
+        # on (64,512 — address-equal to slot 55's w6, the chained handoff;
+        # read-only, the write-set attribution pins w1 alone and the
+        # record's extent is byte-unchanged across the cut) and w4 the
+        # (12, 16) pooled geometry constant 0x000000100000000C (slot 55's
+        # w9 value recurring at the head). Its weight record
+        # block30.layer4.layer (524,304 B, block30's fifth record)
+        # follows the established layout walk at heap offset 22,503,424
+        # (22,240,256 + 263,168 at the 512 boundary), confirmed by the
+        # probe's live DLL walk. The output tensor measures 196,608 bytes
+        # (384 512-wide rows — twice the pooled input's 192, closing
+        # exactly at slot 57's output binding at 52,853,760), and the
+        # write-set is one segment per frame (w1 196,608 B), zero
+        # unattributed.
+        record_name="block30.layer4.layer", record_bytes=524304,
+        constant_values={4: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_CONSTANT),
+        output_word=1, output_bytes=196608,
+        sync_word=3, sync_bytes=0,
+        input_label=55, reference_label=56),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1786,7 +1852,8 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     sync_start = setup_data["pool_offsets"][contract["sync_word"]]
     main_match, main_diffs, main_first = True, 0, -1
     for index, (word, span) in enumerate(
-            ((contract["output_word"], OUTPUT_BYTES),
+            ((contract["output_word"],
+              contract.get("output_bytes", OUTPUT_BYTES)),
              *contract.get("extra_outputs", ()))):
         output_start = setup_data["pool_offsets"][word]
         region_match, region_diffs, region_first = compare.diff_stats(
@@ -1797,8 +1864,14 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
         if index == 0:
             main_first = region_first
     sync = pool_region[sync_start:sync_start + sync_bytes]
-    _sync_match, sync_diff_count, _sync_first = compare.diff_stats(
-        reference[sync_start:sync_start + sync_bytes], sync)
+    if sync_bytes:
+        _sync_match, sync_diff_count, _sync_first = compare.diff_stats(
+            reference[sync_start:sync_start + sync_bytes], sync)
+    else:
+        # The wait family writes no sync record: the compare is empty by
+        # measurement (sync_bytes is the write-set's changed extent) and the
+        # whole-pool comparison carries the claim instead.
+        sync_diff_count = 0
 
     entry = {
         "entry": entry_id, "frame": frame, "kernel": plan["kernels"][tag],
@@ -1934,9 +2007,13 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             f"whole-pool byte match against the s{contract['reference_label']} "
             f"vendor capture (execute, tail: {contract['tag_live']} variant)",
             f"main-tensor{'' if not contract.get('extra_outputs') else 's'} "
-            "byte match for the fp8 sibling, with its "
-            f"divergence confined to the {contract['sync_bytes']}-byte sync "
-            f"record (w{contract['sync_word']})",
+            "byte match for the fp8 sibling, with its divergence "
+            + (f"at zero everywhere — it matches the reference over the "
+               f"whole pool (the wait family: w{contract['sync_word']} is "
+               f"the read-only handoff it waits on, changed extent 0)"
+               if contract["sync_bytes"] == 0 else
+               f"confined to the {contract['sync_bytes']}-byte sync "
+               f"record (w{contract['sync_word']})"),
             f"pool bit-identical to input and non-match against "
             f"s{contract['reference_label']} (skip)",
             f"non-match against s{contract['reference_label']} and pool changed "
@@ -1949,9 +2026,14 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             f"tail 0x{TAIL_TAIL:02X})",
             "fp8 sibling replayed at the live variant's geometry "
             "(the vendor creates but never launches it: sibling_launches pinned 0)",
-            f"{contract['sync_bytes']}-byte sync record at "
-            f"w{contract['sync_word']} per entry: "
-            f"matches reference / matches input",
+            (f"{contract['sync_bytes']}-byte sync record at "
+             f"w{contract['sync_word']} per entry: "
+             f"matches reference / matches input"
+             if contract["sync_bytes"] > 0 else
+             f"read-only sync record at w{contract['sync_word']} per entry "
+             f"(the wait family writes none — changed extent 0): the "
+             f"compare is empty and the whole-pool verdict carries the "
+             f"claim"),
         ],
         setup={key: value for key, value in plan["setup"].items()
                if key not in ("record", "image", "capture")},
@@ -2065,6 +2147,20 @@ def self_test() -> dict[str, Any]:
         base.require(expected in labels, f"self-test: {name} not detected")
         base.require(len(labels) == 1, f"self-test: {name} over-detected")
         controls += 1
+
+    # The wait family's zero sync extent: the sibling's divergence pin is
+    # whole-pool equality, so a single differing byte anywhere is flagged.
+    base.require(enforced_failures("execute", [make_entry(kernel=FIXTURE_SIBLING)],
+                                   FIXTURE_LIVE, 0) == [],
+                 "self-test: clean wait-family sibling rejected")
+    labels = enforced_failures(
+        "execute", [make_entry(kernel=FIXTURE_SIBLING, pool_match=False,
+                               pool_diff_count=1, pool_fnv="0x3",
+                               pool_first_diff=SYNC_FIXTURE)],
+        FIXTURE_LIVE, 0)
+    base.require(labels == ["sibling-divergence:e0"],
+                 "self-test: wait-family sibling divergence not detected")
+    controls += 1
 
     # validate_entry consistency controls, each with its pinned message.
     for name, overrides, expected in (
@@ -2204,16 +2300,18 @@ def self_test() -> dict[str, Any]:
                                       contract["sync_word"]) and span > 0
                          for word, span in extras),
                      f"self-test: contract {slot} region word class")
-        base.require(0 < contract["sync_bytes"] <= 512,
+        base.require(0 <= contract["sync_bytes"] <= 512,
                      f"self-test: contract {slot} sync extent")
         base.require(contract["output_word"] != contract["sync_word"],
                      f"self-test: contract {slot} output/sync words distinct")
         base.require(len(set(entry_plan(contract))) == 2 * FRAMES,
                      f"self-test: contract {slot} plan distinct entries")
-        contract_checks += 8
+        base.require(contract.get("output_bytes", OUTPUT_BYTES) > 0,
+                     f"self-test: contract {slot} output extent")
+        contract_checks += 9
     known_answers += contract_checks
 
-    return dict(diff_known_answers=3, verdict_controls=12,
+    return dict(diff_known_answers=3, verdict_controls=13,
                 consistency_controls=6, pair_controls=5,
                 layout_known_answers=4, following_known_answers=4,
                 metadata_known_answers=1,
@@ -2272,7 +2370,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..55}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..56}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
