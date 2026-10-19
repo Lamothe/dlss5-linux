@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-56 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-57 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Thirty-three per-slot contracts are covered:
+cut point (LADDER.md). Thirty-four per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -529,7 +529,7 @@ cut point (LADDER.md). Thirty-three per-slot contracts are covered:
 - slot 56 `cc_split_swin_16h_final_head_512_wait_fp8` (s55 -> s56): the
   transformer interval's final head and the first `wait`-family kernel —
   the first slot that consumes a sync record without writing one — in the
-  smallest of the replayed contracts' parameter blocks (40 bytes, five
+  smallest of the transformer interval's parameter blocks (40 bytes, five
   words; every earlier contract block is 56, 72 or 80 bytes). It reads
   slot 55's pooled output
   (w0 at 26,803,200 — address-equal to slot 55's w3, the `proj_pool`
@@ -550,6 +550,33 @@ cut point (LADDER.md). Thirty-three per-slot contracts are covered:
   opening the ViT records). Its parameter block is a new five-word shape
   (pool, pool, weights, pool, constant): w4 the (12, 16) pooled geometry
   constant 0x000000100000000C — slot 55's w9 value recurring at the head.
+- slot 57 `cc_vit_1d_repack_2d_to_1d_fp8` (s56 -> s57): the ViT interval's
+  opening repack — the first single-variant contract (no fp8 sibling
+  exists: the repack family has one kernel per direction, this 2d-to-1d
+  here and the `cc_vit_1d_repack_1d_to_2d_fp8` at slot 98, rather than the
+  tilesync/chained/wait variant pairs of every earlier family) and the
+  first weights-less one (psize 24 — three words, the smallest of the
+  replayed contracts' parameter blocks; every earlier block carries a
+  weights word). It reads slot 56's final-head tensor back (w0 at
+  52,657,152 — address-equal to slot 56's w1) and writes the repacked
+  tensor at w1 (196,608 bytes at 52,853,760 — the head's own 384x512
+  geometry, closing exactly at the ViT interval's 53,050,368 boundary
+  where slot 97's w2 and slot 98's w0 bind). w2 is the (12, 16) constant
+  0x000000100000000C (slot 55's w9 and slot 56's w4 recurring). The
+  write-set attribution pins exactly one word (names-s56-s57.txt: w1
+  only, zero unattributed, stable across all three frames) and there is
+  no sync word at all — the repack family is outside the sync chain. The
+  repack is a pure byte permutation of the head tensor, not an arithmetic
+  kernel: both write-set spans have all-zero pre-states (measured over the
+  retained capture pools, vr/logs/ladder/permutation-s56-s57.json), so each
+  write-set's changed count is its output tensor's non-zero byte count and
+  the two match frame for frame (171,969/171,970/171,962); the sorted byte
+  multisets of the head tensor and the repacked tensor are equal per frame
+  (same artefact). Its control set is
+  correspondingly re-based (see Controls below), and its kernel image is
+  extracted from DLL fatbin container 5 — each family is created from its
+  own cubin (the traces pin one per family) and container 4 carries the
+  transformer interval's kernels only.
 
 Inputs come from retained evidence only:
 
@@ -633,9 +660,23 @@ record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 42 and 50, 256 B at slots 30, 38, 46 and 54 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
-the first contract to need it). Controls: skip (no launch), wrong (weights rotated
+the first contract to need it). Single-variant contracts (slot 57: the
+kernel family has no fp8 sibling at all) drop the sibling replay; the
+vendor launches the only variant and the whole-pool compare alone carries
+the claim. Controls: skip (no launch), wrong (weights rotated
 inwards), tail (bytes beyond the record replaced by a different pattern —
-bounding weight reads to the record).
+bounding weight reads to the record). Weights-less contracts (slot 57: a
+pure data-movement kernel with no weights word in the block) re-base the
+same three controls onto the input tensor: wrong rotates the input tensor
+inwards (the output must change — the repack derives from its input), and
+the tail bytes go into the pool at the output extent's pre-launch bytes —
+the bytes immediately beyond the input tensor — in both patterns (execute
+0xA5 / tail 0x5A), so unchanged outputs under two different tail patterns
+bound the kernel's reads to the input tensor. The tail window sits inside
+the output extent because that is the only pool state the kernel
+rewrites, and the pattern stages for the launched modes only (skip has no
+launch to bound; its pool is the pristine input state, keeping its diff
+counts comparable with the ladder write-sets).
 
 This stage uses stored learned weight bytes through extracted records
 (bounded model-weight computation, NATIVE-FP8.md precedent) and is not a
@@ -646,6 +687,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import copy
 import ctypes as ct
 import hashlib
 import importlib.util
@@ -702,15 +744,23 @@ CLS_ZERO = "zero"
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
 # tensor at w3, 98,304 bytes); the primary binding's own extent is
-# OUTPUT_BYTES unless the contract pins output_bytes (slot 56's 196,608-byte
-# final-head tensor). sync_bytes is the sync record's changed extent,
+# OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
+# 196,608-byte tensors). input_word/input_bytes pin the input tensor
+# binding for weights-less contracts (the wrong control's rotation target
+# and the read-bounding claim's subject). A contract with no weights word
+# (CLS_WEIGHTS absent: slot 57's data-movement block) carries
+# record_name=None and record_bytes=0; its controls re-base onto the input
+# tensor (module docstring, Controls). sync_bytes is the sync record's
+# changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
-# so the pin enforces whole-pool sibling equality).
+# so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
+# sync word at all — the repack family is outside the sync chain, so
+# sync_word is None and the compare is empty by construction).
 # constant_values maps constant-word index to its pinned value (a block can
 # carry more than one, at more than one value: slot 30's w4 and slot 31's w8
 # are 0xFFFFFFFCFFFFFFFC where the same-shape slots 26/27 reserve those
@@ -1417,6 +1467,48 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=1, output_bytes=196608,
         sync_word=3, sync_bytes=0,
         input_label=55, reference_label=56),
+    57: dict(
+        slot=57,
+        psize=24,
+        name_live="cc_vit_1d_repack_2d_to_1d_fp8",
+        name_sibling=None,
+        tag_live="fp8", tag_sibling=None,
+        # The ViT interval's opening repack — the first single-variant
+        # contract (the vendor creates and launches the only variant; the
+        # repack family has one kernel per direction, the `1d_to_2d`
+        # counterpart living at slot 98) and the first weights-less one
+        # (psize 24 — three words, the smallest block replayed; no weights
+        # word exists). Measured from the s57 capture: word classes (POOL,
+        # POOL, CONSTANT), w0 input (52,657,152 — address-equal to slot
+        # 56's w1, the final-head tensor read back as the ViT interval's
+        # input), w1 output (52,853,760 — the head's output extent closes
+        # exactly here: 52,657,152 + 196,608) and w2 the (12, 16) constant
+        # 0x000000100000000C (slot 55's w9 / slot 56's w4 recurring). The
+        # output tensor measures 196,608 bytes (the head's own 384x512
+        # geometry) closing exactly at the ViT interval's 53,050,368
+        # boundary (slot 97's w2 / slot 98's w0). The write-set is one
+        # segment per frame (names-s56-s57.txt: w1 alone, zero
+        # unattributed) and there is no sync word: the repack family is
+        # outside the sync chain. The kernel is a pure byte permutation of
+        # the head tensor — with all-zero pre-states in both write-set
+        # spans the changed counts match the s55 -> s56 head write-set
+        # frame for frame (171,969/171,970/171,962) and the sorted byte
+        # multisets are equal per frame (measured over the retained capture
+        # pools: vr/logs/ladder/permutation-s56-s57.json) — so the controls
+        # re-base onto the input tensor (the
+        # wrong control rotates it inwards, the read-bounding tail pattern
+        # goes into the output extent's pre-launch bytes). The ViT
+        # interval's kernels are created from their own cubin and extracted
+        # from DLL fatbin container 5 (container 4 carries the transformer
+        # interval's).
+        container=5,
+        record_name=None, record_bytes=0,
+        constant_values={2: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=1, output_bytes=196608,
+        input_word=0, input_bytes=196608,
+        sync_word=None, sync_bytes=0,
+        input_label=56, reference_label=57),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -1440,10 +1532,12 @@ WORD7_RE = re.compile(r"^word=7 .* off=(\d+) ")
 RES_RE = re.compile(
     r"^res idx=(\d+) va=0x([0-9a-f]+) size=(\d+) ")
 
-# Mode entry plans: every mode exercises both variants on all frames.
+# Mode entry plans: every mode exercises all variants on all frames (the
+# single-variant contracts — name_sibling None — have one tag).
 def entry_plan(contract: dict[str, Any]) -> tuple[str, ...]:
-    return tuple(f"{tag}-f{frame}" for frame in range(FRAMES)
-                 for tag in (contract["tag_live"], contract["tag_sibling"]))
+    tags = ((contract["tag_live"],) if contract["tag_sibling"] is None
+            else (contract["tag_live"], contract["tag_sibling"]))
+    return tuple(f"{tag}-f{frame}" for frame in range(FRAMES) for tag in tags)
 
 
 MODE_TAIL = {"execute": EXEC_TAIL, "tail": TAIL_TAIL, "skip": EXEC_TAIL,
@@ -1520,6 +1614,27 @@ def read_created(text: str, name: str) -> dict[str, Any]:
                 handle=record.group(7))
 
 
+def addressed_heaps(traces: dict[int, Any], heap_vas: list[int],
+                    heap_size: int) -> set[int]:
+    """Heap instances the traces' parameter words actually address.
+
+    The captured resource map carries several same-size heap instances (the
+    model binds duplicated views); the vendor's parameter words address
+    exactly one of them, and weights-less contracts — which have no weights
+    word to resolve the heap through — pin it from the traces instead.
+    """
+    found: set[int] = set()
+    for trace in traces.values():
+        for evaluations in trace["evals"]:
+            for _handle, _psize, _pcap, pmem, _grid in evaluations:
+                block = bytes.fromhex(pmem)
+                for position in range(0, len(block) // 8 * 8, 8):
+                    word = struct.unpack_from("<Q", block, position)[0]
+                    found.update(va for va in heap_vas
+                                 if va <= word < va + heap_size)
+    return found
+
+
 def heap_word_scan(trace: dict[str, Any], heap_va: int, heap_size: int,
                    layout: dict[str, dict[str, int]]) -> dict[str, int]:
     """Classify every heap-pointing parameter word: record start or mid-record."""
@@ -1565,8 +1680,10 @@ def setup(data: bytes, inventory: dict[str, Any],
     slot = contract["slot"]
     psize = contract["psize"]
     live, sibling = contract["tag_live"], contract["tag_sibling"]
-    kernel_tags = ((live, contract["name_live"]),
-                   (sibling, contract["name_sibling"]))
+    kernel_tags = [(live, contract["name_live"])]
+    if contract["name_sibling"] is not None:
+        kernel_tags.append((sibling, contract["name_sibling"]))
+    kernel_tags = tuple(kernel_tags)
     in_label, ref_label = contract["input_label"], contract["reference_label"]
     trace_text = {label: trace_path(label).read_text(encoding="utf-8",
                                                      errors="replace")
@@ -1634,14 +1751,19 @@ def setup(data: bytes, inventory: dict[str, Any],
                  f"grid: {ref_label} launch geometry varies")
     base.require(slot_grids[in_label] == slot_grids[ref_label],
                  "grid: geometry differs between runs")
-    grids = {live: slot_grids[in_label].pop(), sibling: None}
-    grids[sibling] = grids[live]
+    grids = {live: slot_grids[in_label].pop()}
+    if sibling is not None:
+        grids[sibling] = grids[live]
     # The fp8 sibling is created but never launched by the vendor: it has no
-    # launch contract of its own (pinned per trace, each with its own handle).
-    sibling_launches = sum(1 for label in (in_label, ref_label)
-                           for m in GRID_RE.finditer(trace_text[label])
-                           if m.group(1) == handles[label][sibling])
-    base.require(sibling_launches == 0, "sibling: unexpected vendor launches")
+    # launch contract of its own (pinned per trace, each with its own
+    # handle). Single-variant contracts have no sibling to pin.
+    if sibling is not None:
+        sibling_launches: Any = sum(1 for label in (in_label, ref_label)
+                                    for m in GRID_RE.finditer(trace_text[label])
+                                    if m.group(1) == handles[label][sibling])
+        base.require(sibling_launches == 0, "sibling: unexpected vendor launches")
+    else:
+        sibling_launches = None
 
     # Captures: input state (after slot-1) and reference state (after slot).
     capture = {label: names.read_capture(capture_dir(label))
@@ -1676,20 +1798,35 @@ def setup(data: bytes, inventory: dict[str, Any],
             offsets[index] = words[index] - pool_va
 
     # The weights word resolves into the weight heap through the captured
-    # resource map.
-    weight_index = contract["word_classes"].index(CLS_WEIGHTS)
+    # resource map. Weights-less contracts (no CLS_WEIGHTS word) resolve the
+    # heap by its pinned resource size instead: the layout anchors and the
+    # heap-word scan below still apply to every contract.
+    weighted = contract["word_classes"].count(CLS_WEIGHTS) == 1
     res_lines = [RES_RE.match(line) for line in
                  (capture_dir(ref_label) / "resource-map.txt").read_text().splitlines()
                  if line.startswith("res ")]
     base.require(all(res_lines), f"slot{slot}-bind: resource map format")
-    containing = [m for m in res_lines if m
-                  and int(m.group(2), 16) <= words[weight_index]
-                  < int(m.group(2), 16) + int(m.group(3))]
-    base.require(len(containing) == 1, f"slot{slot}-bind: weight resource not unique")
-    weight_res = containing[0]
-    base.require(int(weight_res.group(3)) == HEAP_SIZE,
-                 f"slot{slot}-bind: unexpected weight resource size")
-    heap_offset = words[weight_index] - int(weight_res.group(2), 16)
+    if weighted:
+        weight_index = contract["word_classes"].index(CLS_WEIGHTS)
+        containing = [m for m in res_lines if m
+                      and int(m.group(2), 16) <= words[weight_index]
+                      < int(m.group(2), 16) + int(m.group(3))]
+        base.require(len(containing) == 1, f"slot{slot}-bind: weight resource not unique")
+        weight_res = containing[0]
+        base.require(int(weight_res.group(3)) == HEAP_SIZE,
+                     f"slot{slot}-bind: unexpected weight resource size")
+        heap_va = int(weight_res.group(2), 16)
+        heap_offset: Any = words[weight_index] - heap_va
+    else:
+        sized = [m for m in res_lines if m and int(m.group(3)) == HEAP_SIZE]
+        base.require(len(sized) >= 1, f"slot{slot}-bind: weight heap missing")
+        addressed = addressed_heaps(traces,
+                                    [int(m.group(2), 16) for m in sized],
+                                    HEAP_SIZE)
+        base.require(len(addressed) == 1,
+                     f"slot{slot}-bind: weight heap not unique")
+        heap_va = addressed.pop()
+        heap_offset = None
 
     # Heap layout anchors from the DLL's WEIGHTS_HT resource.
     _resource_offset, weights = base.PE(data).resource("WEIGHTS_HT")
@@ -1703,14 +1840,14 @@ def setup(data: bytes, inventory: dict[str, Any],
                  boundary_word7_offset(), "weight-heap: decoder anchor mismatch")
     record_name = contract["record_name"]
     record_bytes = contract["record_bytes"]
-    base.require(layout[record_name]["heap_offset"] == heap_offset,
-                 f"slot{slot}-weight: record binding mismatch")
-    base.require(layout[record_name]["payload_bytes"] == record_bytes,
-                 f"slot{slot}-weight: record size mismatch")
+    if weighted:
+        base.require(layout[record_name]["heap_offset"] == heap_offset,
+                     f"slot{slot}-weight: record binding mismatch")
+        base.require(layout[record_name]["payload_bytes"] == record_bytes,
+                     f"slot{slot}-weight: record size mismatch")
     # Every heap-pointing parameter word of both traces must address a whole
     # record payload start (the structural claim, computed and enforced).
-    heap_scan = {str(label): heap_word_scan(traces[label],
-                                            int(weight_res.group(2), 16),
+    heap_scan = {str(label): heap_word_scan(traces[label], heap_va,
                                             HEAP_SIZE, layout)
                  for label in (in_label, ref_label)}
     for label in (in_label, ref_label):
@@ -1718,17 +1855,25 @@ def setup(data: bytes, inventory: dict[str, Any],
         base.require(scan["mid_record"] == 0 and
                      scan["total"] == scan["at_record_start"],
                      "weight-heap: weight pointer off record start")
-    record = base.span(weights, layout[record_name]["payload_at"], record_bytes)
-    following = following_records(layout, record_name, record_bytes)
-    base.require(len(following) == 1, f"slot{slot}-weight: no following record")
-    tail_live = base.span(weights, layout[following[0]]["payload_at"],
-                          min(TAIL_BYTES, layout[following[0]]["payload_bytes"]))
-    base.require(tail_live != bytes([EXEC_TAIL]) * len(tail_live) and
-                 tail_live != bytes([TAIL_TAIL]) * len(tail_live),
-                 "weight-tail: tail pattern coincides with live bytes")
+    if weighted:
+        record = base.span(weights, layout[record_name]["payload_at"],
+                           record_bytes)
+        following = following_records(layout, record_name, record_bytes)
+        base.require(len(following) == 1, f"slot{slot}-weight: no following record")
+        tail_live = base.span(weights, layout[following[0]]["payload_at"],
+                              min(TAIL_BYTES, layout[following[0]]["payload_bytes"]))
+        base.require(tail_live != bytes([EXEC_TAIL]) * len(tail_live) and
+                     tail_live != bytes([TAIL_TAIL]) * len(tail_live),
+                     "weight-tail: tail pattern coincides with live bytes")
+    else:
+        record = None
 
     # Kernel ABI from the SM89 cubin: one parameter of the contract's size.
-    modules = [e for e in inventory["fatbins"][CONTAINER]["entries"]
+    # Each kernel family is created from its own cubin (the traces pin one
+    # cubin per family) and extracted from its own DLL fatbin container —
+    # the transformer contracts from container 4, the ViT interval's from
+    # container 5 (contract["container"], default CONTAINER).
+    modules = [e for e in inventory["fatbins"][contract.get("container", CONTAINER)]["entries"]
                if e["kind"] == 2 and e["arch"] == 89]
     base.require(len(modules) == 1, "abi: unique SM89 module")
     image = base.decompress(data, modules[0])
@@ -1744,7 +1889,8 @@ def setup(data: bytes, inventory: dict[str, Any],
         words=list(words), pool_offsets=offsets, heap_offset=heap_offset,
         heap_total=heap_total, heap_allocation=HEAP_SIZE,
         sibling_launches=sibling_launches, heap_scan=heap_scan,
-        record_sha256=hashlib.sha256(record).hexdigest(),
+        record_sha256=(hashlib.sha256(record).hexdigest()
+                       if record is not None else None),
         block=created[live]["block"], smem=created[live]["smem"],
         grids={tag: list(grids[tag]) for tag in dict(kernel_tags)},
         pool_va=pool_va, pool_size=pool_size,
@@ -1778,20 +1924,49 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     reference = capture[contract["reference_label"]]["pools"][frame]["data"]
     record = setup_data["record"]
     record_bytes = contract["record_bytes"]
+    weighted = contract["word_classes"].count(CLS_WEIGHTS) == 1
     tail = bytes([MODE_TAIL[mode]]) * TAIL_BYTES
-    weights_content = record + tail
-    if mode == "wrong":
-        weights_content = (record[ROTATE_BYTES:] + record[:ROTATE_BYTES]) + tail
+    pool_content = input_pool
+    if weighted:
+        weights_content = record + tail
+        if mode == "wrong":
+            weights_content = (record[ROTATE_BYTES:] + record[:ROTATE_BYTES]) + tail
+    else:
+        # Weights-less controls (module docstring, Controls): the tail
+        # pattern goes into the pool at the bytes immediately beyond the
+        # input tensor — the output extent's pre-launch bytes — and the
+        # wrong control rotates the input tensor inwards.
+        input_start = setup_data["pool_offsets"][contract["input_word"]]
+        input_bytes = contract["input_bytes"]
+        tail_start = input_start + input_bytes
+        base.require(tail_start + TAIL_BYTES <=
+                     setup_data["pool_offsets"][contract["output_word"]] +
+                     contract.get("output_bytes", OUTPUT_BYTES),
+                     "input-tail: tail window not covered by the output extent")
+        staged = bytearray(input_pool)
+        if mode != "skip":
+            # The pattern stages where reads can occur (the launched modes);
+            # skip's pool is the pristine input state, keeping its diff
+            # counts comparable with the ladder write-sets.
+            staged[tail_start:tail_start + TAIL_BYTES] = tail
+            if mode == "wrong":
+                tensor = staged[input_start:input_start + input_bytes]
+                staged[input_start:input_start + input_bytes] = \
+                    tensor[ROTATE_BYTES:] + tensor[:ROTATE_BYTES]
+        pool_content = bytes(staged)
 
     launches = readbacks = 0
     with ExitStack() as allocations:
         pool_alloc = launch.allocate(driver, allocations, setup_data["pool_size"])
-        weight_alloc = launch.allocate(driver, allocations,
-                                       record_bytes + TAIL_BYTES)
-        initial_pool = compare.upload_region(driver, pool_alloc, input_pool,
+        if weighted:
+            weight_alloc = launch.allocate(driver, allocations,
+                                           record_bytes + TAIL_BYTES)
+        initial_pool = compare.upload_region(driver, pool_alloc, pool_content,
                                              0x00, guard_words)
-        initial_weights = compare.upload_region(driver, weight_alloc, weights_content,
-                                                0x00, guard_words)
+        if weighted:
+            initial_weights = compare.upload_region(driver, weight_alloc,
+                                                    weights_content,
+                                                    0x00, guard_words)
         launched = mode != "skip"
         if launched:
             words = setup_data["words"]
@@ -1816,11 +1991,15 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
             driver.check("cuCtxSynchronize")
 
         current_pool = compare.readback_region(driver, pool_alloc)
-        current_weights = compare.readback_region(driver, weight_alloc)
-        readbacks += 2
+        if weighted:
+            current_weights = compare.readback_region(driver, weight_alloc)
+            readbacks += 2
+        else:
+            readbacks += 1
 
     pool_region = compare.region_slice(current_pool, pool_alloc)
-    weights_region = compare.region_slice(current_weights, weight_alloc)
+    if weighted:
+        weights_region = compare.region_slice(current_weights, weight_alloc)
     input_region = compare.region_slice(initial_pool, pool_alloc)
 
     # Evidence first: a failing comparison must not discard its explanation.
@@ -1849,7 +2028,10 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     # offset (region-relative, diagnostic only) so the field keeps one
     # unambiguous coordinate system under multi-region contracts.
     sync_bytes = contract["sync_bytes"]
-    sync_start = setup_data["pool_offsets"][contract["sync_word"]]
+    # No sync word (weights-less data-movement contracts): the compare is
+    # empty by construction, matching the wait family's zero-extent shape.
+    sync_start = (setup_data["pool_offsets"][contract["sync_word"]]
+                  if contract["sync_word"] is not None else 0)
     main_match, main_diffs, main_first = True, 0, -1
     for index, (word, span) in enumerate(
             ((contract["output_word"],
@@ -1891,9 +2073,11 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
         "change_first": extent[0], "change_last": extent[1],
         "change_blocks": extent[2],
         "guards_intact": (compare.guards_intact(current_pool, guard_words) and
-                          compare.guards_intact(current_weights, guard_words)),
-        "weights_immutable": (weights_region ==
-                              compare.region_slice(initial_weights, weight_alloc)),
+                          (not weighted or
+                           compare.guards_intact(current_weights, guard_words))),
+        "weights_immutable": (not weighted or
+                              (weights_region ==
+                               compare.region_slice(initial_weights, weight_alloc))),
         "retained": retained,
     }
     validate_entry(entry)
@@ -1963,8 +2147,10 @@ def enforced_failures(mode: str, entries: list[dict[str, Any]],
 def execute(data: bytes, inventory: dict[str, Any], mode: str,
             evidence: Path, progress: dict[str, Any],
             contract: dict[str, Any]) -> dict[str, Any]:
-    kernel_tags = ((contract["tag_live"], contract["name_live"]),
-                   (contract["tag_sibling"], contract["name_sibling"]))
+    kernel_tags = [(contract["tag_live"], contract["name_live"])]
+    if contract["name_sibling"] is not None:
+        kernel_tags.append((contract["tag_sibling"], contract["name_sibling"]))
+    kernel_tags = tuple(kernel_tags)
     plan = dict(setup=setup(data, inventory, contract), contract=contract,
                 kernels=dict(kernel_tags))
     image = plan["setup"]["image"]
@@ -1994,6 +2180,7 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
 
     failures = enforced_failures(mode, entries, contract["name_live"],
                                 contract["sync_bytes"])
+    weighted = contract["word_classes"].count(CLS_WEIGHTS) == 1
     return dict(
         native=True, device="NVIDIA GeForce RTX 4070 Ti SUPER",
         driver_api_version=version, mode=mode, slot=contract["slot"],
@@ -2003,37 +2190,58 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
         readbacks=sum(e["readbacks"] for e in entries),
         enforced_failures=failures,
         checks_enforced=[
-            "guards_intact and weights_immutable on every entry",
+            ("guards_intact and weights_immutable on every entry"
+             if weighted else
+             "guards_intact on every entry (weights-less contract: "
+             "no weight record is bound)"),
             f"whole-pool byte match against the s{contract['reference_label']} "
             f"vendor capture (execute, tail: {contract['tag_live']} variant)",
-            f"main-tensor{'' if not contract.get('extra_outputs') else 's'} "
-            "byte match for the fp8 sibling, with its divergence "
-            + (f"at zero everywhere — it matches the reference over the "
-               f"whole pool (the wait family: w{contract['sync_word']} is "
-               f"the read-only handoff it waits on, changed extent 0)"
-               if contract["sync_bytes"] == 0 else
-               f"confined to the {contract['sync_bytes']}-byte sync "
-               f"record (w{contract['sync_word']})"),
+            ((f"main-tensor{'' if not contract.get('extra_outputs') else 's'} "
+              "byte match for the fp8 sibling, with its divergence "
+              + (f"at zero everywhere — it matches the reference over the "
+                 f"whole pool (the wait family: w{contract['sync_word']} is "
+                 f"the read-only handoff it waits on, changed extent 0)"
+                 if contract["sync_bytes"] == 0 else
+                 f"confined to the {contract['sync_bytes']}-byte sync "
+                 f"record (w{contract['sync_word']})"))
+              if contract["name_sibling"] is not None else
+              "single-variant kernel — no fp8 sibling exists (the repack "
+              "family has one kernel per direction), so the whole-pool "
+              "compare alone carries the claim"),
             f"pool bit-identical to input and non-match against "
             f"s{contract['reference_label']} (skip)",
             f"non-match against s{contract['reference_label']} and pool changed "
-            f"from input (wrong: weights rotated inwards {ROTATE_BYTES} bytes)",
+            f"from input (wrong: "
+            + (f"weights rotated inwards {ROTATE_BYTES} bytes)"
+               if weighted else
+               f"input tensor rotated inwards {ROTATE_BYTES} bytes)"),
         ],
         findings_recorded=[
             f"change extent of the pool against the s{contract['input_label']} "
             f"input state",
-            f"tail bytes beyond the record replaced (execute 0x{EXEC_TAIL:02X} / "
-            f"tail 0x{TAIL_TAIL:02X})",
-            "fp8 sibling replayed at the live variant's geometry "
-            "(the vendor creates but never launches it: sibling_launches pinned 0)",
+            (f"tail bytes beyond the record replaced (execute 0x{EXEC_TAIL:02X} / "
+             f"tail 0x{TAIL_TAIL:02X})"
+             if weighted else
+             f"tail bytes beyond the input tensor replaced at the output "
+             f"extent's pre-launch bytes (execute 0x{EXEC_TAIL:02X} / "
+             f"tail 0x{TAIL_TAIL:02X})"),
+            ("fp8 sibling replayed at the live variant's geometry "
+             "(the vendor creates but never launches it: sibling_launches pinned 0)"
+             if contract["name_sibling"] is not None else
+             "single-variant kernel: the vendor creates and launches the only "
+             "variant (pinned at the slot's own launch position)"),
             (f"{contract['sync_bytes']}-byte sync record at "
              f"w{contract['sync_word']} per entry: "
              f"matches reference / matches input"
              if contract["sync_bytes"] > 0 else
-             f"read-only sync record at w{contract['sync_word']} per entry "
-             f"(the wait family writes none — changed extent 0): the "
-             f"compare is empty and the whole-pool verdict carries the "
-             f"claim"),
+             (f"read-only sync record at w{contract['sync_word']} per entry "
+              f"(the wait family writes none — changed extent 0): the "
+              f"compare is empty and the whole-pool verdict carries the "
+              f"claim"
+              if contract["sync_word"] is not None else
+              f"no sync word in the parameter block (the repack family is "
+              f"outside the sync chain): the compare is empty and the "
+              f"whole-pool verdict carries the claim")),
         ],
         setup={key: value for key, value in plan["setup"].items()
                if key not in ("record", "image", "capture")},
@@ -2059,6 +2267,55 @@ SYNC_FIXTURE = 48640   # fixture pool offset for the sync record
 FIXTURE_SYNC_BYTES = 96   # fixture sync record extent
 FIXTURE_LIVE = "fixture-live-kernel"
 FIXTURE_SIBLING = "fixture-sibling-kernel"
+SHAPE_CHECKS = 11   # contract_shape requirements per contract
+
+
+def contract_shape(slot: int, contract: dict[str, Any]) -> None:
+    """Contract-table invariants (self-test target): one call per contract."""
+    base.require(contract["slot"] == slot, "self-test: contract slot key")
+    base.require(len(contract["word_classes"]) == contract["psize"] // 8,
+                 f"self-test: contract {slot} class table length")
+    base.require(set(contract["constant_values"]) ==
+                 {index for index, cls in enumerate(contract["word_classes"])
+                  if cls == CLS_CONSTANT},
+                 f"self-test: contract {slot} constant words")
+    weights_words = contract["word_classes"].count(CLS_WEIGHTS)
+    weighted = weights_words == 1
+    base.require(weights_words <= 1 and
+                 weighted == (contract["record_name"] is not None) and
+                 (not weighted or contract["record_bytes"] > 0),
+                 f"self-test: contract {slot} weights word count")
+    base.require((contract["name_sibling"] is None) ==
+                 (contract["tag_sibling"] is None),
+                 f"self-test: contract {slot} sibling pair")
+    extras = contract.get("extra_outputs", ())
+    sync_word = contract["sync_word"]
+    base.require(contract["word_classes"][contract["output_word"]] == CLS_POOL and
+                 (sync_word is None or
+                  contract["word_classes"][sync_word] == CLS_POOL) and
+                 len({word for word, _span in extras}) == len(extras) and
+                 all(contract["word_classes"][word] == CLS_POOL and
+                     word not in (contract["output_word"], sync_word) and
+                     span > 0
+                     for word, span in extras),
+                 f"self-test: contract {slot} region word class")
+    base.require(0 <= contract["sync_bytes"] <= 512 and
+                 (sync_word is not None or contract["sync_bytes"] == 0),
+                 f"self-test: contract {slot} sync extent")
+    base.require(sync_word is None or
+                 contract["output_word"] != sync_word,
+                 f"self-test: contract {slot} output/sync words distinct")
+    base.require(len(set(entry_plan(contract))) ==
+                 (1 if contract["tag_sibling"] is None else 2) * FRAMES,
+                 f"self-test: contract {slot} plan distinct entries")
+    base.require(contract.get("output_bytes", OUTPUT_BYTES) > 0,
+                 f"self-test: contract {slot} output extent")
+    input_word = contract.get("input_word")
+    base.require((not weighted and input_word is not None and
+                  contract["word_classes"][input_word] == CLS_POOL and
+                  contract["input_bytes"] > ROTATE_BYTES) or
+                 (weighted and input_word is None),
+                 f"self-test: contract {slot} input binding")
 
 
 def make_entry(**overrides: Any) -> dict[str, Any]:
@@ -2250,6 +2507,22 @@ def self_test() -> dict[str, Any]:
                  "self-test: following record past rounded end")
     known_answers += 4
 
+    # addressed_heaps known answers: the resolution returns exactly the
+    # heap instances the traces' words address, among several same-size
+    # resource-map instances (weights-less contracts pin the heap this way).
+    def param(value: int) -> tuple[str, int, int, str, str]:
+        return ("h", 8, 0, struct.pack("<Q", value).hex(), "1,1,1")
+
+    fixture_traces = {56: dict(evals=[[param(0x1000), param(0x2000)]]),
+                      57: dict(evals=[[param(0x1008), param(0x0),
+                                       param(0x1FFF)]])}
+    base.require(addressed_heaps(fixture_traces, [0x1000, 0x3000], 0x1000) ==
+                 {0x1000}, "self-test: heap instance resolution")
+    known_answers += 1
+    base.require(addressed_heaps(fixture_traces, [0x1000, 0x2000], 0x1000) ==
+                 {0x1000, 0x2000}, "self-test: heap instance multiplicity")
+    known_answers += 1
+
     # parse_grid known answer and malformed-form control.
     base.require(parse_grid("4,3,4") == (4, 3, 4), "self-test: grid parse")
     known_answers += 1
@@ -2278,38 +2551,57 @@ def self_test() -> dict[str, Any]:
     else:
         raise ValueError("fixture metadata form corruption accepted")
 
-    # Contract-table shape: the class table covers the parameter block exactly,
-    # the region words are pool-resident, and exactly one weights word exists.
+    # Contract-table shape: the class table covers the parameter block
+    # exactly, the region words are pool-resident, weights/sibling/sync
+    # presence is internally consistent and the weights-less input binding
+    # is pinned (contract_shape, SHAPE_CHECKS requirements per contract).
     contract_checks = 0
     for slot, contract in sorted(CONTRACTS.items()):
-        base.require(contract["slot"] == slot, "self-test: contract slot key")
-        base.require(len(contract["word_classes"]) == contract["psize"] // 8,
-                     f"self-test: contract {slot} class table length")
-        base.require(set(contract["constant_values"]) ==
-                     {index for index, cls in enumerate(contract["word_classes"])
-                      if cls == CLS_CONSTANT},
-                     f"self-test: contract {slot} constant words")
-        base.require(contract["word_classes"].count(CLS_WEIGHTS) == 1,
-                     f"self-test: contract {slot} weights word count")
-        extras = contract.get("extra_outputs", ())
-        base.require(contract["word_classes"][contract["output_word"]] == CLS_POOL and
-                     contract["word_classes"][contract["sync_word"]] == CLS_POOL and
-                     len({word for word, _span in extras}) == len(extras) and
-                     all(contract["word_classes"][word] == CLS_POOL and
-                         word not in (contract["output_word"],
-                                      contract["sync_word"]) and span > 0
-                         for word, span in extras),
-                     f"self-test: contract {slot} region word class")
-        base.require(0 <= contract["sync_bytes"] <= 512,
-                     f"self-test: contract {slot} sync extent")
-        base.require(contract["output_word"] != contract["sync_word"],
-                     f"self-test: contract {slot} output/sync words distinct")
-        base.require(len(set(entry_plan(contract))) == 2 * FRAMES,
-                     f"self-test: contract {slot} plan distinct entries")
-        base.require(contract.get("output_bytes", OUTPUT_BYTES) > 0,
-                     f"self-test: contract {slot} output extent")
-        contract_checks += 9
+        contract_shape(slot, contract)
+        contract_checks += SHAPE_CHECKS
     known_answers += contract_checks
+
+    # Contract-shape corruption controls: each schema violation must raise
+    # exactly its pinned message (deep copies of one weighted and one
+    # weights-less real contract).
+    for name, template, mutate, expected in (
+            ("sibling pair", 57,
+             lambda c: c.update(tag_sibling="fp8"),
+             "self-test: contract 57 sibling pair"),
+            ("weights word count", 57,
+             lambda c: c.update(record_name="block31.layer0.layer",
+                                record_bytes=1),
+             "self-test: contract 57 weights word count"),
+            ("two weights words", 57,
+             lambda c: c.update(word_classes=[CLS_WEIGHTS, CLS_WEIGHTS,
+                                              CLS_CONSTANT]),
+             "self-test: contract 57 weights word count"),
+            ("sync extent", 57,
+             lambda c: c.update(sync_bytes=96),
+             "self-test: contract 57 sync extent"),
+            ("input binding", 57,
+             lambda c: c.update(input_bytes=1),
+             "self-test: contract 57 input binding"),
+            ("plan entries", 57,
+             lambda c: c.update(tag_sibling="fp8",
+                                name_sibling="cc_vit_1d_repack_2d_to_1d_fp8"),
+             "self-test: contract 57 plan distinct entries"),
+            ("sibling pair weighted", 55,
+             lambda c: c.update(name_sibling=None),
+             "self-test: contract 55 sibling pair"),
+            ("input binding weighted", 55,
+             lambda c: c.update(input_word=0),
+             "self-test: contract 55 input binding")):
+        fixture = copy.deepcopy(CONTRACTS[template])
+        mutate(fixture)
+        try:
+            contract_shape(template, fixture)
+        except ValueError as error:
+            base.require(str(error) == expected,
+                         f"self-test: {name} wrong message")
+            controls += 1
+        else:
+            raise ValueError(f"fixture {name} corruption accepted")
 
     return dict(diff_known_answers=3, verdict_controls=13,
                 consistency_controls=6, pair_controls=5,
@@ -2370,7 +2662,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..56}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..57}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
