@@ -201,9 +201,12 @@ Phase-3 stage 3 is complete. The remaining stages of the plan:
    capture's frame-evolution data and the now-validated decoder give concrete
    constraints, but the history feedback loop is the open question that decides
    reconstruction versus an open neural backend.
-2. **Native VR integration** — assemble the validated stages into a Linux
-   OpenXR application (WiVRn + Quest 3) once stage 1 settles the pipeline
-   shape.
+2. **Native VR integration into the existing Genesis project** —
+   `/home/michael/Projects/Genesis` is already the Linux OpenXR application
+   (native Vulkan 1.3, WiVRn + Quest 3) this plan once anticipated building.
+   Do not build a second VR host. Bind the validated stages to its
+   `neural-seam.h` per-eye evaluator contexts (`NEURAL-SEAM.md` conventions)
+   once stage 1 settles the pipeline shape.
 
 Either path ends in native Linux neural rendering; the difference is whether
 the pipeline runs NVIDIA's weights or a model we own.
