@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-63 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-64 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Forty per-slot contracts are covered:
+cut point (LADDER.md). Forty-one per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -771,6 +771,44 @@ cut point (LADDER.md). Forty per-slot contracts are covered:
   record-walk publication is classified by consumption alone: w7 is the
   chain handoff (slot 64 binds its record as sync-in — the predicted 256 B
   sibling divergence).
+- slot 64 `cc_vit_1d_ffn_contract_chained_fp8` (s63 -> s64): the second
+  ViT block's second slot — block32's `ffn_contract` half of the five-slot
+  cycle (`ffn_expand` -> `ffn_contract` -> `qkv` -> `attention` ->
+  `projection`) — sharing slot 59's nine-word contraction shape exactly
+  (psize 72, the same (12, 16) constant at w8). Measured from the s64
+  capture: word classes (POOL, POOL, POOL, WEIGHTS, POOL, POOL, POOL,
+  POOL, CONSTANT) — every word bound, no reserved zero word. w0 input
+  (35,159,040 — address-equal to slot 63's w2, the fp8 expansion read
+  back as the contraction's input), w1 residual (54,230,016 — slot 62's
+  w2, the projection output from two slots earlier bound again as the
+  skip connection; slot 59 bound slot 57's head tensor the same way), w2
+  output (54,426,624 — 196,608 bytes, the 384x512 fp8 contraction closing
+  exactly at slot 65's w1 binding at 54,623,232; slot 67's projection
+  re-reads the region as its w1 residual), w3 weights
+  (`block32.layer1.layer`, 4,196,352 B at heap offset 39,811,584 — the
+  layout walk's next record start after `block32.layer0.layer`, its
+  4,194,320-byte payload at 35,616,768 plus 496 bytes of padding to the
+  512 boundary), w5 second output (49,953,792 — 393,216 bytes, closing
+  exactly at 50,347,008 where slot 69's w5 chains one block-stride
+  later), w4 the third output (69,632 — 64 bytes, the record walk's
+  stride continuing: 69,120 -> 69,632), w6 sync in (69,120 — slot 63's
+  record) and w7 the sync record (70,144 — 64 bytes, the next stride;
+  slot 65 binds the record at the `qkv` block's w7 sync-in) plus w8 the
+  (12, 16) constant 0x000000100000000C recurring. The write-set is four
+  segments per frame (names-s63-s64.txt: w5 with
+  391,734/391,648/391,716 changed bytes inside the 393,216-byte binding
+  and w2 with 196,523/196,553/196,503 inside the 196,608-byte binding —
+  both changed boxes covering their whole bindings exactly with static
+  interior bytes (1,482/1,568/1,500 and 85/55/105), w4 and w7 64 B
+  changed each, zero unattributed). The `chained` variant is live (the
+  fp8 variant is created but never launched — pinned sibling). The
+  record-walk re-classification holds a fourth time: w7 is the chain
+  handoff (the plain variant leaves it at the input state — the predicted
+  64 B sibling divergence), while w4 is variant-independent output data
+  (both variants write it byte-identically — the fourth sibling-shared
+  publication beyond the main tensors; no launch in the 156-launch
+  sequence binds w4's record, scanned from the same retained traces the
+  replay reads).
 
 Inputs come from retained evidence only:
 
@@ -862,7 +900,10 @@ Inputs come from retained evidence only:
   `block32.layer0.layer` (4,194,320 B), `block32.layer1.layer` (4,196,352
   B), `block32.layer2.layer` (3,145,856 B), `block32.layer3.layer` (2 B)
   and `block32.layer4.layer` (1,050,624 B) — block31's shape repeating
-  exactly)
+  exactly), slot 64 binds `block32.layer1.layer` (the record immediately
+  after `block32.layer0.layer`, at heap offset 39,811,584 —
+  `block32.layer0.layer`'s 4,194,320-byte payload at 35,616,768 rounded
+  up across 496 bytes of padding to the 512 boundary)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -875,7 +916,7 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61 and 63, 64 B at slots 59 and 62, 128 B at
+42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61 and 63, 64 B at slots 59, 62 and 64, 128 B at
 slot 60 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
@@ -970,14 +1011,14 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes; slots 59 and 62's second and third outputs at
+# tensor at w3, 98,304 bytes; slots 59, 62 and 64's second and third outputs at
 # w5, 393,216 bytes, and w4, 64 bytes; slot 60's q/k/v siblings at w2 and w3,
 # 196,608 bytes each, its w6 region at 1,179,648 bytes and its w5
 # publication at 128 bytes; slot 61's attention block writes no extra
 # output — its only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58 and 63's 786,432-byte expansions, slots 59 and 62's
+# 196,608-byte tensors, slots 58 and 63's 786,432-byte expansions, slots 59, 62 and 64's
 # contractions/projections, slot 60's q/k/v and slot 61's attention output
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
@@ -988,8 +1029,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -2048,6 +2089,62 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, output_bytes=786432,
         sync_word=7, sync_bytes=256,
         input_label=62, reference_label=63),
+    64: dict(
+        slot=64,
+        psize=72,
+        name_live="cc_vit_1d_ffn_contract_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_contract_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # The second ViT block's second slot — block32's `ffn_contract`
+        # half of the five-slot cycle (`ffn_expand` -> `ffn_contract` ->
+        # `qkv` -> `attention` -> `projection`) — sharing slot 59's
+        # nine-word contraction shape exactly (psize 72, the same (12, 16)
+        # constant at w8). Measured from the s64 capture: word classes
+        # (POOL, POOL, POOL, WEIGHTS, POOL, POOL, POOL, POOL, CONSTANT) —
+        # every word bound, no reserved zero word. w0 input (35,159,040 —
+        # address-equal to slot 63's w2, the fp8 expansion read back as the
+        # contraction's input), w1 residual (54,230,016 — slot 62's w2,
+        # the projection output from two slots earlier bound again as the
+        # skip connection; slot 59 bound slot 57's head tensor the same
+        # way), w2 output (54,426,624 — 196,608 bytes, the 384x512 fp8
+        # contraction closing exactly at slot 65's w1 binding at
+        # 54,623,232; slot 67's projection re-reads the region as its w1
+        # residual), w3 weights (`block32.layer1.layer`, 4,196,352 B at
+        # heap offset 39,811,584 — the layout walk's next record start
+        # after `block32.layer0.layer`, its 4,194,320-byte payload at
+        # 35,616,768 plus 496 bytes of padding to the 512 boundary), w5
+        # second output (49,953,792 — 393,216 bytes, closing exactly at
+        # 50,347,008 where slot 69's w5 chains one block-stride later), w4
+        # the third output (69,632 — 64 bytes, the record walk's stride
+        # continuing: 69,120 -> 69,632), w6 sync in (69,120 — slot 63's
+        # record) and w7 the sync record (70,144 — 64 bytes, the next
+        # stride; slot 65 binds the record at the `qkv` block's w7
+        # sync-in) plus w8 the (12, 16) constant 0x000000100000000C
+        # recurring. The write-set is four segments per frame
+        # (names-s63-s64.txt: w5 with 391,734/391,648/391,716 changed
+        # bytes inside the 393,216-byte binding and w2 with
+        # 196,523/196,553/196,503 inside the 196,608-byte binding — both
+        # changed boxes covering their whole bindings exactly with static
+        # interior bytes (1,482/1,568/1,500 and 85/55/105), w4 and w7 64 B
+        # changed each, zero unattributed). The `chained` variant is live
+        # (the fp8 variant is created but never launched — pinned
+        # sibling). The record-walk re-classification holds a fourth time:
+        # w7 is the chain handoff (the plain variant leaves it at the
+        # input state — the predicted 64 B sibling divergence), while w4
+        # is variant-independent output data (both variants write it
+        # byte-identically — the fourth sibling-shared publication beyond
+        # the main tensors; no launch in the 156-launch sequence binds
+        # w4's record, scanned from the same retained traces the replay
+        # reads).
+        container=5,
+        record_name="block32.layer1.layer", record_bytes=4196352,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 393216), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=63, reference_label=64),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -3299,7 +3396,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..63}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..64}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
