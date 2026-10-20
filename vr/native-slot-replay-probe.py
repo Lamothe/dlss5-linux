@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-60 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-61 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Thirty-seven per-slot contracts are covered:
+cut point (LADDER.md). Thirty-eight per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -676,6 +676,34 @@ cut point (LADDER.md). Thirty-seven per-slot contracts are covered:
   sibling divergence), while w5 is bound by no other launch in the
   156-launch sequence (scanned from the same retained traces the replay
   reads) and is variant-independent output data.
+- slot 61 `cc_vit_1d_attention_chained_fp8` (s60 -> s61): the ViT block's
+  fourth slot — the `attention` half of the five-slot cycle — and the
+  first eight-word block (psize 64). Measured from the s61 capture: word
+  classes (POOL, POOL, POOL, POOL, WEIGHTS, POOL, POOL, CONSTANT).
+  w0/w1/w2 the q/k/v triplet (53,443,584 / 53,836,800 / 53,640,192 —
+  address-equal to slot 60's w1/w2/w3), w3 output (54,033,408 — 196,608
+  bytes, closing exactly at slot 62's w2 binding at 54,230,016), w4
+  weights (`block31.layer3.layer`, a 2-byte payload at heap offset
+  34,565,632 — the layout walk's next record start after
+  `block31.layer2.layer`, whose end at 34,565,248 rounds up at the 512
+  boundary — a placeholder record and a dead binding: the kernel's output
+  is invariant under whole-record complementation as well as the wrong
+  control's rotation, measured in both variants, so the wrong control
+  re-bases onto the query tensor at w0 — `wrong_word`, the probe's first
+  control re-targeting), w5 sync in (67,072 — slot 60's record), w6 the
+  sync record (67,584 — 256 bytes, the 512-byte stride continuing:
+  67,072 -> 67,584; slot 62 binds its record at the projection block's w6
+  sync-in), w7 the (12, 16) constant 0x000000100000000C recurring. The
+  write-set is two segments per frame (names-s60-s61.txt: w3 with
+  196,535/196,524/196,496 changed bytes inside the 196,608-byte binding —
+  the changed box covering the whole binding, 73/84/112 interior bytes
+  static in the three frames — and w6 256/256/256, the whole publication,
+  zero unattributed). The `chained` variant is live (the fp8 variant is
+  created but never launched — pinned sibling). Slot 61 is the first
+  contract with a single record-walk publication: the family rule
+  classifies it by consumption alone (slot 62 binds w6's record as its
+  sync-in, so w6 is the chain handoff — the predicted 256 B sibling
+  divergence), with no sibling-shared publication at this block.
 
 Inputs come from retained evidence only:
 
@@ -751,7 +779,12 @@ Inputs come from retained evidence only:
   `block31.layer0.layer`, at heap offset 27,223,040), slot 60 binds
   `block31.layer2.layer` (the record immediately after
   `block31.layer1.layer`, at heap offset 31,419,392 — closing exactly at
-  its end, no padding intervenes)
+  its end, no padding intervenes), slot 61 binds `block31.layer3.layer`
+  (the record immediately after `block31.layer2.layer`, at heap offset
+  34,565,632 — `block31.layer2.layer`'s end at 34,565,248 rounded up at
+  the 512 boundary; the record carries a 2-byte payload, the ViT attention
+  blocks' layer3 placeholder shape — a dead binding, see the contract-61
+  entry)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -764,7 +797,7 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46, 54 and 58, 64 B at slot 59, 128 B at
+42 and 50, 256 B at slots 30, 38, 46, 54, 58 and 61, 64 B at slot 59, 128 B at
 slot 60 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
@@ -772,8 +805,16 @@ the first contract to need it). Single-variant contracts (slot 57: the
 kernel family has no fp8 sibling at all) drop the sibling replay; the
 vendor launches the only variant and the whole-pool compare alone carries
 the claim. Controls: skip (no launch), wrong (weights rotated
-inwards), tail (bytes beyond the record replaced by a different pattern —
-bounding weight reads to the record). Weights-less contracts (slot 57: a
+inwards — one byte for records no longer than the rotation extent; the full
+rotation would be a no-op, and a rotation that leaves the record unchanged is
+rejected outright), tail
+(bytes beyond the record replaced by a different pattern —
+bounding weight reads to the record). A contract whose weights record is a
+dead binding re-bases the wrong rotation onto the input tensor the kernel
+functionally reads (pinned per contract as `wrong_word`): slot 61's
+weight-free attention family is invariant under whole-record complementation
+(measured in both variants at the captured conditions), so its wrong control
+rotates the query tensor at w0 and the record stays at its live content. Weights-less contracts (slot 57: a
 pure data-movement kernel with no weights word in the block) re-base the
 same three controls onto the input tensor: wrong rotates the input tensor
 inwards (the output must change — the repack derives from its input), and
@@ -854,9 +895,12 @@ CLS_ZERO = "zero"
 # tensor at w3, 98,304 bytes; slot 59's second and third outputs at w5,
 # 393,216 bytes, and w4, 64 bytes; slot 60's q/k/v siblings at w2 and w3,
 # 196,608 bytes each, its w6 region at 1,179,648 bytes and its w5
-# publication at 128 bytes); the primary binding's own extent is
+# publication at 128 bytes; slot 61's attention block writes no extra
+# output — its only other written region is the sync record); the primary
+# binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slot 59's contraction and slot 60's q/k/v
+# 196,608-byte tensors, slot 59's contraction, slot 60's q/k/v and slot
+# 61's attention output
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
 # and the read-bounding claim's subject). A contract with no weights word
@@ -866,8 +910,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -1768,6 +1812,63 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((2, 196608), (3, 196608), (6, 1179648), (5, 128)),
         sync_word=8, sync_bytes=128,
         input_label=59, reference_label=60),
+    61: dict(
+        slot=61,
+        psize=64,
+        name_live="cc_vit_1d_attention_chained_fp8",
+        name_sibling="cc_vit_1d_attention_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # The ViT block's fourth slot — the `attention` half of the five-slot
+        # cycle (`ffn_expand` -> `ffn_contract` -> `qkv` -> `attention` ->
+        # `projection`) and the first eight-word block (psize 64 — slot 55
+        # binds ten words, slot 56 five, slot 57 three, slots 58 and 59
+        # nine, slot 60 ten). Measured from the s61 capture: word classes (POOL, POOL,
+        # POOL, POOL, WEIGHTS, POOL, POOL, CONSTANT). w0/w1/w2 the q/k/v
+        # triplet (53,443,584 / 53,836,800 / 53,640,192 — address-equal to
+        # slot 60's w1/w2/w3, the three 196,608-byte tensors consumed as the
+        # attention's query, key and value), w3 output (54,033,408 — 196,608
+        # bytes, the attention output closing exactly at slot 62's w2 binding
+        # at 54,230,016), w4 weights (`block31.layer3.layer`, a 2-byte
+        # payload at heap offset 34,565,632 — the layout walk's next record
+        # start after `block31.layer2.layer`, whose end at 34,565,248 is
+        # rounded up at the 512 boundary — and by far the smallest record in
+        # the walk: the ViT attention blocks' layer3 records all measure a
+        # 2-byte payload (block32's `f3 b3`, block33's `49 03`), unlike the
+        # transformer interval's 263,168-byte layer3 records) — a dead
+        # binding: the kernel's output is invariant under whole-record
+        # complementation as well as under the wrong control's rotation,
+        # measured in both variants (the retained wrong run and the
+        # complementation experiment reproduce the execute pools
+        # byte-for-byte), so the weight-free attention family reads nothing
+        # from its placeholder record and the wrong control re-bases onto the
+        # input tensor the kernel functionally reads (the query at w0) —
+        # the probe's first control re-targeting, pinned by `wrong_word`),
+        # w5 sync in (67,072 — slot 60's record, the chained handoff
+        # continuing), w6 the sync record (67,584 — 256
+        # bytes, the 512-byte stride continuing: 67,072 -> 67,584; slot 62
+        # binds this record at the projection block's w6 sync-in), w7 the
+        # (12, 16) constant 0x000000100000000C recurring. The write-set is
+        # two segments per frame (names-s60-s61.txt: w3 with
+        # 196,535/196,524/196,496 changed bytes inside the 196,608-byte
+        # binding — the changed box covering the whole binding, 73/84/112
+        # interior bytes static in the three frames — and w6 256/256/256,
+        # the whole publication, zero unattributed). The `chained` variant
+        # is live (the fp8 variant is created but never launched — pinned
+        # sibling). Slot 61 is the first contract with a single record-walk
+        # publication, and the family rule classifies it by consumption
+        # alone: slot 62 binds w6's record as its sync-in, so w6 is the
+        # chain handoff and the predicted sibling divergence is the whole
+        # 256-byte publication (the plain variant leaves it at the input
+        # state) — there is no sibling-shared publication here.
+        container=5,
+        record_name="block31.layer3.layer", record_bytes=2,
+        constant_values={7: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=3, output_bytes=196608,
+        wrong_word=0, wrong_bytes=196608,
+        sync_word=6, sync_bytes=256,
+        input_label=60, reference_label=61),
 }
 
 DLL = HERE.parent / "model" / "nvngx_dlssnr.dll"
@@ -2173,6 +2274,30 @@ def boundary_word7_offset() -> int:
 # GPU replay
 # ---------------------------------------------------------------------------
 
+def rotation_extent(size: int) -> int:
+    """The wrong control's inwards-rotation extent for a payload of `size`.
+
+    The full ROTATE_BYTES rotation needs headroom (the weights-less input
+    binding pins input_bytes > ROTATE_BYTES for the same reason); payloads no
+    longer than the rotation — the ViT attention blocks' two-byte placeholder
+    records — rotate by one byte instead, since the full rotation would be a
+    no-op.
+    """
+    return ROTATE_BYTES if size > ROTATE_BYTES else 1
+
+
+def wrong_rotation(payload: bytes) -> bytes:
+    """Wrong-control corruption: rotate the payload inwards.
+
+    A rotation that leaves the content unchanged is rejected outright — an
+    inert corruption would make the wrong control's verdict meaningless.
+    """
+    rotate = rotation_extent(len(payload))
+    corrupted = payload[rotate:] + payload[:rotate]
+    base.require(corrupted != payload, "wrong control: rotation is a no-op")
+    return corrupted
+
+
 def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, Any],
               entry_id: str, frame: int, tag: str, mode: str,
               guard_words: list[int], evidence: Path) -> dict[str, Any]:
@@ -2189,7 +2314,20 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
     if weighted:
         weights_content = record + tail
         if mode == "wrong":
-            weights_content = (record[ROTATE_BYTES:] + record[:ROTATE_BYTES]) + tail
+            if contract.get("wrong_word") is None:
+                weights_content = wrong_rotation(record) + tail
+            else:
+                # Dead-record contracts (slot 61: the weight-free attention
+                # family's placeholder record is invariant under
+                # complementation — the retained runs measure it) re-base the
+                # wrong control onto the input tensor the kernel functionally
+                # reads; the weights record stays at its live content.
+                wrong_start = setup_data["pool_offsets"][contract["wrong_word"]]
+                wrong_bytes = contract["wrong_bytes"]
+                staged = bytearray(input_pool)
+                staged[wrong_start:wrong_start + wrong_bytes] = wrong_rotation(
+                    bytes(staged[wrong_start:wrong_start + wrong_bytes]))
+                pool_content = bytes(staged)
     else:
         # Weights-less controls (module docstring, Controls): the tail
         # pattern goes into the pool at the bytes immediately beyond the
@@ -2211,7 +2349,7 @@ def run_entry(driver: Any, functions: dict[str, ct.c_void_p], plan: dict[str, An
             if mode == "wrong":
                 tensor = staged[input_start:input_start + input_bytes]
                 staged[input_start:input_start + input_bytes] = \
-                    tensor[ROTATE_BYTES:] + tensor[:ROTATE_BYTES]
+                    wrong_rotation(tensor)
         pool_content = bytes(staged)
 
     launches = readbacks = 0
@@ -2473,9 +2611,14 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
             f"s{contract['reference_label']} (skip)",
             f"non-match against s{contract['reference_label']} and pool changed "
             f"from input (wrong: "
-            + (f"weights rotated inwards {ROTATE_BYTES} bytes)"
+            + (f"input tensor at w{contract['wrong_word']} rotated inwards "
+               f"{rotation_extent(contract['wrong_bytes'])} bytes)"
+               if weighted and contract.get("wrong_word") is not None else
+               f"weights rotated inwards "
+               f"{rotation_extent(contract['record_bytes'])} bytes)"
                if weighted else
-               f"input tensor rotated inwards {ROTATE_BYTES} bytes)"),
+               f"input tensor rotated inwards "
+               f"{rotation_extent(contract['input_bytes'])} bytes)"),
         ],
         findings_recorded=[
             f"change extent of the pool against the s{contract['input_label']} "
@@ -2503,6 +2646,12 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
               f"no sync word in the parameter block (the repack family is "
               f"outside the sync chain): the compare is empty and the "
               f"whole-pool verdict carries the claim")),
+            *([f"the weights record is a dead binding: the kernel's output is "
+               f"invariant under whole-record complementation (measured in "
+               f"both variants at the captured conditions), so the wrong "
+               f"control rotates the input tensor at w{contract['wrong_word']} "
+               f"instead"]
+              if weighted and contract.get("wrong_word") is not None else []),
         ],
         setup={key: value for key, value in plan["setup"].items()
                if key not in ("record", "image", "capture")},
@@ -2528,7 +2677,7 @@ SYNC_FIXTURE = 48640   # fixture pool offset for the sync record
 FIXTURE_SYNC_BYTES = 96   # fixture sync record extent
 FIXTURE_LIVE = "fixture-live-kernel"
 FIXTURE_SIBLING = "fixture-sibling-kernel"
-SHAPE_CHECKS = 11   # contract_shape requirements per contract
+SHAPE_CHECKS = 12   # contract_shape requirements per contract
 
 
 def contract_shape(slot: int, contract: dict[str, Any]) -> None:
@@ -2577,6 +2726,16 @@ def contract_shape(slot: int, contract: dict[str, Any]) -> None:
                   contract["input_bytes"] > ROTATE_BYTES) or
                  (weighted and input_word is None),
                  f"self-test: contract {slot} input binding")
+    # The wrong control's rotation target: the weights record by default; a
+    # contract whose record is a dead binding (slot 61) pins the input tensor
+    # the kernel functionally reads instead.
+    wrong_word = contract.get("wrong_word")
+    base.require((wrong_word is None) == (contract.get("wrong_bytes") is None) and
+                 (wrong_word is None or
+                  (weighted and
+                   contract["word_classes"][wrong_word] == CLS_POOL and
+                   contract["wrong_bytes"] > ROTATE_BYTES)),
+                 f"self-test: contract {slot} wrong target")
 
 
 def make_entry(**overrides: Any) -> dict[str, Any]:
@@ -2812,6 +2971,31 @@ def self_test() -> dict[str, Any]:
     else:
         raise ValueError("fixture metadata form corruption accepted")
 
+    # Wrong-control rotation known answers: the full rotation for payloads
+    # with headroom, one byte at and below the ROTATE_BYTES boundary (slot
+    # 61's two-byte scale record among them), plus the inert-corruption
+    # control.
+    long_payload = bytes(range(256)) * 8 + b"\xfb\x2e"   # 2,050 bytes
+    base.require(wrong_rotation(long_payload) ==
+                 long_payload[ROTATE_BYTES:] + long_payload[:ROTATE_BYTES],
+                 "self-test: rotation extent headroom")
+    known_answers += 1
+    boundary = bytes(range(256)) * 4   # exactly ROTATE_BYTES bytes
+    base.require(wrong_rotation(boundary) == boundary[1:] + boundary[:1],
+                 "self-test: rotation extent boundary")
+    known_answers += 1
+    base.require(wrong_rotation(b"\xfb\x2e") == b"\x2e\xfb",
+                 "self-test: rotation extent two-byte")
+    known_answers += 1
+    try:
+        wrong_rotation(b"\xaa\xaa")
+    except ValueError as error:
+        base.require(str(error) == "wrong control: rotation is a no-op",
+                     "self-test: rotation no-op wrong message")
+        controls += 1
+    else:
+        raise ValueError("fixture rotation no-op accepted")
+
     # Contract-table shape: the class table covers the parameter block
     # exactly, the region words are pool-resident, weights/sibling/sync
     # presence is internally consistent and the weights-less input binding
@@ -2852,7 +3036,19 @@ def self_test() -> dict[str, Any]:
              "self-test: contract 55 sibling pair"),
             ("input binding weighted", 55,
              lambda c: c.update(input_word=0),
-             "self-test: contract 55 input binding")):
+             "self-test: contract 55 input binding"),
+            ("wrong target pair", 61,
+             lambda c: c.update(wrong_bytes=None),
+             "self-test: contract 61 wrong target"),
+            ("wrong target class", 61,
+             lambda c: c.update(wrong_word=7),
+             "self-test: contract 61 wrong target"),
+            ("wrong target extent", 61,
+             lambda c: c.update(wrong_bytes=1),
+             "self-test: contract 61 wrong target"),
+            ("wrong target weights-less", 57,
+             lambda c: c.update(wrong_word=0, wrong_bytes=196608),
+             "self-test: contract 57 wrong target")):
         fixture = copy.deepcopy(CONTRACTS[template])
         mutate(fixture)
         try:
@@ -2869,6 +3065,7 @@ def self_test() -> dict[str, Any]:
                 layout_known_answers=4, following_known_answers=4,
                 metadata_known_answers=1,
                 grid_known_answers=1,
+                rotation_known_answers=3,
                 contract_known_answers=contract_checks,
                 corruption_controls=controls,
                 known_answers=known_answers,
@@ -2923,7 +3120,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..60}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..61}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
