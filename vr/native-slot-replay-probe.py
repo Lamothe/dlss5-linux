@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-73 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-74 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty per-slot contracts are covered:
+cut point (LADDER.md). Fifty-one per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1111,6 +1111,27 @@ cut point (LADDER.md). Fifty per-slot contracts are covered:
   the single-publication rule resolves w7 by consumption alone as the chain
   handoff (slot 74 binds that record at w6, so the predicted sibling
   divergence is exactly 256 B).
+- slot 74 `cc_vit_1d_ffn_contract_chained_fp8` (s73 -> s74): block34's
+  contraction, the second launch in its five-slot cycle, reusing slot 64's
+  nine-word map (psize 72, grid (16,1,4), block (32,4,1), w8 the (12,16)
+  constant). The s74 manifest and sidecar agree on every parameter word
+  across three frames: w0 expansion input (36,731,904 — slot 73's output),
+  w1 residual (56,589,312 — slot 72's projection output, bound again as the
+  cycle's residual), w2 contraction output (56,785,920 — 196,608 B, closing
+  at 56,982,528), w3 weights (the DLL-record identity is pinned by the
+  runtime layout walk and the slot's heap offset), w4 third output
+  (77,824 — 64 B), w5 second output (51,133,440 — 393,216 B, closing at
+  51,526,656), w6 sync-in (77,312 — slot 73's 256-B publication), w7
+  publication (78,336 — 64 B, next in the 512-byte stride; downstream
+  consumption is left for slot 75 to test), and w8 the
+  (12,16) constant. The measured write-set has four segments per frame,
+  zero unattributed: w5 391,689/391,742/391,717 changed bytes, w2
+  196,552/196,550/196,552, and 64 B each at w4 and w7; frame totals
+  588,369/588,420/588,397. The wrong control rotates the live weight record
+  inwards 1,024 B; tail poisoning after the record reproduces the live execute pool.
+  The chained variant is live and its fp8 sibling is created but never
+  launched; the sibling matches all three outputs, including the shared w4 publication,
+  while leaving the 64-byte w7 handoff at input state.
 
 Inputs come from retained evidence only:
 
@@ -2965,6 +2986,37 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, output_bytes=786432,
         sync_word=7, sync_bytes=256,
         input_label=72, reference_label=73),
+    74: dict(
+        slot=74,
+        psize=72,
+        name_live="cc_vit_1d_ffn_contract_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_contract_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # block34's second slot, reusing slot 64's contraction map exactly.
+        # Measured at the s74 cut: w0 input 36,731,904 (slot 73's output),
+        # w1 residual 56,589,312 (slot 72's projection output), w2 primary
+        # output 56,785,920 (196,608 B, closing at 56,982,528), w3 live
+        # weights `block34.layer1.layer` (4,196,352 B at heap offset
+        # 64,988,672 — the record after block34.layer0.layer, whose
+        # 4,194,320-byte payload ends at 64,988,176 and rounds up 496 B to
+        # the 512-byte boundary), w4 third output 77,824 (64 B), w5 second
+        # output 51,133,440 (393,216 B, closing at 51,526,656), w6 sync-in
+        # 77,312 (slot 73's 256-byte w7 publication), w7 the 64-byte sync
+        # record at 78,336 (slot 75 consumes it at qkv w7), and w8 the
+        # (12,16) constant 0x000000100000000C. Four segments per frame in
+        # names-s73-s74.txt: w5 with 391,689/391,742/391,717 changed bytes,
+        # w2 with 196,552/196,550/196,552, and 64 B each at w4/w7; totals
+        # 588,369/588,420/588,397, zero unattributed. The fp8 sibling matches
+        # both primary and second/third outputs but leaves w7 at input state.
+        container=5,
+        record_name="block34.layer1.layer", record_bytes=4196352,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 393216), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=73, reference_label=74),
 }
 
 
@@ -4217,7 +4269,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..73}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..74}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
