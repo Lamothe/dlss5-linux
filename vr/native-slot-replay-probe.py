@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-74 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-75 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-one per-slot contracts are covered:
+cut point (LADDER.md). Fifty-two per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1133,6 +1133,14 @@ cut point (LADDER.md). Fifty-one per-slot contracts are covered:
   launched; the sibling matches all three outputs, including the shared w4 publication,
   while leaving the 64-byte w7 handoff at input state.
 
+- slot 75 `cc_vit_1d_qkv_chained_fp8` (s74 -> s75): block34 qkv,
+  sharing slot 70's ten-word map. Reads slot 74's contraction at w0
+  and its 64-byte w7 handoff, binds live block34.layer2.layer weights
+  (3,145,856 B at heap 69,185,024), and writes three 196,608-byte
+  q/k/v tensors, a 1,179,648-byte fourth region, 128-byte output data
+  at w5 and a 128-byte sync handoff at w8. Six measured segments total
+  1,760,497/1,759,938/1,760,032 changed bytes, zero unattributed.
+
 Inputs come from retained evidence only:
 
 - the launch specification (grid, block, shared memory, parameter block) is
@@ -1314,6 +1322,7 @@ This stage uses stored learned weight bytes through extracted records
 (bounded model-weight computation, NATIVE-FP8.md precedent) and is not a
 neural-rendered image. Evidence retains digests and bounded windows only;
 reuse/publication rights remain unresolved.
+
 """
 from __future__ import annotations
 
@@ -3017,6 +3026,40 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 393216), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=73, reference_label=74),
+    75: dict(
+        slot=75,
+        psize=80,
+        name_live="cc_vit_1d_qkv_chained_fp8",
+        name_sibling="cc_vit_1d_qkv_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # block34's qkv launch, sharing slot 70's ten-word map and
+        # grid (32,1,2), block (32,4,1). Manifest, sidecar and both
+        # traces pin every parameter word across all three frames.
+        # w0 input = slot 74's w2 at 56,785,920; w1/w2/w3 the
+        # 196,608-byte q/k/v triplet at 56,982,528 / 57,179,136 /
+        # 57,375,744, closing at 57,572,352 (slot 76's output base).
+        # w4 binds block34.layer2.layer: 3,145,856 B at heap offset
+        # 69,185,024, exactly after layer1's 4,196,352-byte payload.
+        # w6 writes 1,179,648 B at 22,969,344, immediately after
+        # slot 70's corresponding region. w5 publishes 128 B at 78,848;
+        # no other launch binds that address, so it is output data.
+        # w7 consumes slot 74's 64-byte w7 record at 78,336; w8
+        # publishes 128 B at 79,360, consumed by slot 76 as w5.
+        # w9 is the recurring (12,16) constant. Six measured segments,
+        # zero unattributed: w6 1,170,970/1,170,459/1,170,492;
+        # w1 196,556/196,546/196,556; w2 196,207/196,142/196,173;
+        # w3 196,508/196,535/196,555; w5/w8 128 B each. Totals
+        # 1,760,497/1,759,938/1,760,032. The sibling is never vendor-
+        # launched; its predicted divergence is the 128-byte w8 handoff.
+        container=5,
+        record_name="block34.layer2.layer", record_bytes=3145856,
+        constant_values={9: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=1, output_bytes=196608,
+        extra_outputs=((2, 196608), (3, 196608), (6, 1179648), (5, 128)),
+        sync_word=8, sync_bytes=128,
+        input_label=74, reference_label=75),
 }
 
 
@@ -4269,7 +4312,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..74}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..75}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
