@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-72 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-73 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Forty-nine per-slot contracts are covered:
+cut point (LADDER.md). Fifty per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1074,7 +1074,7 @@ cut point (LADDER.md). Forty-nine per-slot contracts are covered:
   `block34.layer0.layer`'s start at 60,793,856) — live like slots 62/67's
   projection records, the wrong control rotating it normally with no
   re-targeting, w5 second output (50,740,224 — 393,216 bytes, closing at
-  51,133,440 where slot 74's w5 binds the region's next extent), w4 third
+  51,133,440 where the region's next extent begins), w4 third
   output (76,288 — 64 bytes, the record walk's 512-byte stride
   continuing: 75,776 -> 76,288), w6 sync in (75,776 — slot 71's
   record), w7 the sync record (76,800 — 64 bytes, the next stride; slot
@@ -1090,6 +1090,27 @@ cut point (LADDER.md). Forty-nine per-slot contracts are covered:
   is variant-independent output data shared by both kernel variants, bound
   by no other launch in the 156-launch sequence — the re-classification's
   ninth confirmation.
+- slot 73 `cc_vit_1d_ffn_expand_chained_fp8` (s72 -> s73): block34's
+  `ffn_expand`, opening its five-slot cycle and the expansion family's third
+  `chained` launch (after slots 63 and 68; slot 58's `publish` opened
+  block31's cycle). It shares slot 63's nine-word expansion shape (psize 72,
+  grid (64,1,1), block (32,4,1), w8 the (12, 16) constant). The s73
+  manifest and sidecar agree on every parameter word across three frames:
+  w0 input (56,589,312 — slot 72's projection output), w2 output
+  (36,731,904 — 786,432 bytes, the 384x2048 fp8 expansion, closing at
+  37,518,336), w3 weights (`block34.layer0.layer`, 4,194,320 B at heap
+  offset 60,793,856 — the record begins exactly where block33's five-record
+  set closes), w6 sync-in (76,800 — slot 72's w7 record), and w7 the single
+  256-byte publication (77,312 — the 512-byte stride continuing:
+  76,800 -> 77,312; slot 74 binds it as w6 sync-in); w1, w4 and w5 are
+  reserved zero. The write-set is two segments per frame
+  (names-s72-s73.txt: w2 with 779,475/778,866/778,660 changed bytes inside
+  the 786,432-byte binding, the changed box covering the whole binding,
+  plus w7 256/256/256, the whole publication, zero unattributed). `chained`
+  is live (the fp8 sibling is created but never launched — pinned sibling);
+  the single-publication rule resolves w7 by consumption alone as the chain
+  handoff (slot 74 binds that record at w6, so the predicted sibling
+  divergence is exactly 256 B).
 
 Inputs come from retained evidence only:
 
@@ -1221,7 +1242,10 @@ Inputs come from retained evidence only:
   `block33.layer3.layer`, whose 2-byte payload at 59,742,720 rounds up
   across 510 bytes of padding to the 512 boundary, closing block33's
   five-record set exactly at `block34.layer0.layer`'s start at
-  60,793,856)
+  60,793,856), and slot 73 binds `block34.layer0.layer` (the first record
+  of block34, at heap offset 60,793,856 — exactly after block33's closing
+  `block33.layer4.layer` payload; its own 4,194,320-byte payload is followed
+  by 496 bytes of padding before `block34.layer1.layer`)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -1234,7 +1258,7 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68 and 71, 64 B at slots 59, 62, 64, 67, 69 and 72, 128 B at
+42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71 and 73, 64 B at slots 59, 62, 64, 67, 69 and 72, 128 B at
 slots 60, 65 and 70 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
@@ -2869,7 +2893,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         # padding to the 512 boundary, closing block33's five-record set
         # exactly at `block34.layer0.layer`'s start at 60,793,856), w5
         # second output (50,740,224 — 393,216 bytes, closing at
-        # 51,133,440 where slot 74's w5 binds the region's next extent),
+        # 51,133,440 where the region's next extent begins),
         # w4 third output (76,288 — 64 bytes, the record walk's 512-byte
         # stride continuing: 75,776 -> 76,288), w6 sync in (75,776 — slot
         # 71's record), w7 the sync record (76,800 — 64 bytes, the next
@@ -2899,6 +2923,48 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 393216), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=71, reference_label=72),
+    73: dict(
+        slot=73,
+        psize=72,
+        name_live="cc_vit_1d_ffn_expand_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_expand_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # block34's opening `ffn_expand` — the expansion family's third
+        # `chained` launch (slots 63/68/73/78/83/88/93; `publish` opened
+        # block31's cycle at slot 58). Shares slot 63's nine-word expansion
+        # shape (psize 72, grid (64,1,1), block (32,4,1)). Measured from the
+        # s73 capture: word classes (POOL, ZERO, POOL, WEIGHTS, ZERO, ZERO,
+        # POOL, POOL, CONSTANT). w0 input (56,589,312 — address-equal to
+        # slot 72's w2, the projection output read back as the next block's
+        # input), w2 output (36,731,904 — 786,432 bytes, the 384x2048 fp8
+        # expansion, closing at 37,518,336 where slot 78's expansion binds
+        # the region's next extent), w3 weights (`block34.layer0.layer`,
+        # 4,194,320 B at heap offset 60,793,856 — the first record of
+        # block34, exactly where block33's five-record set closes; the
+        # record's own 4,194,320-byte payload is followed by 496 bytes of
+        # padding before `block34.layer1.layer`), w6 sync-in (76,800 — slot
+        # 72's w7 record), w7 the single 256-byte publication (77,312 — the
+        # 512-byte stride continuing: 76,800 -> 77,312; slot 74 binds its
+        # record as w6 sync-in) and w8 the (12, 16) constant
+        # 0x000000100000000C; w1, w4 and w5 are reserved zero. The write-set
+        # is two segments per frame (names-s72-s73.txt: w2 with
+        # 779,475/778,866/778,660 changed bytes inside the 786,432-byte
+        # binding, the changed box covering the whole binding, plus w7
+        # 256/256/256, the whole publication, zero unattributed). Three
+        # variants exist in the cubin (`chained`, `publish`, `fp8`): `chained`
+        # is live at slots 63/68/73/78/83/88/93 (`publish` ran once at slot
+        # 58), while `fp8` is created but never launched (pinned sibling).
+        # The single-publication rule classifies w7 by consumption alone:
+        # slot 74 binds it as w6 sync-in, so the predicted sibling
+        # divergence is exactly 256 B.
+        container=5,
+        record_name="block34.layer0.layer", record_bytes=4194320,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_ZERO, CLS_POOL, CLS_WEIGHTS, CLS_ZERO,
+                      CLS_ZERO, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=786432,
+        sync_word=7, sync_bytes=256,
+        input_label=72, reference_label=73),
 }
 
 
@@ -4151,7 +4217,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..72}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..73}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
