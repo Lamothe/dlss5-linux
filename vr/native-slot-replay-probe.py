@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-77 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-78 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-four per-slot contracts are covered:
+cut point (LADDER.md). Fifty-five per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -3134,6 +3134,30 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 3932160), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=76, reference_label=77),
+    78: dict(
+        slot=78,
+        psize=72,
+        name_live="cc_vit_1d_ffn_expand_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_expand_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block35's opening expansion, reusing slot 73's nine-word shape:
+        # grid (64,1,1), block (32,4,1), w8 (12,16) constant.
+        # w0 reads slot 77's projection output at 57,768,960; w2 writes
+        # 786,432 B at 37,518,336. w3 binds block35.layer0.layer,
+        # 4,194,320 B at heap offset 73,382,400; w6 consumes slot77 w7
+        # at 80,896. w7 publishes 256 B at 81,408, consumed by slot 79 w6.
+        # The two write-set regions are w2 (779,577/779,094/779,059 B
+        # changed within 786,432 B) and w7 (256 B each), zero unattributed;
+        # totals 779,833/779,350/779,315. The fp8 sibling is not vendor-
+        # launched; its predicted divergence is the 256-byte sync handoff.
+        container=5,
+        record_name="block35.layer0.layer", record_bytes=4194320,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_ZERO, CLS_POOL, CLS_WEIGHTS, CLS_ZERO,
+                      CLS_ZERO, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=786432,
+        sync_word=7, sync_bytes=256,
+        input_label=77, reference_label=78),
 }
 
 
@@ -4406,7 +4430,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..77}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..78}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
