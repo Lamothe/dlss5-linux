@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-76 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-77 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-three per-slot contracts are covered:
+cut point (LADDER.md). Fifty-four per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1397,7 +1397,8 @@ CLS_ZERO = "zero"
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
 # tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72 and 74's second and third outputs at
-# w5, 393,216 bytes, and w4, 64 bytes; slots 60, 65, 70 and 75's q/k/v siblings at w2
+# w5, 393,216 bytes, and w4, 64 bytes; slot 77's second output at w5
+# (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70 and 75's q/k/v siblings at w2
 # and w3,
 # 196,608 bytes each, their w6 region at 1,179,648 bytes and their w5
 # publication at 128 bytes; slots 61, 66, 71 and 76's attention blocks write no extra
@@ -3103,6 +3104,36 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         wrong_word=0, wrong_bytes=196608,
         sync_word=6, sync_bytes=256,
         input_label=75, reference_label=76),
+    77: dict(
+        slot=77,
+        psize=72,
+        name_live="cc_vit_1d_projection_chained_fp8",
+        name_sibling="cc_vit_1d_projection_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # block34's closing projection; slot 72's nine-word layout,
+        # grid (16,1,4), block (32,4,1), w8 the (12,16) constant.
+        # w0 consumes slot76's attention output at 57,572,352; w1
+        # consumes slot74's contraction residual at 56,785,920.
+        # w2 writes 196,608 B at 57,768,960, immediately before slot78's
+        # next activation output; w5 writes the second output region
+        # 3,932,160 B at 51,526,656, ending 128 B before slot79's
+        # second-output base. w3 binds block34.layer4.layer:1,050,624 B
+        # at heap offset 72,331,776, after the 512-byte aligned placeholder.
+        # w4 publishes 64 B at80,384 (unique output data); w6 consumes
+        # slot76's 256-byte handoff at79,872; w7 publishes 64 B at80,896,
+        # consumed by slot78 as w6. w8 is the (12,16) constant.
+        # Four measured segments per frame, zero unattributed: w5 changes
+        # 391,426/391,474/391,505 B; w2 196,550/196,533/196,528;
+        # w4/w7 64 B each. Totals 588,104/588,135/588,161.
+        container=5,
+        record_name="block34.layer4.layer", record_bytes=1050624,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 3932160), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=76, reference_label=77),
 }
 
 
@@ -4375,7 +4406,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..76}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..77}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
