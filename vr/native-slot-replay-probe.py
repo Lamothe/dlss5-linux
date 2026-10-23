@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-79 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-82 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-six per-slot contracts are covered:
+cut point (LADDER.md). Fifty-nine per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1140,6 +1140,44 @@ cut point (LADDER.md). Fifty-six per-slot contracts are covered:
   q/k/v tensors, a 1,179,648-byte fourth region, 128-byte output data
   at w5 and a 128-byte sync handoff at w8. Six measured segments total
   1,760,497/1,759,938/1,760,032 changed bytes, zero unattributed.
+
+- slot 82 `cc_vit_1d_projection_chained_fp8` (s81 -> s82): block35
+  projection repeats the nine-word contraction/projection map at grid
+  (16,1,4), block (32,4,1). It reads attention output at 58,752,000 and
+  residual at 57,965,568; w3 binds `block35.layer4.layer` (1,050,624 B at
+  heap offset 84,920,320); w6 consumes slot81's 256-byte sync at 83,968.
+  Outputs: w2 at 58,948,608 (196,608 B), w5 at 26,508,288 (3,932,160 B),
+  w4 data at 58,358,784 (64 B), w7 sync at 84,992 (64 B); constant w8 is
+  `(12,16)`. The s81→s82 write-set has four attributed regions/frame,
+  zero unattributed: w5 391,232/391,180/391,210 B; w2
+  196,504/196,446/196,447 B; w4 64 B; w7 64 B. Totals
+  587,884/587,690/587,721 B. Sibling should match all output regions and
+  diverge only across the 64-byte sync handoff.
+
+- slot 81 `cc_vit_1d_attention_chained_fp8` (s80 -> s81): block35
+  attention, sharing slot76's eight-word map. Reads slot80's q/k/v w0/w1/w2
+  at 58,358,784 / 58,161,024 / 58,557,824 and consumes its 128-byte w8
+  handoff at 83,456. w4 binds the two-byte `block35.layer3.layer` placeholder
+  at heap offset 84,919,808. Writes w3 output at 58,752,000 (196,608 B)
+  and w6 sync at 83,968 (256 B). The s80→s81 write-set has two regions/frame,
+  zero unattributed: w3 changes 196,519/196,547/196,532 B and w6 256 B each;
+  totals 196,775/196,803/196,788. Sibling should match output and diverge
+  only across its 256-byte w6 sync handoff.
+
+- slot 80 `cc_vit_1d_qkv_chained_fp8` (s79 -> s80): block35 qkv,
+  sharing slot 75's ten-word map. Reads slot79 contraction output at w0
+  (57,965,568) and its 64-byte w7 handoff (82,432); w4 binds live
+  `block35.layer2.layer` (3,145,856 B at heap 81,773,568). Writes q/k/v
+  regions at w1/w2/w3 (58,358,784 / 58,161,024 / 58,557,824; 196,608 B
+  each), fourth region w6 (33,192,960; 1,179,648 B), w5 output data
+  (82,944; 128 B), and w8 handoff (83,456; 128 B) consumed by slot81 w5.
+  Six s79→s80 segments per frame, all bytes attributed: frame totals
+  1,760,641/1,759,249/1,759,573; w6 1,171,121/1,169,755/1,170,057;
+  w3 196,552/196,495/196,543; w1 196,533/196,561/196,552; w2
+  196,179/196,182/196,165; w5 and w8 128 each. The first same-grid qkv
+  dispatch in each trace is an earlier slot; slot80 is the dispatch directly
+  preceding the `cut-boundary slot=80` marker. Replay verifies live/sibling
+  behaviour and controls below.
 
 - slot 76 `cc_vit_1d_attention_chained_fp8` (s75 -> s76): block34
   attention, sharing slot 71's eight-word map. Reads the slot-75 q/k/v
@@ -3186,6 +3224,84 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 393216), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=78, reference_label=79),
+    80: dict(
+        slot=80,
+        psize=80,
+        name_live="cc_vit_1d_qkv_chained_fp8",
+        name_sibling="cc_vit_1d_qkv_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block35 qkv: slot 75's ten-word map and grid (32,1,2),
+        # block (32,4,1). Use the launch immediately before each
+        # cut-boundary slot=80 marker (the trace also contains earlier
+        # same-grid qkv dispatches for other slots). w0 reads slot79's
+        # contraction output at 57,965,568; w1/w2/w3 are the q/k/v
+        # triplet at 58,358,784 / 58,161,024 / 58,557,824. w4 binds
+        # block35.layer2.layer, 3,145,856 B at heap offset 81,773,568.
+        # w6 is a 1,179,648-byte output at 33,192,960; w5 is 128 B of
+        # output data at 82,944; w7 consumes slot79's 64-byte handoff at
+        # 82,432; w8 publishes 128 B at 83,456, consumed by slot81 w5;
+        # w9 is (12,16). Six write-set regions, zero unattributed:
+        # w6 1,171,121/1,169,755/1,170,057; w3
+        # 196,552/196,495/196,543; w1 196,533/196,561/196,552;
+        # w2 196,179/196,182/196,165; w5/w8 128 B each; totals
+        # 1,760,641/1,759,249/1,759,573. Sibling sync divergence is
+        # predicted 128 B and must be confirmed by execute evidence.
+        container=5,
+        record_name="block35.layer2.layer", record_bytes=3145856,
+        constant_values={9: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=1, output_bytes=196608,
+        extra_outputs=((2, 196608), (3, 196608), (6, 1179648), (5, 128)),
+        sync_word=8, sync_bytes=128,
+        input_label=79, reference_label=80),
+    81: dict(
+        slot=81,
+        psize=64,
+        name_live="cc_vit_1d_attention_chained_fp8",
+        name_sibling="cc_vit_1d_attention_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block35 attention repeats slot76's eight-word map at grid
+        # (32,1,1), block (32,4,1). Sidecar establishes w0/w1/w2 at
+        # 58,358,784 / 58,161,024 / 58,557,824, w4 record at
+        # heap+84,919,808, w5 sync-in at 83,456, w3 output at 58,752,000,
+        # w6 sync-out at 83,968, and constant w7=(12,16). Contract's
+        # s80→s81 measured write-set is two regions: w3 changes
+        # 196,519/196,547/196,532 bytes; w6 changes 256 B each; totals
+        # 196,775/196,803/196,788, zero unattributed. Sibling should keep
+        # tensor output exact with 256-byte sync divergence.
+        container=5,
+        record_name="block35.layer3.layer", record_bytes=2,  # fifth observed dead attention placeholder
+        constant_values={7: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=3, output_bytes=196608,
+        sync_word=6, sync_bytes=256,
+        input_label=80, reference_label=81,
+        wrong_word=0, wrong_bytes=196608),
+    82: dict(
+        slot=82,
+        psize=72,
+        name_live="cc_vit_1d_projection_chained_fp8",
+        name_sibling="cc_vit_1d_projection_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block35 projection repeats slot79's nine-word map at grid
+        # (16,1,4), block (32,4,1). Sidecar confirms w0/w1 at
+        # 58,752,000/57,965,568, w3 weight at heap+84,920,320, w6 sync-in
+        # at 83,968, w2 output at 58,948,608, w5 output at 26,508,288,
+        # w4 output data at 58,358,784, w7 sync-out at 84,992 and w8=(12,16).
+        # s81→s82 has four fully attributed regions/frame, zero unattributed:
+        # w5 391,232/391,180/391,210 B, w2 196,504/196,446/196,447 B,
+        # w4/w7 64 B each, totals 587,884/587,690/587,721 B.
+        container=5,
+        record_name="block35.layer4.layer", record_bytes=1050624,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 3932160), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=81, reference_label=82),
 }
 
 
@@ -4458,7 +4574,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..79}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..82}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
