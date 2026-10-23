@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-83 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-84 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty per-slot contracts are covered:
+cut point (LADDER.md). Sixty-one per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1338,7 +1338,7 @@ per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
 42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73 and 76, 64 B at slots 59, 62, 64, 67, 69, 72 and 74, 128 B at
-slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81 and 83, 64 B at slots 77, 79 and 82 — and 0 B at slot 56, the
+slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81 and 83, 64 B at slots 77, 79, 82 and 84 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -1434,7 +1434,7 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72 and 74's second and third outputs at
+# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72, 74, 79 and 84's second and third outputs at
 # w5, 393,216 bytes, and w4, 64 bytes; slot 77's second output at w5
 # (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70, 75 and 80's q/k/v siblings at w2
 # and w3,
@@ -1443,7 +1443,7 @@ CLS_ZERO = "zero"
 # output — their only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58, 63, 68, 73, 78 and 83's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82's
+# 196,608-byte tensors, slots 58, 63, 68, 73, 78 and 83's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82/84's
 # contractions/projections, slots 60, 65, 70, 75 and 80's q/k/v and slots 61, 66, 71, 76 and 81's attention outputs
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
@@ -1454,8 +1454,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83/84) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -3325,6 +3325,28 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 3932160), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=81, reference_label=82),
+    84: dict(
+        slot=84,
+        psize=72,
+        name_live="cc_vit_1d_ffn_contract_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_contract_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block36 contraction follows slot83's expansion. The s83/s84
+        # captures and parameter trace pin w0=38,304,768, w1=57,768,960,
+        # w2=59,145,216, w3=weights, w4=86,016, w5=40,664,064,
+        # w6=85,504, w7=86,528 and w8=(12,16). The s83→s84 named
+        # write-set attributes all changes to w2/w4/w5/w7 with no
+        # unattributed bytes; weight-layout verification is documented
+        # alongside the slot evidence.
+        container=5,
+        record_name="block36.layer1.layer", record_bytes=4196352,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 393216), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=83, reference_label=84),
 }
 
 
@@ -4597,7 +4619,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..82}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..84}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
