@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-78 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-79 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-five per-slot contracts are covered:
+cut point (LADDER.md). Fifty-six per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -3158,6 +3158,34 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, output_bytes=786432,
         sync_word=7, sync_bytes=256,
         input_label=77, reference_label=78),
+    79: dict(
+        slot=79,
+        psize=72,
+        name_live="cc_vit_1d_ffn_contract_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_contract_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block35's contraction, matching slot 74's nine-word map; grid
+        # (16,1,4), block (32,4,1), w8 (12,16) constant. w0 consumes slot
+        # 78's expansion at 37,518,336; w1 consumes slot 77's projection
+        # output at 57,768,960. w2 writes 196,608 B at 57,965,568; w5
+        # writes 393,216 B at 51,919,872 and w4 writes 64 B at 81,920.
+        # w3 binds block35.layer1.layer (4,196,352 B at heap offset
+        # 77,577,216); w6 consumes slot 78's 256-byte handoff at 81,408;
+        # w7 publishes 64 B at 82,432, consumed by slot 80 as w7. Four
+        # write-set segments per frame, zero unattributed: w5 changes
+        # 391,846/391,724/391,816 B, w2 196,531/196,543/196,545 B, and
+        # w4/w7 64 B each; totals 588,505/588,395/588,489. The fp8 sibling
+        # should retain reference main outputs and leave its w7 handoff at
+        # input state (64-byte predicted sync divergence).
+        container=5,
+        record_name="block35.layer1.layer", record_bytes=4196352,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 393216), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=78, reference_label=79),
 }
 
 
@@ -4430,7 +4458,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..78}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..79}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
