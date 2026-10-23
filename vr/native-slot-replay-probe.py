@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-82 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-83 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-nine per-slot contracts are covered:
+cut point (LADDER.md). Sixty per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1338,7 +1338,7 @@ per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
 42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73 and 76, 64 B at slots 59, 62, 64, 67, 69, 72 and 74, 128 B at
-slots 60, 65, 70 and 75 — and 0 B at slot 56, the
+slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81 and 83, 64 B at slots 77, 79 and 82 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -1352,7 +1352,7 @@ rejected outright), tail
 bounding weight reads to the record). A contract whose weights record is a
 dead binding re-bases the wrong rotation onto the input tensor the kernel
 functionally reads (pinned per contract as `wrong_word`): the weight-free
-attention family (slots 61, 66, 71 and 76) is invariant under whole-record
+attention family (slots 61, 66, 71, 76 and 81) is invariant under whole-record
 complementation (measured in both variants at the captured conditions), so
 its wrong control rotates the query tensor at w0 and the record stays at
 its live content. Weights-less contracts (slot 57: a
@@ -1436,15 +1436,15 @@ CLS_ZERO = "zero"
 # output tensors beyond the primary output_word binding (slot 55's pooled
 # tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72 and 74's second and third outputs at
 # w5, 393,216 bytes, and w4, 64 bytes; slot 77's second output at w5
-# (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70 and 75's q/k/v siblings at w2
+# (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70, 75 and 80's q/k/v siblings at w2
 # and w3,
 # 196,608 bytes each, their w6 region at 1,179,648 bytes and their w5
-# publication at 128 bytes; slots 61, 66, 71 and 76's attention blocks write no extra
+# publication at 128 bytes; slots 61, 66, 71, 76 and 81's attention blocks write no extra
 # output — their only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58, 63, 68 and 73's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72 and 74's
-# contractions/projections, slots 60, 65, 70 and 75's q/k/v and slots 61, 66, 71 and 76's attention outputs
+# 196,608-byte tensors, slots 58, 63, 68, 73, 78 and 83's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82's
+# contractions/projections, slots 60, 65, 70, 75 and 80's q/k/v and slots 61, 66, 71, 76 and 81's attention outputs
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
 # and the read-bounding claim's subject). A contract with no weights word
@@ -1455,7 +1455,7 @@ CLS_ZERO = "zero"
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
 # 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76) — the fp8
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -3196,6 +3196,29 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, output_bytes=786432,
         sync_word=7, sync_bytes=256,
         input_label=77, reference_label=78),
+    83: dict(
+        slot=83,
+        psize=72,
+        name_live="cc_vit_1d_ffn_expand_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_expand_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block36 opening expansion, same map as slot78. Capture sidecar
+        # pins grid (64,1,1), block (32,4,1), w0 input 58,948,608,
+        # w2 output 38,304,768, w3 weight at heap offset 85,970,944
+        # (block36.layer0.layer, 4,194,320 B), w6 sync-in 84,992,
+        # w7 sync-out 85,504 and constant w8=(12,16). s82->s83 has two
+        # fully attributed regions/frame, zero unattributed: w2 changes
+        # 778,505/779,858/779,861 B; w7 256 B each; totals
+        # 778,761/780,114/780,117 B. Sibling expected to match output
+        # tensor and diverge only across the 256-byte w7 sync handoff.
+        container=5,
+        record_name="block36.layer0.layer", record_bytes=4194320,
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_ZERO, CLS_POOL, CLS_WEIGHTS,
+                      CLS_ZERO, CLS_ZERO, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=786432,
+        sync_word=7, sync_bytes=256,
+        input_label=82, reference_label=83),
     79: dict(
         slot=79,
         psize=72,
