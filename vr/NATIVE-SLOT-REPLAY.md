@@ -3479,10 +3479,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Next
 
-Slot 86 is now replayed and documented above. Next continue at slot 87, after slot86's review and publication, for the remaining named kernels of
+Slot 86 is reviewed and published; slot 87 now has two matching reference captures and a measured s86→s87 write-set, but no native replay contract yet. Continue by deriving the slot87 projection contract from those captures/trace, then execute and validate the required controls before adding it to the published coverage. The remaining named kernels are in
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
-ViT
-stage (85–98; slots 81–86 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
+ViT stage (85–98; slots 81–86 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
 [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md) and slot 154 (the final
 blend) writes only outside the working pool. Each remaining kernel needs a
