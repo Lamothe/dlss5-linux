@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-75 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-76 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Fifty-two per-slot contracts are covered:
+cut point (LADDER.md). Fifty-three per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1141,6 +1141,15 @@ cut point (LADDER.md). Fifty-two per-slot contracts are covered:
   at w5 and a 128-byte sync handoff at w8. Six measured segments total
   1,760,497/1,759,938/1,760,032 changed bytes, zero unattributed.
 
+- slot 76 `cc_vit_1d_attention_chained_fp8` (s75 -> s76): block34
+  attention, sharing slot 71's eight-word map. Reads the slot-75 q/k/v
+  triplet and its 128-byte handoff; w4 binds the two-byte placeholder
+  block34.layer3.layer at heap 72,331,264. Writes 196,608 B at w3
+  (57,572,352) and a 256-byte w6 handoff at 79,872, consumed by slot 77.
+  Two measured segments: w3 196,530/196,532/196,520 changed bytes +
+  256 B at w6; totals 196,786/196,788/196,776, zero unattributed.
+  The wrong control rotates the query at w0, as for earlier attention gates.
+
 Inputs come from retained evidence only:
 
 - the launch specification (grid, block, shared memory, parameter block) is
@@ -1271,10 +1280,13 @@ Inputs come from retained evidence only:
   `block33.layer3.layer`, whose 2-byte payload at 59,742,720 rounds up
   across 510 bytes of padding to the 512 boundary, closing block33's
   five-record set exactly at `block34.layer0.layer`'s start at
-  60,793,856), and slot 73 binds `block34.layer0.layer` (the first record
+  60,793,856), slot 73 binds `block34.layer0.layer` (the first record
   of block34, at heap offset 60,793,856 — exactly after block33's closing
   `block33.layer4.layer` payload; its own 4,194,320-byte payload is followed
-  by 496 bytes of padding before `block34.layer1.layer`)
+  by 496 bytes of padding before `block34.layer1.layer`), slot 74 binds
+  `block34.layer1.layer` (4,196,352 B at heap 64,988,672), slot 75 binds
+  `block34.layer2.layer` (3,145,856 B at heap 69,185,024), and slot 76
+  binds `block34.layer3.layer` (2 B at heap 72,331,264)
   — all exact
   record-start landings under the decoder-anchored layout
   (DECODER-BOUNDARY.md word 7 at `block39.layer0.layer`).
@@ -1287,8 +1299,8 @@ variant probe: its output tensor must match, and its sync record is recorded
 per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
-42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71 and 73, 64 B at slots 59, 62, 64, 67, 69 and 72, 128 B at
-slots 60, 65 and 70 — and 0 B at slot 56, the
+42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73 and 76, 64 B at slots 59, 62, 64, 67, 69, 72 and 74, 128 B at
+slots 60, 65, 70 and 75 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -1302,7 +1314,7 @@ rejected outright), tail
 bounding weight reads to the record). A contract whose weights record is a
 dead binding re-bases the wrong rotation onto the input tensor the kernel
 functionally reads (pinned per contract as `wrong_word`): the weight-free
-attention family (slots 61, 66 and 71) is invariant under whole-record
+attention family (slots 61, 66, 71 and 76) is invariant under whole-record
 complementation (measured in both variants at the captured conditions), so
 its wrong control rotates the query tensor at w0 and the record stays at
 its live content. Weights-less contracts (slot 57: a
@@ -1384,16 +1396,16 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69 and 72's second and third outputs at
-# w5, 393,216 bytes, and w4, 64 bytes; slots 60, 65 and 70's q/k/v siblings at w2
+# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72 and 74's second and third outputs at
+# w5, 393,216 bytes, and w4, 64 bytes; slots 60, 65, 70 and 75's q/k/v siblings at w2
 # and w3,
 # 196,608 bytes each, their w6 region at 1,179,648 bytes and their w5
-# publication at 128 bytes; slots 61, 66 and 71's attention blocks write no extra
+# publication at 128 bytes; slots 61, 66, 71 and 76's attention blocks write no extra
 # output — their only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58, 63 and 68's 786,432-byte expansions, slots 59, 62, 64, 67, 69 and 72's
-# contractions/projections, slots 60, 65 and 70's q/k/v and slots 61, 66 and 71's attention outputs
+# 196,608-byte tensors, slots 58, 63, 68 and 73's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72 and 74's
+# contractions/projections, slots 60, 65, 70 and 75's q/k/v and slots 61, 66, 71 and 76's attention outputs
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
 # and the read-bounding claim's subject). A contract with no weights word
@@ -1403,8 +1415,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -3060,6 +3072,37 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((2, 196608), (3, 196608), (6, 1179648), (5, 128)),
         sync_word=8, sync_bytes=128,
         input_label=74, reference_label=75),
+    76: dict(
+        slot=76,
+        psize=64,
+        name_live="cc_vit_1d_attention_chained_fp8",
+        name_sibling="cc_vit_1d_attention_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # block34's attention launch, slot 71's eight-word shape:
+        # grid (32,1,1), block (32,4,1), w7 the (12,16) constant.
+        # w0/w1/w2 consume slot 75's q/k/v tensors at 56,982,528 /
+        # 57,179,136 / 57,375,744 (196,608 B each). w3 writes
+        # 196,608 B at 57,572,352, closing at slot 77's output base.
+        # w4 binds block34.layer3.layer: 2 B (59 a1), heap 72,331,264,
+        # after layer2's payload end 72,330,880 plus 384 B alignment.
+        # As with earlier attention contracts, independently test the
+        # placeholder by record rotation and whole-record complementation;
+        # the wrong control targets the functionally live query at w0.
+        # w5 consumes slot 75's 128-byte w8 record at 79,360; w6
+        # publishes 256 B at 79,872, consumed by slot 77 as w6. No
+        # sibling-shared publication: its predicted divergence is 256 B.
+        # Two measured segments, zero unattributed: w3 changes
+        # 196,530/196,532/196,520 B, plus 256 B at w6; totals
+        # 196,786/196,788/196,776.
+        container=5,
+        record_name="block34.layer3.layer", record_bytes=2,
+        constant_values={7: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=3, output_bytes=196608,
+        wrong_word=0, wrong_bytes=196608,
+        sync_word=6, sync_bytes=256,
+        input_label=75, reference_label=76),
 }
 
 
@@ -3691,7 +3734,8 @@ def validate_entry(entry: dict[str, Any]) -> None:
 
 
 def enforced_failures(mode: str, entries: list[dict[str, Any]],
-                      live_name: str, sync_bytes: int) -> list[str]:
+                      live_name: str, sync_bytes: int,
+                      input_targeted_wrong: bool = False) -> list[str]:
     labels: list[str] = []
     for entry in entries:
         name = entry["entry"]
@@ -3726,6 +3770,10 @@ def enforced_failures(mode: str, entries: list[dict[str, Any]],
                 labels.append(f"wrong-matched:{name}")
             if entry["pool_unchanged"]:
                 labels.append(f"wrong-unchanged:{name}")
+            if input_targeted_wrong and entry["main_match"]:
+                # Input corruption itself changes the pool. Require changed
+                # outputs too, rather than accepting that injected difference.
+                labels.append(f"wrong-output-unchanged:{name}")
         else:
             raise ValueError(f"unknown mode {mode}")
     return labels
@@ -3769,9 +3817,10 @@ def execute(data: bytes, inventory: dict[str, Any], mode: str,
                                      tag, mode, guard_words, evidence))
             progress["entries"] = entries
 
-    failures = enforced_failures(mode, entries, contract["name_live"],
-                                contract["sync_bytes"])
     weighted = contract["word_classes"].count(CLS_WEIGHTS) == 1
+    failures = enforced_failures(
+        mode, entries, contract["name_live"], contract["sync_bytes"],
+        input_targeted_wrong=(not weighted or contract.get("wrong_word") is not None))
     return dict(
         native=True, device="NVIDIA GeForce RTX 4070 Ti SUPER",
         driver_api_version=version, mode=mode, slot=contract["slot"],
@@ -4017,6 +4066,20 @@ def self_test() -> dict[str, Any]:
         base.require(len(labels) == 1, f"self-test: {name} over-detected")
         controls += 1
 
+    # A corrupted input can differ from the reference without affecting any
+    # output: whole-pool non-equality alone must not pass this wrong control.
+    input_only = make_entry(mode="wrong", pool_match=False, pool_diff_count=1,
+                            pool_fnv="0x3", main_match=True, main_diff_count=0)
+    base.require(enforced_failures("wrong", [input_only], FIXTURE_LIVE,
+                                   FIXTURE_SYNC_BYTES, True) ==
+                 ["wrong-output-unchanged:e0"],
+                 "self-test: input-only corruption accepted")
+    controls += 1
+    sensitive = dict(input_only, main_match=False, main_diff_count=1)
+    base.require(enforced_failures("wrong", [sensitive], FIXTURE_LIVE,
+                                   FIXTURE_SYNC_BYTES, True) == [],
+                 "self-test: sensitive input-targeted wrong rejected")
+
     # The wait family's zero sync extent: the sibling's divergence pin is
     # whole-pool equality, so a single differing byte anywhere is flagged.
     base.require(enforced_failures("execute", [make_entry(kernel=FIXTURE_SIBLING)],
@@ -4252,7 +4315,7 @@ def self_test() -> dict[str, Any]:
         else:
             raise ValueError(f"fixture {name} corruption accepted")
 
-    return dict(diff_known_answers=3, verdict_controls=13,
+    return dict(diff_known_answers=3, verdict_controls=14,
                 consistency_controls=6, pair_controls=5,
                 layout_known_answers=4, following_known_answers=4,
                 metadata_known_answers=1,
@@ -4312,7 +4375,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..75}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..76}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
