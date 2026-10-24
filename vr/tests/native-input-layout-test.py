@@ -1,6 +1,7 @@
 """CPU-only tests for row-pitch packing; no model or GPU semantics implied."""
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 source = Path(__file__).resolve().parents[1] / "native-input-layout.py"
 spec = importlib.util.spec_from_file_location("native_input_layout", source)
@@ -33,6 +34,31 @@ except ValueError as error:
     assert "unsupported" in str(error)
 else:
     raise AssertionError("unrecognised plane accepted")
+
+# Validate actual local capture files, and reject truncation without rewriting them.
+with TemporaryDirectory() as temporary:
+    capture = Path(temporary)
+    for name, (components, bytes_per_component) in layout.REFERENCE_INPUT_LAYOUTS.items():
+        (capture / name).write_bytes(bytes(720 * 720 * components * bytes_per_component))
+    reports = layout.validate_capture(capture)
+    assert len(reports) == 3 and all(item["unchanged"] for item in reports)
+    bad = capture / "input-depth.bin"
+    bad.write_bytes(bad.read_bytes()[:-1])
+    try:
+        layout.validate_capture(capture)
+    except ValueError as error:
+        assert "does not match expected" in str(error)
+    else:
+        raise AssertionError("truncated capture accepted")
+    bad.write_bytes(bytes(720 * 720 * 4))
+    missing = capture / "input-motion.bin"
+    missing.unlink()
+    try:
+        layout.validate_capture(capture)
+    except OSError as error:
+        assert error.filename == str(missing)
+    else:
+        raise AssertionError("missing capture plane accepted")
 
 cases = [
     ({"width": 0}, "positive"),
