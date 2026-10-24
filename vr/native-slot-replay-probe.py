@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-86 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-87 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty-three per-slot contracts are covered:
+cut point (LADDER.md). Sixty-four per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1338,7 +1338,7 @@ per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
 42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73 and 76, 64 B at slots 59, 62, 64, 67, 69, 72 and 74, 128 B at
-slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81, 83 and 86, 64 B at slots 77, 79, 82 and 84, 128 B at slot 85 — and 0 B at slot 56, the
+slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81, 83 and 86, 64 B at slots 77, 79, 82 and 84, 128 B at slot 85, 64 B at slot 87 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -3288,7 +3288,7 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         # 196,775/196,803/196,788, zero unattributed. Sibling should keep
         # tensor output exact with 256-byte sync divergence.
         container=5,
-        record_name="block35.layer3.layer", record_bytes=2,  # fifth observed 2-byte attention placeholder
+        record_name="block35.layer3.layer", record_bytes=2,  # fifth observed 2-byte attention binding
         constant_values={7: 0x000000100000000C},
         word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
                       CLS_POOL, CLS_POOL, CLS_CONSTANT),
@@ -3380,6 +3380,32 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         sync_word=6, sync_bytes=256,
         input_label=85, reference_label=86,
         wrong_word=0, wrong_bytes=196608),
+    87: dict(
+        slot=87,
+        psize=72,
+        name_live="cc_vit_1d_projection_chained_fp8",
+        name_sibling="cc_vit_1d_projection_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block36 projection repeats the nine-word projection map at grid
+        # (16,1,4), block (32,4,1). The paired s86/s87 traces and cut
+        # sidecars pin w0=59,931,648, w1=59,145,216, w2=60,128,256,
+        # w3=weights, w4=88,576, w5=46,808,064, w6=88,064,
+        # w7=89,088 and w8=(12,16). The DLL WEIGHTS_HT walk resolves w3
+        # to block36.layer4.layer (1,050,624 B at heap offset 97,508,864;
+        # record SHA-256 pinned by setup). s86→s87 names attributes all
+        # changed bytes to w2/w5/w4/w7 with zero unattributed. The sibling
+        # shares the w2/w5/w4 outputs and leaves the 64-byte w7 handoff at
+        # input state; slot88 consumes that handoff at w6.
+        container=5,
+        record_name="block36.layer4.layer", record_bytes=1050624,
+        record_sha256="2cea0c9cc438cfe9a1b4c9a352667b670dc3b4149dc2e64dae8c731aef1c4903",
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 3932160), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=86, reference_label=87),
 }
 
 
@@ -3730,6 +3756,10 @@ def setup(data: bytes, inventory: dict[str, Any],
     if weighted:
         record = base.span(weights, layout[record_name]["payload_at"],
                            record_bytes)
+        expected_record_sha256 = contract.get("record_sha256")
+        if expected_record_sha256 is not None:
+            base.require(hashlib.sha256(record).hexdigest() == expected_record_sha256,
+                         f"slot{slot}-weight: record digest mismatch")
         following = following_records(layout, record_name, record_bytes)
         base.require(len(following) == 1, f"slot{slot}-weight: no following record")
         tail_live = base.span(weights, layout[following[0]]["payload_at"],
@@ -4207,6 +4237,7 @@ def contract_shape(slot: int, contract: dict[str, Any]) -> None:
     weights_words = contract["word_classes"].count(CLS_WEIGHTS)
     weighted = weights_words == 1
     base.require(weights_words <= 1 and
+                 (contract.get("record_sha256") is None or weighted) and
                  weighted == (contract["record_name"] is not None) and
                  (not weighted or contract["record_bytes"] > 0),
                  f"self-test: contract {slot} weights word count")
@@ -4649,7 +4680,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..86}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..87}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)

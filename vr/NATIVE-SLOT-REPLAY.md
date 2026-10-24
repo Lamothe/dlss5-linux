@@ -1,9 +1,9 @@
-# Native pre-decoder kernel replay (slots 24-86) — 24/10/2026
+# Native pre-decoder kernel replay (slots 24-87) — 24/10/2026
 
 ## Result
 
-**Sixty-three pre-decoder kernel launches (slots 24–86) have been replayed;
-inventory and replay coverage are both 63/156. The 63 launches (slots 24–86; fifteen distinct kernel
+**Sixty-four pre-decoder kernel launches (slots 24–87) have been replayed;
+inventory and replay coverage are both 64/156. The 64 launches (slots 24–87; fifteen distinct kernel
 names — slots 26/30/34/38/42/46/50/54 share one kernel across two geometries, slots
 27/31/35/39/43/47/51, 28/32/36/40/44/48/52 and 29/33/37/41/45/49/53 reuse kernels at the same geometry, slots
 24 and 25 are single-use `inpview` kernels, slots
@@ -41,14 +41,15 @@ slot 77's `projection` chained launch reusing slot 72's kernel and slot 78's
 `projection` chained launch reusing slot 77's kernel, followed by slot 83's
 `ffn_expand` chained launch reusing slot 78's kernel, and slot 84's
 `ffn_contract` chained launch reusing slot 79's kernel, followed by slot 85's
-`qkv` chained launch reusing slot 80's kernel) of the vendor's
-156-launch sequence are covered; slots 24–86 have reproduced the vendor's captured pool state
+`qkv` chained launch reusing slot 80's kernel, and slot 87's `projection`
+chained launch reusing slot 82's kernel) of the vendor's
+156-launch sequence are covered; slots 24–87 have reproduced the vendor's captured pool state
 byte-for-byte.** Each kernel's launch is rebuilt from its captured parameter
 block and executed through the **native Linux CUDA driver** on the RTX 4070
 Ti SUPER — no Windows code, DirectX or Proton — and the native pool state
 after the launch equals the vendor's ladder capture at the matching cut point
 ([LADDER.md](LADDER.md)) over the **whole 62,684,160-byte pool: 0 differing
-bytes on all three frames, in both execute runs, for all sixty-three completed replays (slots 24–86)**.
+bytes on all three frames, in both execute runs, for all sixty-four completed replays (slots 24–87)**.
 
 | Slot | Kernel (NVAPI-ARGS.md) | Contract | Cut | Grid |
 |---|---|---|---|---|
@@ -115,6 +116,7 @@ bytes on all three frames, in both execute runs, for all sixty-three completed r
 | 84 | `cc_vit_1d_ffn_contract_chained_fp8` | reads slot83 expansion w0 (786,432 B at 38,304,768) + residual slot82 projection w1 (196,608 B at 57,768,960); w3 binds `block36.layer1.layer` (4,196,352 B at heap offset 90,165,760); writes w2 (196,608 B at 59,145,216), w5 (393,216 B at 40,664,064), w4 output data (64 B at 86,016), w7 sync (64 B at 86,528); consumes slot83 w7 (256 B at 85,504), constant w8=(12,16) | s83→s84 | (16,1,4) |
 | 85 | `cc_vit_1d_qkv_chained_fp8` | reads slot84 contraction w0 (196,608 B at 59,145,216); w4 binds `block36.layer2.layer` (3,145,856 B at heap offset 94,362,112); writes q/k/v w1/w2/w3 (196,608 B each), fourth output w6 (1,179,648 B at 25,328,640), data w5 (128 B at 87,040), sync w8 (128 B at 87,552); consumes slot84 w7 at w7=86,528; constant w9=(12,16) | s84→s85 | (32,1,2) |
 | 86 | `cc_vit_1d_attention_chained_fp8` | reads slot85 q/k/v w0/w1/w2 (196,608 B each at 59,735,040 / 59,538,432 / 59,341,824) + slot85 w8 sync (128 B at 87,552); w4 binds `block36.layer3.layer` (2 B at heap offset 97,508,352; mutation sensitivity untested); writes output w3 (196,608 B at 59,931,648) + sync w6 (256 B at 88,064); constant w7=(12,16) | s85→s86 | (32,1,1) |
+| 87 | `cc_vit_1d_projection_chained_fp8` | reads slot86 attention w0 (59,931,648) + residual w1 (59,145,216) + sync w6 (88,064); w3 binds `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864); writes w2 (196,608 B at 60,128,256), w5 (3,932,160 B at 46,808,064), w4 data (64 B at 88,576), w7 sync (64 B at 89,088); constant w8=(12,16) | s86→s87 | (16,1,4) |
 
 Slot 25 is the `ffwd→proj` pair's second half and the first kernel with the
 **chained sync handoff**: it consumes slot 24's sync record (w7 at pool
@@ -661,8 +663,8 @@ slot 50's word 2, slot 51's word 3, slot 52's word 2,
 slot 53's word 3, slot 54's word 2, slot 55's word 4, slot 56's word 2,
 slot 58's word 3, slot 59's word 3, slot 60's word 4, slot 61's word 4,
 slot 62's word 3, slot 63's word 3, slot 64's word 3, slot 65's word 4, slot 66's word 4, slot 67's word 3, slot 68's word 3, slot 69's word 3, slot 70's word 4, slot 71's word 4, slot 72's word 3, slot 73's word 3, slot 74's word 3, slot 75's word 4, slot 76's word 4, slot 77's word 3, slot 78's word 3, slot 79's word 3, slot 80's word 4,
-slot 81's word 4, slot 82's word 3, slot 83's word 3, slot 84's word 3, slot 85's word 4 and slot 86's word 4
-(all weighted contracts through slot 86 — slot 57 carries no weights word at all,
+slot 81's word 4, slot 82's word 3, slot 83's word 3, slot 84's word 3, slot 85's word 4, slot 86's word 4 and slot 87's word 3
+(all weighted contracts through slot 87 — slot 57 carries no weights word at all,
 the only weights-less block)
 all land **exactly at
 their record
@@ -798,14 +800,14 @@ at heap offset 77,577,216, pinned by slot 79's own weights word;
 `block35.layer3.layer` (2 B at 84,919,808) is slot 81's fifth observed 2-byte attention placeholder; mutation sensitivity has not been established; `block35.layer4.layer` (1,050,624 B at 84,920,320) is slot 82;
 `block36.layer0.layer` (4,194,320 B at 85,970,944) is slot 83's live expansion
 record; `block36.layer1.layer` (4,196,352 B at 90,165,760) is slot 84's live
-contraction record; `block36.layer2.layer` (3,145,856 B at 94,362,112) is slot 85's live qkv record; `block36.layer3.layer` (2 B at 97,508,352) is slot86's record, independently identified and pinned by the DLL weight table and contract) is enforced at runtime and named in the source contract table; what the evidence retains is the
+contraction record; `block36.layer2.layer` (3,145,856 B at 94,362,112) is slot 85's live qkv record; `block36.layer3.layer` (2 B at 97,508,352) is slot86's record, independently identified and pinned by the DLL weight table and contract; `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864) is slot87's projection record, pinned by its contract SHA-256 and enforced at runtime, named in the source contract table; what the evidence retains is the
 binding's *content* and *position* — `setup.record_sha256` and
 `setup.heap_offset` — plus the enforced equality to the layout walk, so a
 record rename would not disturb any run's verdicts.
 
 ## Variant finding: the tilesync/chained sync record
 
-All sixty-two variant-bearing contracts' fp8 siblings (`..._fp8`) are
+All sixty-three variant-bearing contracts' fp8 siblings (`..._fp8`) are
 **created but never
 launched by the vendor** (pinned: 0 launches in every trace), so they have no
 launch contract of their own; each is replayed at the live variant's geometry
@@ -815,10 +817,10 @@ repack family has one kernel per direction — the `2d_to_1d` here, the
 replay applies and the whole-pool compare alone carries the claim.) In every case the sibling's **output tensor matches the
 reference byte-for-byte** (both output tensors at slot 55, all three at
 slot 59, all five at slot 60, the single attention output at slot 61, all
-three at slot 62, the single expansion output at slot 63, all three at slot 64, the q/k/v triplet and fourth region at slot 65, the single attention output at slot 66, all three at slot 67, single expansion outputs at slots 68, 73, 78 and 83; slot84's three outputs are listed with contractions below; the q/k/v triplet and fourth region at slots 60, 65, 70, 75, 80 and 85, including the sibling-shared w5 data output at slot 85; the single attention outputs at slots 61, 66, 71, 76, 81 and 86; projection at slots 62, 67, 72 and 77; expansions at slots 63, 68, 73, 78 and 83; and contractions at slots 59, 64, 69, 74, 79 and 84) but its **sync record is left at the input state**
+three at slot 62, the single expansion output at slot 63, all three at slot 64, the q/k/v triplet and fourth region at slot 65, the single attention output at slot 66, all three at slot 67, single expansion outputs at slots 68, 73, 78 and 83; slot84's three outputs are listed with contractions below; the q/k/v triplet and fourth region at slots 60, 65, 70, 75, 80 and 85, including the sibling-shared w5 data output at slot 85; the single attention outputs at slots 61, 66, 71, 76, 81 and 86; projection at slots 62, 67, 72, 77, 82 and 87; expansions at slots 63, 68, 73, 78 and 83; and contractions at slots 59, 64, 69, 74, 79 and 84) but its **sync record is left at the input state**
 (`sync_from_input` true on every sibling entry) while the live variant (tilesync at
 slot 24, chained at slots 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85 and 86, publish at slot 58) writes it —
+38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86 and 87, publish at slot 58) writes it —
 except at slot 56, the first `wait`-family kernel, where **neither variant
 writes a sync record** and the sibling therefore matches the reference over
 the **whole pool** (the first zero-divergence sibling: `pool_diff_count` 0
@@ -832,7 +834,7 @@ proves every differing byte lies within the record — and the record itself
 must differ in **every byte of its changed extent**. The extent is **per
 slot, not a constant**: 96 B at slots 24, 25, 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55,
 **192 B at slots 26, 34, 42 and 50**
-and **256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73, 76, 78, 81, 83 and 86** (each predicted from the independent ladder
+and **256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73, 76, 78, 81, 83 and 86**, **64 B at slot 87** (each predicted from the independent ladder
 write-set and confirmed exactly by
 the replay's sibling divergence — two sources, one number), **64 B at
 slots 59, 62, 64, 67, 69, 72, 74, 77, 79, 82 and 84**, **128 B at
@@ -914,8 +916,8 @@ divergence,
 pinned), while w5 (bound by no other launch in the sequence) is output
 data written byte-identically by both variants — the eighth
 sibling-shared publication beyond the main tensors. The tilesync-only
-sync record is now observed at sixty-one sites — the decoder's out2, and slots
-24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84 and 85 — a family trait of the `*_tilesync_*` / `*_chained_*` / `*_publish_*`
+sync record is now observed at sixty-three sites — the decoder's out2, and slots
+24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86 and 87 — a family trait of the `*_tilesync_*` / `*_chained_*` / `*_publish_*`
 kernels' chain handoff (slot 58's `publish` is the wait family's mirror: it
 publishes the ViT chain's first record at w7 without consuming one — its
 parameter block binds no sync-in word); slot 56 (`*_wait_*`) is the first kernel outside
@@ -1044,7 +1046,7 @@ siblings show the tensor-only counts, exactly the sync extent less).
 ## Method
 
 `vr/native-slot-replay-probe.py` now carries a **per-slot contract table**
-(`CONTRACTS`, `--slot {24..86}`): parameter-block size and word classes
+(`CONTRACTS`, `--slot {24..87}`): parameter-block size and word classes
 (pool / weights / constant / zero; constant words pinned per word in
 `constant_values` — a block can carry more than one, at more than one
 value), output and sync word indices, the primary output tensor's extent
@@ -1080,9 +1082,9 @@ retained separately). The `pair` command persists its result as `pair.json`
 beside the first run.
 
 Self-test: **40 corruption controls** (14 verdict, 6 consistency, 5 pair, 1
-metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **774
+metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **786
 known answers (3 diff, 4 layout, 4 following-record, 2 heap-instance, 1 metadata, 1 grid,
-3 rotation, and 12 contract-table shape checks per contract — 756 across the sixty-three
+3 rotation, and 12 contract-table shape checks per contract — 768 across the sixty-four
 table entries, counted per contract rather than per table). The contract table's shape is itself
 pinned (slot key equals the table key, class-table length = parameter size,
 constant words carry a pinned entry for exactly the constant-class indices
@@ -1102,6 +1104,12 @@ entry, each rejection with its pinned message; the corruptions are
 development-time in-memory mutations, not retained self-test fixtures).
 
 ## Evidence
+
+Runs on 24/10/2026 against the slot-87 source (stage 79):
+
+- Slot 87 `cc_vit_1d_projection_chained_fp8` (s86→s87), block36 projection, uses the nine-word projection contract: psize 72, grid (16,1,4), block (32,4,1), w8=(12,16). Words: w0 input at 59,931,648; w1 residual at 59,145,216; w2 output at 60,128,256 (196,608 B); w3 `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864; extracted-record SHA-256 `2cea0c9cc438cfe9a1b4c9a352667b670dc3b4149dc2e64dae8c731aef1c4903); w4 third output data at pool offset 88,576 (64 B); w5 second output at 46,808,064 (3,932,160 B); w6 consumes slot86's 256-byte publication at 88,064; w7 publishes 64 B at 89,088, consumed by slot88 w6. `setup` resolves 459/459 heap addresses in each trace to record starts, zero mid-record.
+- Paired captures `vr/logs/ladder/s87{,b}` validate and pair bit-identically (pool FNVs `0x74044d753ed21000`, `0x773ecb4a9070a80a`, `0xdf844c16948598f4`; shared input FNVs match s86). s86→s87 changed totals are 586,723/586,934/586,810 B. `ladder-names.py names s86 s87` attributes all changes to w5, w2, w4 and w7 with zero unattributed (w5 390,042/390,271/390,150; w2 196,553/196,535/196,532; w4/w7 64 B each).
+- Execute pair at `/tmp/dlss87-published-exec-{a,b}`: six entries each, bit-identical, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; all chained full-pool comparisons match. fp8 sibling matches w2/w5/w4 outputs and differs only at its 64-byte w7 handoff. Skip, wrong-input (rotates input w0), and tail controls each cover six entries with no enforced failures; wrong-input rejects and tail reproduces execute. Run SHA-256 values: skip `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, wrong `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, tail `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113`. Execute-pair artefacts are under `/tmp/dlss87-published-*`; skip/wrong/tail control artefacts are under `/tmp/dlss87-final-*`. Neither is repository-retained; reproduce from source if needed. Slot87 advances local replay coverage to 64/156 (slots 24–87), not yet published. This remains per-launch replay, not a connected native evaluation or neural-rendered image.
 
 Runs on 24/10/2026 against the slot-86 source (stage 78):
 
@@ -3326,7 +3334,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Scope and limitations
 
-- The claim covers **sixty-three launches of the 156** (slots 24–86 replayed; fifteen distinct
+- The claim covers **sixty-four launches of the 156** (slots 24–87 replayed; fifteen distinct
   kernel names, one shared across two geometries (26/30/34/38/42/46/50/54), three reused at
   the same geometry (27/31/35/39/43/47/51, 28/32/36/40/44/48/52, 29/33/37/41/45/49/53), two
   single-use `inpview` (24/25), two single-use `proj_pool` and `final_head`
@@ -3334,7 +3342,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   `repack` (57), one single-use `ffn_expand` `publish` variant (58), the
   `ffn_contract` `chained` variant (59/64/69/74/79/84), the `qkv` `chained` variant
   (60/65/70/75/80/85), the `attention` `chained` variant (61/66/71/76/81), the `projection`
-  `chained` variant (62/67/72/77/82) and the `ffn_expand` `chained` variant (63/68/73/78/83), for fifteen distinct kernel names in total; one resolution
+  `chained` variant (62/67/72/77/82/87) and the `ffn_expand` `chained` variant (63/68/73/78/83), for fifteen distinct kernel names in total; one resolution
   (720×720, eye0), three frames under the stationary-input protocol. The
   method is generic — the parameter block, geometry, word classes and weight
   record are all contract fields now (with single-variant, weights-less and
@@ -3347,7 +3355,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   by canaries (same caveat as earlier stages).
 - The `wrong`-mode rotation follows the decoder record's 1,024-byte
   alternative-split convention; no split semantics are claimed for these
-  records (the rotation targets the input tensor at seven contracts: slot 57 (weights-less input) and slots 61, 66, 71, 76, 81 and 86. For slots 61/66/71/76 the historical finite-condition mutation evidence is described separately; slot81's record mutation sensitivity remains a hypothesis, and slot86's mutation test was not run. Query-input corruption is not evidence that a weight record is unread).
+  records (the rotation targets the input tensor at eight contracts: slot 57 (weights-less input) and slots 61, 66, 71, 76, 81, 86 and 87. For slots 61/66/71/76 the historical finite-condition mutation evidence is described separately; slot81's record mutation sensitivity remains a hypothesis, and slot86's mutation test was not run. Query-input corruption is not evidence that a weight record is unread).
 - The write-set does not separate reads from writes: slot 24's w0 read,
   slot 25's w0, w1 and w7
   reads (previous output, residual, previous sync), slot 26's w0 and w5
@@ -3413,10 +3421,10 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   and w6 reads (the expansion output of slot 73, the residual from slot 72,
   the weights record and the previous sync record), and slot 75's w0, w4
   and w7 reads (slot 74's contraction output, the qkv weights and slot 74's
-  64-byte handoff), and slot 76's w0/w1/w2 and w5 bindings; slot 77's w0/w1/w2/w3/w6 and w8 bindings, and slot 78's w0, w3 and w6 reads (slot 77's projection output, block35 weights and 64-byte handoff), w2 output and w7 sync publication; slot 86's w0/w1/w2 q/k/v, w4 two-byte record and w5 sync reads, w3 output and w6 sync publication; slot 79's w0/w1/w3/w6 inputs, w2/w5 outputs, w4 data and w7 sync; slots 28/29's w0 and (w4/w7) reads — slot 29
+  64-byte handoff), and slot 76's w0/w1/w2 and w5 bindings; slot 77's w0/w1/w2/w3/w6 and w8 bindings, and slot 87's w0/w1/w3/w6 inputs, w2/w4/w5 outputs and w7 sync publication; slot 78's w0, w3 and w6 reads (slot 77's projection output, block35 weights and 64-byte handoff), w2 output and w7 sync publication; slot 86's w0/w1/w2 q/k/v, w4 two-byte record and w5 sync reads, w3 output and w6 sync publication; slot 79's w0/w1/w3/w6 inputs, w2/w5 outputs, w4 data and w7 sync; slots 28/29's w0 and (w4/w7) reads — slot 29
   additionally its residual w1 — are inferred from the attribution (those words never change) and the
   word map, not from a measured read-set.
-- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256/64/128/64/128 B for slots 24–86) are the records'
+- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256/64/128/64/128/64/256/64/128/256/64 B for slots 24–87) are the records'
   **changed** extents under
   this protocol; records whose unchanged bytes extend further are not
   excluded (slot 56's 0 is the wait family's read-only handoff; slot 57's is
@@ -3466,9 +3474,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
    slot 80 w7, and publishes variant-independent data at w4; slot 80 writes its
    128-byte w8 handoff consumed by slot 81 w5, whose 256-byte w6 handoff is
    a fifth observed 2-byte attention-placeholder binding; slot 81 writes the
-   256-byte w6 handoff consumed by slot 82, which publishes its 64-byte w7; slot 82's w7 is consumed by slot 83, slot 83's w7 by slot 84, and slot 84's w7 by slot 85. Slot 85 publishes its 128-byte qkv w8 handoff consumed by slot86, which binds another 2-byte placeholder; its mutation sensitivity remains untested).
-- This campaign uses stored learned weight bytes through sixty-two extracted records
-  (slots 24–56, 58–86; slot 57 binds none — the first weights-less contract;
+   256-byte w6 handoff consumed by slot 82, which publishes its 64-byte w7; slot 82's w7 is consumed by slot 83, slot 83's w7 by slot 84, slot 84's w7 by slot 85, slot 85's w8 by slot 86, slot 86's w6 by slot 87, and slot 87's w7 by slot 88. Slot 85 publishes its 128-byte qkv w8 handoff consumed by slot86, which binds another 2-byte placeholder; its mutation sensitivity remains untested).
+- This campaign uses stored learned weight bytes through sixty-three extracted records
+  (slots 24–56, 58–87; slot 57 binds none — the first weights-less contract;
   slots 61, 66, 71, 76, 81 and 86 bind six 2-byte attention placeholders;
   mutation sensitivity has not been established for slot86, and finite-condition
   sibling results for earlier slots do not imply universal insensitivity). This is
@@ -3479,9 +3487,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Next
 
-Slot 86 is reviewed and published; slot 87 now has two matching reference captures and a measured s86→s87 write-set, but no native replay contract yet. Continue by deriving the slot87 projection contract from those captures/trace, then execute and validate the required controls before adding it to the published coverage. The remaining named kernels are in
+Slot 87 projection has now been replayed and locally verified against paired captures. Contract, exact run results and controls are recorded in the 24/10/2026 evidence section below; it still requires independent review and publication. Next investigate slot 88 only after validating its complete trace and DLL weight/layout roles. The remaining named kernels are in
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
-ViT stage (85–98; slots 81–86 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
+ViT stage (85–98; slots 81–87 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
 [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md) and slot 154 (the final
 blend) writes only outside the working pool. Each remaining kernel needs a
@@ -4847,3 +4855,10 @@ w2 196,550/196,533/196,528; w4/w7 64 B each. Totals
 588,104/588,135/588,161 B. Execute pair SHA-256:
 `425988ef1bdde84c5d057b5cbbc8311a137d773def0237e9a5d0b5c2233e06b6`.
 At stage 69, this was the current coverage: **54/156** (slots 24–77).
+
+
+## Current slot 87 verification (24/10/2026)
+
+The slot 87 `cc_vit_1d_projection_chained_fp8` (s86 → s87) contract is now in `vr/native-slot-replay-probe.py`. It repeats the nine-word projection map: psize 72, grid (16,1,4), block (32,4,1), w8=(12,16); w0=59,931,648, w1=59,145,216, w2=60,128,256 (196,608 B), w3=`block36.layer4.layer` (1,050,624 B at heap offset 97,508,864; record SHA-256 `2cea0c9cc438cfe9a1b4c9a352667b670dc3b4149dc2e64dae8c731aef1c4903`), w4=88,576 (64 B), w5=46,808,064 (3,932,160 B), w6=88,064, w7=89,088 (64 B), w8=(12,16). DLL-derived record mapping, trace bindings and the named s86→s87 write-set corroborate the contract.
+
+Paired captures validate and match; write-set totals 586,723/586,934/586,810 changed bytes with four attributed regions and zero unattributed. Execute pair is bit-identical over six entries, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; chained whole-pool output matches, sibling matches w2/w5/w4 and differs only in the 64-byte w7 handoff. Skip, wrong-input and tail controls each cover six entries with no enforced failures; wrong input rejects and tail reproduces execute. The paired execute run hash is also recorded in `vr/CAMPAIGN-HANDOVER.md`; the local control run hashes are `skip` `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, `wrong` `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, and `tail` `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113` (SHA-256 of each `run.json`; control files ephemeral under `/tmp/dlss87-final-*`, execute pair under `/tmp/dlss87-published-*`). Probe tests now pass 786 known answers/40 corruption controls; ladder-report passes 19 and ladder-names 14 controls. Coverage is locally 64/156 (slots 24–87); independent review and publication are still pending.
