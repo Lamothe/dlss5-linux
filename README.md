@@ -13,9 +13,8 @@ The earlier Proton-based desktop/VR demonstrations are reference experiments, **
 
 ## Current migration status — 25/10/2026
 
-- Published reference baseline: 67 pre-decoder slot contracts (slots 24–90) out of the archival 156-launch inventory, through commit `d166448`.
-- Slot 90 is qualified with paired captures, native replay and controls, and has passed independent review; published in commit `d166448`. Published coverage is 67/156.
-- Slot 91 is locally replay-qualified after independent review; its candidate contract and ignored run evidence are not yet published. Keep published coverage at 67/156 until publication.
+- Published reference baseline: 68 pre-decoder slot contracts (slots 24–91) out of the archival 156-launch inventory, through commit `33fa071`.
+- Slot 91 is qualified with paired captures, native replay and controls, and has passed independent review; its contract and summary are published in commit `33fa071`. Published contract coverage is 68/156. Raw captures, traces and replay run JSONs remain ignored local evidence and are not included in Git.
 - These counts describe the pre-decoder replay campaign, not percentage completion of the entire migration. Decoder and temporal investigations have their own bounded evidence.
 - A complete native input-to-output pipeline and native neural-rendered image are **not yet established**. VR/Genesis integration is out of scope for the current campaign.
 

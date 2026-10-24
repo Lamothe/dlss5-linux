@@ -108,12 +108,14 @@ test values, e.g. `INPUT_AXES=(8,8)`).
 With stationary inputs and `DLSSNR.Reset` only on frame 0, the boundary
 buffers still change substantially between frames (changed bytes of the
 captured windows — 2 MiB except the clamped 196,608-byte main-input):
-main-input ≈ 183–184k, skip-input ≈ 1.78M, out0 ≈ 1.89M. The
-history state ([REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md) `dlssnr_prev_output`)
-therefore enters *before* the decoder, not only at the final blend — a
-concrete constraint for the temporal reconstruction ahead. The per-window
-carrier classification and the reset contract are now established in
-[TEMPORAL-STATE.md](TEMPORAL-STATE.md).
+main-input ≈ 183–184k, skip-input ≈ 1.78M, out0 ≈ 1.89M. A temporal
+history-dependent value therefore enters *before* the decoder, not only at the
+final blend — a concrete constraint for temporal reconstruction. The evidence
+establishes the behavioural role of a history texture, but does not yet prove
+that it is the allocation named `dlssnr_prev_output` in
+[REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md); the resource map does not link
+that name to its record. The per-window carrier classification and the reset
+contract are documented in [TEMPORAL-STATE.md](TEMPORAL-STATE.md).
 
 ### Determinism holds at the boundary
 

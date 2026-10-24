@@ -49,7 +49,7 @@ BOUNDARY_WORDS = ["w0", "w1", "w2", "w4", "w6", "w7"]
 BOUNDARY_NAMES = ["input-colour.bin", "input-depth.bin", "input-motion.bin"] + \
                  [f"output-frame{n:02d}.bin" for n in range(3)] + \
                  [f"frame{n:02d}-{w}.bin" for n in range(3) for w in BOUNDARY_WORDS]
-NON_EVIDENCE_FILES = {"manifest.txt", "boundary-va.txt"}
+NON_EVIDENCE_FILES = {"manifest.txt"}
 
 # Pinned per-run reset offsets: pairs (label, offset). Segments are 4+4 and
 # 5+3, so no period in 2..7 divides both restart strides.
@@ -164,7 +164,10 @@ def check_run(directory: Path, required_names, size_table: dict, expected_protoc
         anchor = anchors.get(name)
         if anchor is not None and digest != anchor:
             failures.append(f"anchor-mismatch: {name}")
-    present = {p.name for p in directory.iterdir()} - NON_EVIDENCE_FILES
+    non_evidence = set(NON_EVIDENCE_FILES)
+    if label == "boundary-a":
+        non_evidence.add("boundary-va.txt")
+    present = {p.name for p in directory.iterdir()} - non_evidence
     for name in sorted(present - set(files)):
         failures.append(f"unlisted-file: {name}")
     return failures
@@ -477,6 +480,9 @@ def self_test() -> int:
     control("extra-txt-file",
             lambda t: (t / ra / "notes.txt").write_bytes(b"\x01\x02"),
             "unlisted-file: notes.txt")
+    control("boundary-va-in-reference",
+            lambda t: (t / ra / "boundary-va.txt").write_text("unexpected\n"),
+            "unlisted-file: boundary-va.txt")
     control("protocol-flip",
             lambda t: (t / tc / "manifest.txt").write_text(
                 (t / tc / "manifest.txt").read_text().replace(protocol_reset_mid(5), PROTOCOL_REFERENCE)),

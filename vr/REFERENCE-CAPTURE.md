@@ -97,8 +97,10 @@ The capture was preceded by instrumentation of the runtime itself:
      `texmode_raw` enabled; `m_gpuArch = 0x190`.
    - Resource model (per feature,720×720): `CG2RWeightHeap` 140.9 MB
      (153 raw tensors), `CG2RWeightUpload` 140.9 MB staging, `CG2RPool`
-     59.8 MB, `dlssnr_prev_output` 4.0 MB **2D history texture** — the
-     temporal state our native work has not yet modelled.
+     59.8 MB, and a 4.0 MB 2D texture labelled `dlssnr_prev_output` in the
+     runtime log. Separate capture experiments establish a behavioural
+     history-carrier role, but the resource map does not link that carrier to
+     this named allocation; native history identity/modelling remain open.
    - Per evaluation it logs resource pointers, intensity and reset; the
      captured runs show `reset=1` on frame 0 and `reset=0` afterwards.
 

@@ -3,11 +3,13 @@
 The model is a *history blend*
 (`CC_Control_History_Blend_Quantize_With_Teacher...`, see
 [REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md)): outputs evolve across frames
-despite stationary inputs, and a `dlssnr_prev_output` 4 MiB texture per eye is
-part of its allocations. This stage establishes the **contract of that temporal
-state** — what `DLSSNR.Reset` clears, whether anything else persists across
-frames, and which buffers carry the history — before any native temporal
-reconstruction is attempted.
+despite stationary inputs, and the runtime log names a 4 MiB 2D texture per
+eye `dlssnr_prev_output`. This stage establishes the **behavioural contract of
+temporal state** — what `DLSSNR.Reset` makes output-visible, whether anything
+else persists across frames, and which captured buffers carry the history —
+before any native temporal reconstruction is attempted. The capture resource
+map does not link the runtime name to a record, so identity with the captured
+history carrier remains an inference.
 
 ## The experiment: mid-stream reset, two unequal offsets
 
@@ -130,7 +132,7 @@ changed-sample percentages agree with REFERENCE-CAPTURE.md's 66–69%.)
   restart (per-run offsets 4 and 5), divergence, weights/counter static,
   carriers evolving. **PASS** (report:
   `vr/logs/temporal/temporal-state-report.txt`).
-- `vr/temporal-state-report.py self-test` — 23 controls (baseline + 22 named
+- `vr/temporal-state-report.py self-test` — 24 controls (baseline + 23 named
   corruptions, most *consistently* re-sealing manifests so only cross-run,
   relational or anchored checks can catch them, a word-format manifest
   truncation control, and a size-table guard asserting a capture-only **and** a
@@ -143,10 +145,11 @@ local under `vr/logs/`; nothing was pushed to GitHub.
 
 ## Limitations
 
-- **The state's identity is not yet established**: the restart proves *that*
-  reset removes every output-visible cross-frame influence, not *what* the
-  state is. Aliasing `dlssnr_prev_output` into the window/binding graph — and
-  whether it is the *only* carrier — is the next question.
+- **The full state identity is not yet established**: the restart proves *that*
+  reset removes every output-visible cross-frame influence, not *what all the
+  state is*. The captured history carrier's behavioural role is established,
+  but its linkage to the runtime-named `dlssnr_prev_output` allocation is
+  unverified; whether that carrier is the *only* state remains open.
 - Stationary inputs, eye0 only, 720×720, 8 frames; motion/second-eye
   behaviour untested here, and state invisible under these inputs is not
   excluded. Frame-index periods ≥ 8 are not excluded either (offsets 4+4 and
@@ -160,11 +163,14 @@ local under `vr/logs/`; nothing was pushed to GitHub.
 
 ## Next
 
-The state's identity is now established in
-[TEMPORAL-HISTORY.md](TEMPORAL-HISTORY.md) (gate stage 13): the model's
-`dlssnr_prev_output` texture, written post-decoder with the frame's output,
-read during evaluation, reset to zero by `DLSSNR.Reset`, plus a frame counter
-(slot 1 word 25) that resets with it. Remaining:
+The behavioural role of a history texture is established in
+[TEMPORAL-HISTORY.md](TEMPORAL-HISTORY.md) (gate stage 13); identifying it
+specifically with the runtime-named `dlssnr_prev_output` allocation remains a
+qualified inference because the capture resource map does not link the name to
+its resource record. The observed history is written post-decoder with the
+frame's output and affects evaluation; `DLSSNR.Reset` behaves as if history
+and the frame counter (slot 1 word 25) are zero, but does not prove the texture
+itself is cleared. Remaining:
 
 1. Native one-step recurrence replay: feed a captured frame's inputs, the
    previous captured output as history and counter `N` to a native pipeline and

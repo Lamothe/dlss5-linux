@@ -1,9 +1,9 @@
 # Temporal-history carrier — gate stage 13 (14/10/2026)
 
 The stage-12 work established *that* the runtime is a history blend with an
-exact restart at `DLSSNR.Reset`, but not *what the state is*. This stage binds
-the state to a concrete allocation, proves the read and write sides by
-intervention, and completes the temporal contract **for the tested regime**
+exact restart at `DLSSNR.Reset`, but not *what the state is*. This stage maps
+the captured history to resource-map records 3 and 7, proves the read and write
+behaviour by intervention, and completes the temporal contract **for the tested regime**
 (eye0, 720×720, stationary gradient inputs, 8 frames):
 
 **`output_N = M(inputs, history_N, counter_N)` where `history_N = output_{N-1}`
@@ -14,10 +14,14 @@ Everything here ran on the RTX 4070 Ti SUPER under Proton/Wine via the existing
 `vr/run-feature-probe.sh` harness (`capture-history*` modes); the native
 side of the project is untouched by this stage.
 
-## The carrier: `dlssnr_prev_output`, one per feature
+## Candidate carrier: `dlssnr_prev_output`, one per feature (allocation identity not established)
 
 The model's own NGX log names two 4.0 MB `CreateTexture2DResourceShared`
-allocations (`dlssnr_prev_output`). The new resource-map dump
+allocations (`dlssnr_prev_output`). The temporal evidence independently
+identifies a history-carrier behaviour and maps its captures to resource
+records 3 and 7, but the capture resource-map schema has no name field and does
+not link that runtime label to either record. The allocation name association
+therefore remains an unverified inference. The new resource-map dump
 (`resource-map.txt`, recorded by the device hook with a creation-phase tag)
 shows the model's phase-1 allocations as two parallel sets — `CG2RWeightHeap`,
 `CG2RWeightUpload`, `CG2RPool`, history texture — one set per feature (eye),
@@ -132,16 +136,23 @@ history read/write kernels (the "Next" item), not yet interpreted.
 
 - `validate` walks 10 runs (`hist-a/b`, `hist-r4`, `hist-cut`, `hist-inj/-b`,
   `hist-sham`, `hist-replay`, `hist-replay2`, `hist-injreset`), recomputes every
-  FNV-1a-64 digest from the bytes on disk, and checks 28 pinned relationships:
+  FNV-1a-64 digest from the bytes on disk, and checks 30 pinned relationships:
   protocol lines, intervention markers, write identity, zero init, static
   control, prefix/restart/no-divergence at the mid-reset, cut-run invariants,
   sham identity, intervention effectiveness, the counter sequence, and the
-  reset-frame replay. **PASS (10 runs, 28 checks).**
+  reset-frame replay, parsed history metadata and the history resource map.
+  **PASS (10 runs, 30 checks).**
 - `self-test` builds a 4×4 synthetic fixture with the same relationships and
-  asserts **36 corruption controls** each fail with their pinned check (one is
-  deliberately non-isolated: `no-restart-divergence` also trips the anchors and
-  the sham check by construction). The scan machinery, both external anchors,
-  the anchor walk's missing-file path and the cross-run input check each have
+  asserts **58 corruption controls** each fail with their pinned check, including
+  dedicated corruption cases for resource-map init/phase/depth/mip fields and a
+  coordinated resource-row omission/header-count corruption. Several
+  intentionally accept secondary detections: `no-restart-divergence` also trips
+  anchors and sham identity; deleting hist-a's resource map trips its external
+  anchor and per-run map check; metadata mutations to rec/VA/dimensions/format
+  can also fail the corresponding resource-map cross-check; and the byte-count
+  mutation additionally invalidates the payload digest and resource-map size
+  cross-check. The scan machinery, both external anchors, the anchor walk's
+  missing-file path and the cross-run input check each have
   dedicated controls (including all three scan error paths), a coverage
   assertion requires every check name to fire somewhere, and the scan fixture
   plants a hand-written ground-truth classification (`SCAN_FIXTURE_PINS`) that
@@ -183,10 +194,11 @@ Anchored hist-a digest highlights (full table in the tool):
   154–155). The read point in the 156-slot sequence is likewise not pinned.
 - Intervention runs overwrite the history *texture*; if the model caches the
   history elsewhere at creation, the cache is not exercised differently here.
-- The `dlssnr_prev_output` identification rests on reading the resource map's
-  records; the map bytes are now anchored, but the name-to-allocation link and
-  the manifests' history metadata (`idx`/`rec`/`stage`/`w`/`h`/`fmt`, all
-  `va=0x0`) are shape-checked only, not cross-pinned to the map.
+- The history manifest metadata (`idx`/`rec`/`stage`/`va`/`w`/`h`/`fmt`/`bytes`)
+  is now checked against the expected two history records and the digest-anchored
+  `hist-a` resource map, and synthetic corruptions are rejected. The map still
+  does not establish that the allocation's runtime name is `dlssnr_prev_output`;
+  that name-to-allocation identity remains an unresolved inference.
 - The f5 checkerboard's effect is not independently isolated: the required
   divergence at f2..f7 is fully explained by the f2 uniform injection, so a
   no-op f5 write would pass (an f2-only run would isolate it). Likewise the

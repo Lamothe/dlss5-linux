@@ -156,9 +156,11 @@ buffers, and equivalent across both kernel variants on these inputs. The
 vendor's learned weights execute correctly through the recovered interfaces.
 
 Not established: anything beyond this stage. Slots 0–98 (encoder, transformer,
-ViT) and 100–155 are not replayed; the temporal history state that evolves per
-frame ([REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md)) enters *before* the
-decoder and is only present here implicitly, inside the captured inputs. **No
+ViT) and 100–155 are not replayed; temporal history-dependent information is
+present in the boundary captured inputs before the decoder. The temporal
+history-carrier behaviour is not linked by the resource map to the allocation
+labelled `dlssnr_prev_output` in the runtime log; that allocation identity
+remains an inference (see [TEMPORAL-HISTORY.md](TEMPORAL-HISTORY.md)). **No
 complete native pipeline and no neural-rendered image** — and this remains an
 execution of NVIDIA's proprietary kernel and weights: the result validates our
 interfaces, not our freedom to use them. Reuse/publication rights remain
@@ -196,9 +198,12 @@ Phase-3 stage 3 is complete. The remaining stages of the plan:
 
 1. **Temporal/history reconstruction** — the pivot point. The model is
    `CC_Control_History_Blend_Quantize_With_Teacher...`
-   ([REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md)); its per-frame state
-   (`dlssnr_prev_output`, 4 MiB/eye) enters before this stage. The boundary
-   capture's frame-evolution data and the now-validated decoder give concrete
+   ([REFERENCE-CAPTURE.md](REFERENCE-CAPTURE.md)); a history-dependent value
+   enters before this stage. The behavioural history-carrier evidence does not
+   link the carrier to a resource-map record corresponding to the allocation
+   labelled `dlssnr_prev_output` in the runtime log, so that allocation identity
+   remains an inference. The boundary capture's
+   frame-evolution data and the now-validated decoder give concrete
    constraints, but the history feedback loop is the open question that decides
    reconstruction versus an open neural backend.
 2. **Native VR integration into the existing Genesis project** —

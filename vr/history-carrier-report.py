@@ -136,8 +136,9 @@ ANCHORS = {
     "output-frame05.bin": (4147200, 0xbe6ebbf0d7da3676),
     "output-frame06.bin": (4147200, 0x61050c5427b0ea49),
     "output-frame07.bin": (4147200, 0xbbba397b954e15eb),
-    # The manifest anchors the whole per-file digest chain; the resource map
-    # pins the named allocation record the carrier binding is read from.
+    # The manifest anchors the per-file digest chain; the resource map freezes
+    # records cross-checked against history metadata. It has no link to the
+    # runtime label dlssnr_prev_output.
     "manifest.txt": (2940, 0x3feafa9950561fa4),
     "resource-map.txt": (1839, 0x40c49dbd3c193115),
 }
@@ -178,6 +179,8 @@ CHECKS = [
     "counter-anchor-mismatch",
     "input-mismatch",
     "scan-mismatch",
+    "history-metadata-mismatch",
+    "history-resource-map-mismatch",
 ]
 
 
@@ -190,8 +193,13 @@ CHECKS = [
 #   %s bytes=%zu fnv=0x%016llx
 RE_PROTOCOL = re.compile(r"^protocol \S+ frames=(\d+) size=(\d+) .+$")
 RE_HISTORY = re.compile(
-    r"^history idx=\d+ rec=\d+ stage=\S+ va=0x[0-9a-fA-F]+ w=\d+ h=\d+ fmt=\d+ "
-    r"bytes=(\d+) file=(\S+) fnv=0x([0-9a-fA-F]+)$")
+    r"^history idx=(\d+) rec=(\d+) stage=(\S+) va=0x([0-9a-fA-F]+) "
+    r"w=(\d+) h=(\d+) fmt=(\d+) bytes=(\d+) file=(\S+) "
+    r"fnv=0x([0-9a-fA-F]+)$")
+RE_RESOURCE_MAP = re.compile(
+    r"^res idx=(\d+) va=0x([0-9a-fA-F]+) size=(\d+) dim=(\d+) "
+    r"fmt=(\d+) w=(\d+) h=(\d+) depth=(\d+) mips=(\d+) "
+    r"init=(\d+) phase=(\d+)$")
 RE_FILE = re.compile(r"^(\S+) bytes=(\d+) fnv=0x([0-9a-fA-F]+)$")
 RE_INJECT = re.compile(r"^history-inject frame=(\d+) idx=0 pattern=(\S+?)(?: bytes=\d+)?$")
 RE_STAGE = re.compile(r"^history-stage frame=0 source=history-readback$")
@@ -396,9 +404,10 @@ def scan_trace(trace_path, evals_expected, eye_fn, slots=COUNTER_SLOTS):
 
 
 def parse_manifest(path):
-    """Returns (protocol_line, size_hint, file_table, interventions)."""
+    """Returns (protocol_line, size_hint, file_table, interventions, history_rows)."""
     files = {}
     interventions = []
+    history_rows = []
     protocol_line = None
     size_hint = None
     with open(path, "r", encoding="utf-8") as f:
@@ -415,10 +424,15 @@ def parse_manifest(path):
                 continue
             m = RE_HISTORY.match(line)
             if m:
-                name = m.group(2)
+                idx, rec, stage, va, width, height, fmt, byte_count, name, digest = m.groups()
                 if name in files:
                     raise ValueError("%s:%d: duplicate entry %s" % (path, lineno, name))
-                files[name] = (int(m.group(1)), int(m.group(3), 16))
+                files[name] = (int(byte_count), int(digest, 16))
+                history_rows.append({
+                    "idx": int(idx), "rec": int(rec), "stage": stage,
+                    "va": int(va, 16), "w": int(width), "h": int(height),
+                    "fmt": int(fmt), "bytes": int(byte_count), "file": name,
+                })
                 continue
             m = RE_FILE.match(line)
             if m:
@@ -437,7 +451,39 @@ def parse_manifest(path):
             raise ValueError("%s:%d: unparsable manifest line" % (path, lineno))
     if protocol_line is None:
         raise ValueError("%s: no protocol line" % path)
-    return protocol_line, size_hint, files, interventions
+    return protocol_line, size_hint, files, interventions, history_rows
+
+
+def parse_resource_map(path, require_contiguous=True):
+    """Parse strict resource-map v1 rows, rejecting duplicates and junk."""
+    records = {}
+    with open(path, "r", encoding="utf-8") as f:
+        header = f.readline().rstrip("\n")
+        m = re.fullmatch(r"resource-map v1 records=(\d+)", header)
+        if not m:
+            raise ValueError("%s: invalid resource-map header" % path)
+        expected = int(m.group(1))
+        for lineno, line in enumerate(f, 2):
+            line = line.rstrip("\n")
+            m = RE_RESOURCE_MAP.fullmatch(line)
+            if not m:
+                raise ValueError("%s:%d: invalid resource-map row" % (path, lineno))
+            values = [int(value, 16) if index == 1 else int(value)
+                      for index, value in enumerate(m.groups())]
+            idx = values[0]
+            if idx in records:
+                raise ValueError("%s:%d: duplicate resource index %d" %
+                                 (path, lineno, idx))
+            records[idx] = dict(zip(
+                ("idx", "va", "size", "dim", "fmt", "w", "h", "depth",
+                 "mips", "init", "phase"), values))
+    if len(records) != expected:
+        raise ValueError("%s: record count %d != header %d" %
+                         (path, len(records), expected))
+    if require_contiguous and set(records) != set(range(expected)):
+        raise ValueError("%s: resource indices are not contiguous 0..%d" %
+                         (path, expected - 1))
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +523,7 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
             continue
         spec = RUNS[run]
         try:
-            protocol_line, size_hint, files, interventions = parse_manifest(mpath)
+            protocol_line, size_hint, files, interventions, history_rows = parse_manifest(mpath)
         except ValueError as exc:
             fail("manifest-format", str(exc))
             continue
@@ -492,9 +538,39 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
         if list(interventions) != list(spec["interventions"]):
             fail("intervention-mismatch",
                  "%s: %r != %r" % (run, list(interventions), list(spec["interventions"])))
-        # 3. File set and per-file digests, recomputed from the bytes on disk.
+        # 3. History metadata must describe the expected carrier capture row.
+        expected_history = {"history0-init.bin": (0, 3, "init"),
+                            "history1-init.bin": (1, 7, "init")}
+        for frame in range(8):
+            expected_history["history0-frame%02u.bin" % frame] = (
+                0, 3, "frame%02u" % frame)
+            expected_history["history1-frame%02u.bin" % frame] = (
+                1, 7, "frame%02u" % frame)
+        seen_history = set()
+        for row in history_rows:
+            name = row["file"]
+            expected = expected_history.get(name)
+            if expected is None or name in seen_history:
+                fail("history-metadata-mismatch", "%s/%s unexpected or duplicate" %
+                     (run, name))
+                continue
+            seen_history.add(name)
+            idx, rec, stage = expected
+            want_size = name_size(name, sizes)
+            expected_side = expected_size
+            if (row["idx"], row["rec"], row["stage"], row["va"],
+                    row["w"], row["h"], row["fmt"], row["bytes"]) != (
+                    idx, rec, stage, 0, expected_side, expected_side, 10,
+                    want_size):
+                fail("history-metadata-mismatch", "%s/%s fields" %
+                     (run, name))
+        if seen_history != set(expected_history):
+            fail("history-metadata-mismatch", "%s: history row set" % run)
+        # 4. File set and per-file digests, recomputed from the bytes on disk.
         on_disk = set(f for f in os.listdir(rdir) if f.endswith(".bin"))
         expected_names = set(BIN_NAMES)
+        for extra in sorted(set(files) - expected_names):
+            fail("manifest-format", "%s/%s unexpected file entry" % (run, extra))
         for missing in sorted(expected_names - on_disk):
             fail("file-missing", "%s/%s" % (run, missing))
         for extra in sorted(on_disk - expected_names):
@@ -531,7 +607,41 @@ def validate(root, sizes, anchors, quiet=True, counter_trace=None, scan_trace_pa
         if len(data) != asize or fnv64(data) != afnv:
             fail("anchor-mismatch", "hist-a/%s" % name)
 
-    # 5. Pair identity: hist-b == hist-a, hist-inj-b == hist-inj.
+    # 5. Cross-pin each run's history rows to its resource map. The map is
+    #    capture metadata, not a runtime-name binding; only hist-a's map is
+    #    externally digest-anchored, while every run is internally checked.
+    for run in RUN_ORDER:
+        if run not in table:
+            continue
+        map_path = os.path.join(root, run, "resource-map.txt")
+        if not os.path.isfile(map_path):
+            fail("history-resource-map-mismatch",
+                 "%s: resource-map.txt missing" % run)
+            continue
+        try:
+            resources = parse_resource_map(
+                map_path, require_contiguous=(run == "hist-a"))
+            _, _, _, _, rows = parse_manifest(os.path.join(
+                root, run, "manifest.txt"))
+        except (OSError, ValueError) as exc:
+            fail("history-resource-map-mismatch", "%s: %s" % (run, exc))
+            continue
+        for row in rows:
+            resource = resources.get(row["rec"])
+            if resource is None or (row["va"], row["bytes"], row["w"],
+                    row["h"], row["fmt"]) != (
+                    resource["va"] if resource else None,
+                    resource["size"] if resource else None,
+                    resource["w"] if resource else None,
+                    resource["h"] if resource else None,
+                    resource["fmt"] if resource else None) or \
+                    (resource["dim"], resource["depth"], resource["mips"],
+                     resource["init"], resource["phase"]) != (3, 1, 1, 1024, 1):
+                fail("history-resource-map-mismatch",
+                     "%s/%s maps inconsistently to resource record %d" %
+                     (run, row["file"], row["rec"]))
+
+    # 6. Pair identity: hist-b == hist-a, hist-inj-b == hist-inj.
     for a, b, name in (("hist-a", "hist-b", "pair-mismatch"),
                        ("hist-inj", "hist-inj-b", "inject-pair-mismatch")):
         if a not in table or b not in table:
@@ -810,8 +920,11 @@ def build_fixture(root, sizes):
         with open(os.path.join(rdir, "manifest.txt"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         with open(os.path.join(rdir, "resource-map.txt"), "w", encoding="utf-8") as f:
-            f.write("resource idx=0 rec=3 name=dlssnr_prev_output "
-                    "w=%d h=%d\n" % (sizes_side, sizes_side))
+            f.write("resource-map v1 records=8\n")
+            for idx, rec in enumerate(range(8)):
+                f.write("res idx=%d va=0x0 size=%d dim=3 fmt=10 w=%d h=%d "
+                        "depth=1 mips=1 init=1024 phase=1\n" %
+                        (idx, flat, sizes_side, sizes_side))
 
     plain = RUNS["hist-a"]["protocol"]
     reset4 = RUNS["hist-r4"]["protocol"]
@@ -936,7 +1049,7 @@ def reseal(root, run):
             line = line.rstrip("\n")
             m = RE_HISTORY.match(line)
             if m:
-                name = m.group(2)
+                name = m.group(9)
                 with open(os.path.join(rdir, name), "rb") as bf:
                     data = bf.read()
                 # History lines carry file=<name> between bytes= and fnv=, so
@@ -1014,23 +1127,29 @@ def self_test():
             root = os.path.join(tmp, name)
             shutil.copytree(tmp, root, ignore=shutil.ignore_patterns(name))
             trace = os.path.join(root, "counter-trace.log")
-            mutate_fn(root, trace)
+            mutation_result = mutate_fn(root, trace)
             # counter_anchor defaults to None here: controls that rewrite the
             # counter trace must isolate to the sequence check, and the anchor
             # path itself is covered by the baseline plus its own control.
             kw = {"counter_trace": trace, "counter_anchor": None}
             kw.update(scan_kwargs)
             kw["scan_trace_path"] = os.path.join(root, "scan-trace.log")
+            # Recompute anchors only when a control deliberately changes a
+            # metadata file; otherwise retain the externally pinned baseline.
+            if mutation_result is not None:
+                kw["anchors"] = mutation_result
             kw.update(vkw)
             try:
-                got, _ = validate(root, FIXTURE_SIZES, fixture_anchors, **kw)
+                got, _ = validate(root, FIXTURE_SIZES,
+                                  kw.pop("anchors", fixture_anchors), **kw)
             except Exception as exc:  # tool bug (e.g. a deleted check raising)
                 problems.append(name)
                 print("FAIL %-26s crashed: %r" % (name, exc))
                 shutil.rmtree(root)
                 return
             checks_seen.update(got)
-            ok = expect in got and (got == [expect] if isolated else True)
+            ok = (not got if expect is None else
+                  expect in got and (got == [expect] if isolated else True))
             if not ok:
                 problems.append(name)
                 print("FAIL %-26s expected %s%s got %r"
@@ -1266,6 +1385,136 @@ def self_test():
             # be skipped by the anchor walk.
             os.remove(os.path.join(root, "hist-a", "resource-map.txt"))
 
+        def mutate_history_field(root, old, new):
+            path = os.path.join(root, "hist-b", "manifest.txt")
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            if old not in text:
+                raise ValueError("history metadata fixture token missing: %r" % old)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text.replace(old, new, 1))
+            if old.startswith("history idx="):
+                reseal(root, "hist-b")
+
+        def c_extra_manifest_file(root, trace):
+            path = os.path.join(root, "hist-b", "manifest.txt")
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text + "ghost.bin bytes=1 fnv=0x0000000000000000\n")
+
+        def c_history_idx(root, trace):
+            mutate_history_field(root, "history idx=0 rec=3 stage=init",
+                                 "history idx=1 rec=3 stage=init")
+
+        def c_history_rec(root, trace):
+            mutate_history_field(root, "history idx=0 rec=3 stage=init",
+                                 "history idx=0 rec=4 stage=init")
+
+        def c_history_stage(root, trace):
+            mutate_history_field(root, "history idx=0 rec=3 stage=init",
+                                 "history idx=0 rec=3 stage=frame00")
+
+        def c_history_va(root, trace):
+            mutate_history_field(root, "va=0x0 w=4", "va=0x1000 w=4")
+
+        def c_history_width(root, trace):
+            mutate_history_field(root, "w=4 h=4 fmt=10", "w=3 h=4 fmt=10")
+
+        def c_history_height(root, trace):
+            mutate_history_field(root, "w=4 h=4 fmt=10", "w=4 h=3 fmt=10")
+
+        def c_history_format(root, trace):
+            mutate_history_field(root, "w=4 h=4 fmt=10", "w=4 h=4 fmt=11")
+
+        def c_history_bytes(root, trace):
+            mutate_history_field(root, "bytes=128 file=history0-init.bin",
+                                 "bytes=127 file=history0-init.bin")
+
+        def mutate_resource_map(root, mutate_fn, run="hist-a"):
+            path = os.path.join(root, run, "resource-map.txt")
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            lines = mutate_fn(lines)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            if run != "hist-a":
+                return None
+            anchors = dict(fixture_anchors)
+            anchors["resource-map.txt"] = (
+                os.path.getsize(path), fnv64_file(path))
+            return anchors
+
+        def c_history_map_va(root, trace):
+            return mutate_resource_map(root, lambda lines: [
+                line.replace("va=0x0", "va=0x2000", 1) if line.startswith("res idx=3 ")
+                else line for line in lines])
+
+        def c_history_map_size(root, trace):
+            return mutate_resource_map(root, lambda lines: [
+                line.replace("size=128", "size=127", 1) if line.startswith("res idx=3 ")
+                else line for line in lines])
+
+        def c_history_map_duplicate(root, trace):
+            def duplicate(lines):
+                return lines + [lines[1]]
+            return mutate_resource_map(root, duplicate)
+
+        def c_history_map_malformed(root, trace):
+            return mutate_resource_map(root, lambda lines: lines + ["bad resource row"])
+
+        def c_history_map_count(root, trace):
+            return mutate_resource_map(root, lambda lines: ["resource-map v1 records=9"] + lines[1:])
+
+        def c_history_map_name(root, trace):
+            return mutate_resource_map(root, lambda lines: [
+                line + " name=dlssnr_prev_output" if line.startswith("res idx=3 ")
+                else line for line in lines])
+
+        def c_history_non_anchor_map(root, trace):
+            mutate_resource_map(root, lambda lines: [
+                line.replace("va=0x0", "va=0x2000", 1)
+                if line.startswith("res idx=3 ") else line for line in lines],
+                run="hist-b")
+
+        def c_history_non_anchor_map_missing(root, trace):
+            os.remove(os.path.join(root, "hist-b", "resource-map.txt"))
+
+        def c_history_map_phase(root, trace):
+            mutate_resource_map(root, lambda lines: [
+                line.replace("phase=1", "phase=2", 1)
+                if line.startswith("res idx=3 ") else line for line in lines],
+                run="hist-b")
+
+        def c_history_map_init(root, trace):
+            mutate_resource_map(root, lambda lines: [
+                line.replace("init=1024", "init=0", 1)
+                if line.startswith("res idx=3 ") else line for line in lines],
+                run="hist-b")
+
+        def c_history_map_depth(root, trace):
+            mutate_resource_map(root, lambda lines: [
+                line.replace("depth=1", "depth=2", 1)
+                if line.startswith("res idx=3 ") else line for line in lines],
+                run="hist-b")
+
+        def c_history_map_mips(root, trace):
+            mutate_resource_map(root, lambda lines: [
+                line.replace("mips=1", "mips=2", 1)
+                if line.startswith("res idx=3 ") else line for line in lines],
+                run="hist-b")
+
+        def c_history_map_gap(root, trace):
+            # Remove unrelated record 1 and update the count. Hist-b's sparse
+            # map remains valid because all manifest-linked records remain.
+            path = os.path.join(root, "hist-b", "resource-map.txt")
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            del lines[2]
+            lines[0] = "resource-map v1 records=7"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+
         def c_replay2_late(root, trace):
             mutate(root, "hist-replay2", "history0-frame04.bin", flip)
             mutate(root, "hist-replay2", "output-frame04.bin", flip)
@@ -1306,7 +1555,40 @@ def self_test():
         control("scan-ragged-slot", c_scan_ragged, "scan-mismatch", scan_anchor=None)
         control("scan-pmem-size", c_scan_pmem_size, "scan-mismatch", scan_anchor=None)
         control("scan-count-short", c_scan_count, "scan-mismatch", scan_anchor=None)
-        control("anchor-file-missing", c_anchor_file, "anchor-mismatch")
+        control("anchor-file-missing", c_anchor_file, "anchor-mismatch",
+                isolated=False)
+        control("extra-manifest-file", c_extra_manifest_file, "manifest-format")
+        for label, fn in (
+                ("history-idx-corrupt", c_history_idx),
+                ("history-rec-corrupt", c_history_rec),
+                ("history-stage-corrupt", c_history_stage),
+                ("history-va-corrupt", c_history_va),
+                ("history-width-corrupt", c_history_width),
+                ("history-height-corrupt", c_history_height),
+                ("history-format-corrupt", c_history_format),
+                ("history-bytes-corrupt", c_history_bytes)):
+            control(label, fn, "history-metadata-mismatch",
+                    isolated=(label not in ("history-bytes-corrupt",
+                                            "history-rec-corrupt",
+                                            "history-va-corrupt",
+                                            "history-width-corrupt",
+                                            "history-height-corrupt",
+                                            "history-format-corrupt")))
+        for label, fn in (
+                ("history-map-va-corrupt", c_history_map_va),
+                ("history-map-size-corrupt", c_history_map_size),
+                ("history-map-duplicate", c_history_map_duplicate),
+                ("history-map-malformed", c_history_map_malformed),
+                ("history-map-count-corrupt", c_history_map_count),
+                ("history-map-name-added", c_history_map_name),
+                ("history-non-anchor-map-corrupt", c_history_non_anchor_map),
+                ("history-non-anchor-map-missing", c_history_non_anchor_map_missing),
+                ("history-map-phase-corrupt", c_history_map_phase),
+                ("history-map-init-corrupt", c_history_map_init),
+                ("history-map-depth-corrupt", c_history_map_depth),
+                ("history-map-mips-corrupt", c_history_map_mips)):
+            control(label, fn, "history-resource-map-mismatch")
+        control("history-map-unlinked-gap", c_history_map_gap, None)
         control("replay2-late-trace", c_replay2_late, "replay2-trace")
 
         missing_checks = [c for c in CHECKS if c not in checks_seen]

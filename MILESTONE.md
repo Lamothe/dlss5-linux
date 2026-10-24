@@ -4,7 +4,7 @@ Updated 25/10/2026. This document defines the Linux project, independently of th
 
 ## L1 — Native execution contracts (in progress)
 
-Recover and validate kernel interfaces, weight bindings, memory layouts and data flow against repeatable vendor captures with positive/negative controls. The published pre-decoder baseline is slots 24–90 (67/156 launches), through commit `d166448`. Decoder investigations are recorded separately. Per-slot replay is not an end-to-end evaluator.
+Recover and validate kernel interfaces, weight bindings, memory layouts and data flow against repeatable vendor captures with positive/negative controls. The published pre-decoder contract baseline is slots 24–91 (68/156 launches), through commit `33fa071`. Slot 91's raw captures, traces and replay run JSONs remain local ignored evidence. Decoder investigations are recorded separately. Per-slot replay is not an end-to-end evaluator.
 
 ## L2 — Complete native evaluator (not yet demonstrated)
 
