@@ -6,7 +6,7 @@ kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty-seven per-slot contracts are covered, sixty-six of which have fp8 siblings (slot 57 is single-variant):
+cut point (LADDER.md). Sixty-seven replay-qualified per-slot contracts are covered and slot91 is also locally qualified; slot91 publication is pending. Sixty-six published contracts have fp8 siblings (slot57 is the single-variant exception):
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -3422,6 +3422,25 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         sync_word=7, sync_bytes=256,
         input_label=87, reference_label=88,
         wrong_word=0, wrong_bytes=196608),
+    91: dict(
+        slot=91,
+        psize=64,
+        name_live="cc_vit_1d_attention_chained_fp8",
+        name_sibling="cc_vit_1d_attention_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Slot91 is block37 attention, using the same eight-word attention
+        # map. Captured w4 resolves to block37.layer3.layer (2-byte record);
+        # trace scan proves every heap-pointing word is at a record start.
+        container=5,
+        record_name="block37.layer3.layer", record_bytes=2,
+        record_sha256="b5cb81c4d0b39a60f796f15f81a886f7e3352df2917e0c22f5640d84d67c062e",
+        constant_values={7: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=3, output_bytes=196608,
+        sync_word=6, sync_bytes=256,
+        input_label=90, reference_label=91,
+        wrong_word=0, wrong_bytes=196608),
     90: dict(
         slot=90,
         psize=80,
@@ -4757,7 +4776,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..89}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..91}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)

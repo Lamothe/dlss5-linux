@@ -1,6 +1,6 @@
 # Linux migration workspace split — 24/10/2026
 
-The active native migration workspace is `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. It preserves the source history through `120e124`; the three unfinished slot-90 files were copied without alteration and remain uncommitted pending qualification. The original `dlss-testbed` workspace and `dlss5-vr` remote remain intact.
+The active native migration workspace is `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. It preserves the source history; the Linux migration commits `a5fb96d` and `d166448` are published to its `main`. The original `dlss-testbed` workspace and `dlss5-vr` remote remain intact.
 
 The complete local working tree (including ignored evidence and dependencies) was copied using Btrfs copy-on-write reflinks. The workspaces have independent files; do not run GPU/reference probes concurrently because their locks are independent. Local-only runtime manifests/prefixes can retain old absolute paths; inspect them before running a reference harness. No payloads or generated assets are added to Git by this split.
 
