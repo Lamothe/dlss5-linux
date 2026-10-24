@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-88 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-89 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty-five per-slot contracts are covered:
+cut point (LADDER.md). Sixty-six per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -1425,7 +1425,7 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72, 74, 79, 84, and 87's second and third outputs at
+# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72, 74, 79, 84, 87 and 89's second and third outputs at
 # w5, 393,216 bytes, and w4, 64 bytes; slot 77's second output at w5
 # (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70, 75 and 80's q/k/v siblings at w2
 # and w3,
@@ -1434,7 +1434,7 @@ CLS_ZERO = "zero"
 # output — their only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58, 63, 68, 73, 78, 83 and 88's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82/84's
+# 196,608-byte tensors, slots 58, 63, 68, 73, 78, 83, 88 and 93's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82/84/89's
 # contractions/projections, slots 60, 65, 70, 75, 80 and 85's q/k/v and slots 61, 66, 71, 76, 81 and 86's attention outputs
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
@@ -1445,8 +1445,8 @@ CLS_ZERO = "zero"
 # changed extent,
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
-# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83/84/85/86/87/88) — the fp8
+# 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256/64/128/64/128/64/256/64/128/256/64/256/64 for
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83/84/85/86/87/88/89) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -3422,6 +3422,29 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         sync_word=7, sync_bytes=256,
         input_label=87, reference_label=88,
         wrong_word=0, wrong_bytes=196608),
+    89: dict(
+        slot=89,
+        psize=72,
+        name_live="cc_vit_1d_ffn_contract_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_contract_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block37 contraction repeats the established nine-word contract.
+        # Paired slot88/89 cuts and traces pin w0=39,091,200, w1=60,128,256,
+        # w2=60,324,864, w3=weights, w4=90,112, w5=47,201,280,
+        # w6=89,600, w7=90,624 and w8=(12,16). The DLL WEIGHTS_HT walk
+        # resolves w3 to block37.layer1.layer (4,196,352 B at heap
+        # 102,754,304; payload SHA-256 pinned below). Four s88→s89 write
+        # regions are fully attributed with zero unattributed bytes.
+        container=5,
+        record_name="block37.layer1.layer", record_bytes=4196352,
+        record_sha256="b93228e97354c86a08973180f3ea549153f97ae360a0586e5f1360345b770957",
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS, CLS_POOL,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=196608,
+        extra_outputs=((5, 393216), (4, 64)),
+        sync_word=7, sync_bytes=64,
+        input_label=88, reference_label=89),
 }
 
 
@@ -3430,7 +3453,14 @@ BOUNDARY_MANIFEST = HERE / "logs" / "boundary" / "a" / "manifest.txt"
 
 
 def capture_dir(label: int) -> Path:
-    return HERE / "logs" / "ladder" / f"s{label}"
+    base = HERE / "logs" / "ladder" / f"s{label}"
+    if base.is_dir():
+        return base
+    for suffix in ("a", "b"):
+        suffixed = HERE / "logs" / "ladder" / f"s{label}{suffix}"
+        if suffixed.is_dir():
+            return suffixed
+    return base
 
 
 def trace_path(label: int) -> Path:
@@ -3599,10 +3629,21 @@ def setup(data: bytes, inventory: dict[str, Any],
         kernel_tags.append((sibling, contract["name_sibling"]))
     kernel_tags = tuple(kernel_tags)
     in_label, ref_label = contract["input_label"], contract["reference_label"]
-    trace_text = {label: trace_path(label).read_text(encoding="utf-8",
-                                                     errors="replace")
+    # Newest paired captures use suffixes for the two independently produced
+    # traces while retaining the unsuffixed ladder capture directories.
+    trace_paths = {in_label: trace_path(in_label), ref_label: trace_path(ref_label)}
+    for label in (in_label, ref_label):
+        if not trace_paths[label].is_file():
+            for suffix in ("a", "b"):
+                suffixed = trace_path(label).with_name(
+                    f"nvapi-trace-ladder-s{label}{suffix}.log")
+                if suffixed.is_file():
+                    trace_paths[label] = suffixed
+                    break
+    trace_text = {label: trace_paths[label].read_text(encoding="utf-8",
+                                                      errors="replace")
                   for label in (in_label, ref_label)}
-    traces = {label: names.read_trace(trace_path(label))
+    traces = {label: names.read_trace(trace_paths[label])
               for label in (in_label, ref_label)}
 
     # Creation geometry (pinned equal across runs) and per-trace handles.
@@ -3813,7 +3854,7 @@ def setup(data: bytes, inventory: dict[str, Any],
         grids={tag: list(grids[tag]) for tag in dict(kernel_tags)},
         pool_va=pool_va, pool_size=pool_size,
         trace_sha256={str(label): hashlib.sha256(
-            trace_path(label).read_bytes()).hexdigest()
+            trace_paths[label].read_bytes()).hexdigest()
             for label in (in_label, ref_label)},
         capture_fnv={str(label): {str(p["frame"]): f"0x{p['fnv']:016x}"
                                   for p in capture[label]["pools"]}
@@ -4696,7 +4737,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..88}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..89}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
