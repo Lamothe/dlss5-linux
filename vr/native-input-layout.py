@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Validate and pack bounded row-pitched image planes for native input adapters.
+"""Validate and pack established reference input planes for native adapters.
 
-This host-side layout utility does not define DLSS preprocessing, colour space,
-coordinate conventions, or model bindings. It only strips row padding while
-preserving each row's bytes, for formats and dimensions established separately.
+This host-side layout utility strips row padding while preserving sample bytes.
+It does not define DLSS preprocessing, colour space, coordinate conventions,
+or runtime/model bindings.
 """
 from __future__ import annotations
+
+REFERENCE_INPUT_LAYOUTS = {
+    "input-colour.bin": (4, 2),
+    "input-depth.bin": (1, 4),
+    "input-motion.bin": (2, 2),
+}
 
 
 def pack_rows(data: bytes | bytearray | memoryview, *, width: int, height: int,
@@ -31,3 +37,14 @@ def pack_rows(data: bytes | bytearray | memoryview, *, width: int, height: int,
         target = row * row_bytes
         packed[target:target + row_bytes] = view[source:source + row_bytes]
     return bytes(packed)
+
+
+def pack_reference_input(name: str, data: bytes | bytearray | memoryview, *,
+                         width: int, height: int, row_pitch: int) -> bytes:
+    """Pack a documented reference plane by its capture filename and format."""
+    try:
+        components, bytes_per_component = REFERENCE_INPUT_LAYOUTS[name]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"unsupported reference input plane: {name!r}") from error
+    return pack_rows(data, width=width, height=height, components=components,
+                     bytes_per_component=bytes_per_component, row_pitch=row_pitch)
