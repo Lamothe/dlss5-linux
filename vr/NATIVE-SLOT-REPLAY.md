@@ -3490,7 +3490,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Next
 
-Slots 87 and 88 have been replayed against paired captures. Slot 87 was independently reviewed and published in commit `4a8d8bf`; slot 88's independent review and publication remain pending. Next proceed to slot 89 after completing slot 88 review/publication, then validate slot 89's complete trace and DLL weight/layout roles. The remaining named kernels are in
+Slots 87 and 88 have been replayed against paired captures. Slot 87 was independently reviewed and published in commit `4a8d8bf`; slot 88 was independently reviewed, verified and published in commit `13346c6` (pushed to `origin/main`). Next proceed to slot 89, validating its complete trace and DLL weight/layout roles before adding its contract. The remaining named kernels are in
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
 ViT stage (85–98; slots 81–88 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
