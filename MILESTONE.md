@@ -1,3 +1,27 @@
+# DLSS5 Linux migration milestones
+
+Updated 24/10/2026. This document defines the Linux project, independently of the later VR integration project.
+
+## L1 — Native execution contracts (in progress)
+
+Recover and validate kernel interfaces, weight bindings, memory layouts and data flow against repeatable vendor captures with positive/negative controls. The reviewed upstream pre-decoder baseline is slots 24–89 (66/156 launches); slot 90 is local pending work. Decoder investigations are recorded separately. Per-slot replay is not an end-to-end evaluator.
+
+## L2 — Complete native evaluator (not yet demonstrated)
+
+Assemble preprocessing, the full graph, decoder/output conversion and the temporal feedback/reset state into a native Linux evaluator. Drive it with live inputs, not captured intermediate activations. Windows/Proton may supply reference evidence but must not be required by the evaluator.
+
+## L3 — Migration acceptance (not yet demonstrated)
+
+Demonstrate native neural-rendered image output and validate it against the reference across repeated frames, reset/history transitions and changed inputs. Record supported hardware, resolutions, numerical/visual differences, performance, stability and remaining limitations. Do not declare completion from API success, kernel counts or a Proton VR demonstration. Proprietary runtime provenance and reuse/distribution rights remain separate unresolved constraints.
+
+## Later, separate project — VR integration
+
+Only after the native migration is validated, integrate the evaluator into the existing Genesis Linux Vulkan/OpenXR host through its neural seam. Per-eye state, stereo correctness, headset behaviour and VR performance belong to [dlss5-vr](https://github.com/Lamothe/dlss5-vr), not Linux migration acceptance.
+
+## Archived Proton VR demonstration
+
+The following is historical evidence from the predecessor project, not a completed Linux migration milestone.
+
 # Milestone 1 — interactive neural-rendered PC VR
 
 Recorded 05/10/2026. Proposed tag: `milestone-1-neural-vr`.

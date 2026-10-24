@@ -1,6 +1,50 @@
+# DLSS5 Linux — native neural-rendering migration
+
+**Current goal: migrate the neural-rendering pipeline to native Linux. VR is a separate, later project.**
+
+Repository: [Lamothe/dlss5-linux](https://github.com/Lamothe/dlss5-linux). Local workspace: `/home/michael/Projects/dlss5-linux`.
+
+## Milestones and project boundary
+
+1. **Native Linux migration (this project):** recover and validate the complete pipeline, including preprocessing, learned-weight bindings, the full execution graph, temporal history/reset behaviour and output conversion. Demonstrate end-to-end neural-rendered images from live inputs using native Linux execution, without Windows host code, DirectX or Proton in the evaluator. Isolated kernel replays are intermediate evidence, not completion.
+2. **VR integration ([dlss5-vr](https://github.com/Lamothe/dlss5-vr), later):** consume the validated native evaluator in the existing Genesis host; then validate per-eye state, stereo correctness, performance and headset behaviour. This is not a prerequisite for the Linux migration. Do not build another VR host.
+
+The earlier Proton-based desktop/VR demonstrations are reference experiments, **not proof of a native Linux migration**. Proton may still be used to capture vendor reference data; the final native evaluator must not depend on it.
+
+## Current migration status — 24/10/2026
+
+- Published reference baseline: 66 pre-decoder slot contracts (slots 24–89) out of the archival 156-launch inventory, through upstream commit `120e124`.
+- Slot 90 work was copied intact into this workspace but remains uncommitted, pending final documentation corrections and independent review. Do not count it as published/qualified coverage.
+- These counts describe the pre-decoder replay campaign, not percentage completion of the entire migration. Decoder and temporal investigations have their own bounded evidence.
+- A complete native input-to-output pipeline and native neural-rendered image are **not yet established**. VR/Genesis integration is out of scope for the current campaign.
+
+Historical handovers still name the predecessor workspace/remote: for all continuing migration work, use this workspace and its `dlss5-linux` origin instead. Do not follow their old publishing destination.
+
+Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
+
+## Layout, dependencies and checks
+
+The existing `vr/` directory name is retained to preserve imports, capture paths and historical evidence. Native migration probes live there alongside the inherited reference harness; the directory name does not make VR part of this milestone. The Git history is preserved from `dlss5-vr`; inherited VR source is historical/reference material, not the active deliverable.
+
+This workstation's excluded dependencies and evidence were copied using copy-on-write reflinks, not shared writable directories. They remain local and are **not uploaded**: model/runtime DLLs, assets, captures, prefixes, SDKs, generated binaries and raw logs. A fresh clone is not turnkey. See [CHECKPOINT.md](CHECKPOINT.md) for the dependency boundary. Existing machine-specific runtime manifests may need adaptation before launching a reference application from this workspace.
+
+CPU-only migration regression checks (no GPU/headset or proprietary payload required):
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 vr/native-slot-replay-probe.py self-test
+PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-report.py self-test
+PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-names.py self-test
+```
+
+Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.
+
+## Historical Proton experiment notes (archived, not the current milestone)
+
+The text below records the earlier experiment and its original dates/limits. The migration scope and status above supersede its current-milestone wording.
+
 # DLSS neural-rendering experiment
 
-**Current milestone (05/10/2026): interactive neural-rendered VR is demonstrated.** See [MILESTONE.md](MILESTONE.md) for current capabilities, user confirmation and limits; [CHECKPOINT.md](CHECKPOINT.md) for the source-only repository boundary. Earlier notes below retain desktop-test history.
+**Historical Proton milestone (05/10/2026): interactive neural-rendered VR was demonstrated.** See [MILESTONE.md](MILESTONE.md) for current capabilities, user confirmation and limits; [CHECKPOINT.md](CHECKPOINT.md) for the source-only repository boundary. Earlier notes below retain desktop-test history.
 
 Prepared 03/10/2026 for Linux/Wayland, RTX 4070 Ti SUPER, NVIDIA 615.71.09. The desktop experiment uses a Windows DirectX12 NVIDIA sample under Proton. The standalone VR prototype now renders neural stereo through Proton/OpenXR/WiVRn; neither is native Linux neural rendering. See `vr/ROOM.md` for the interactive demonstration room and `vr/TIMING-1080-RESULTS.md` for the earlier sphere benchmark.
 
