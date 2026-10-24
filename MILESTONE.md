@@ -1,10 +1,10 @@
 # DLSS5 Linux migration milestones
 
-Updated 24/10/2026. This document defines the Linux project, independently of the later VR integration project.
+Updated 25/10/2026. This document defines the Linux project, independently of the later VR integration project.
 
 ## L1 — Native execution contracts (in progress)
 
-Recover and validate kernel interfaces, weight bindings, memory layouts and data flow against repeatable vendor captures with positive/negative controls. The reviewed upstream pre-decoder baseline is slots 24–89 (66/156 launches); slot 90 is local pending work. Decoder investigations are recorded separately. Per-slot replay is not an end-to-end evaluator.
+Recover and validate kernel interfaces, weight bindings, memory layouts and data flow against repeatable vendor captures with positive/negative controls. The published pre-decoder baseline is slots 24–89 (66/156 launches); slot 90 is locally qualified and independently reviewed, with publication pending (67/156 local evidence). Decoder investigations are recorded separately. Per-slot replay is not an end-to-end evaluator.
 
 ## L2 — Complete native evaluator (not yet demonstrated)
 

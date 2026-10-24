@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-89 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-90 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty-six per-slot contracts are covered:
+cut point (LADDER.md). Sixty-seven per-slot contracts are covered, sixty-six of which have fp8 siblings (slot 57 is single-variant):
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -3421,6 +3421,26 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         output_word=2, output_bytes=786432,
         sync_word=7, sync_bytes=256,
         input_label=87, reference_label=88,
+        wrong_word=0, wrong_bytes=196608),
+    90: dict(
+        slot=90,
+        psize=80,
+        name_live="cc_vit_1d_qkv_chained_fp8",
+        name_sibling="cc_vit_1d_qkv_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Block37 qkv repeats the established ten-word map. Paired s89/s90
+        # captures pin q/k/v at w1/w2/w3, 1,179,648-byte fourth output w6,
+        # 128-byte variant-independent w5 data and 128-byte w8 handoff.
+        container=5,
+        record_name="block37.layer2.layer", record_bytes=3145856,
+        record_sha256="2319a1aed3c121b005e210af6c44bce0bbe5ef3d5cfed548a8d95d9d5d78d16b",
+        constant_values={9: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_WEIGHTS,
+                      CLS_POOL, CLS_POOL, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=1, output_bytes=196608,
+        extra_outputs=((2, 196608), (3, 196608), (6, 1179648), (5, 128)),
+        sync_word=8, sync_bytes=128,
+        input_label=89, reference_label=90,
         wrong_word=0, wrong_bytes=196608),
     89: dict(
         slot=89,

@@ -1,9 +1,8 @@
-# Native pre-decoder kernel replay (slots 24-89) — 24/10/2026
+# Native pre-decoder kernel replay (slots 24-90) — 25/10/2026
 
 ## Result
 
-**Sixty-six pre-decoder kernel launches (slots 24–89) have been replayed;
-replay coverage is 66/156. The archival vendor inventory covers 156 launches; fifteen distinct kernel
+**The published baseline covers 66 pre-decoder kernel launches (slots 24–89); slot 90 adds verified local replay evidence, bringing local coverage to 67/156; review has passed and publication is pending. The archival vendor inventory covers 156 launches; fifteen distinct kernel
 names — slots 26/30/34/38/42/46/50/54 share one kernel across two geometries, slots
 27/31/35/39/43/47/51, 28/32/36/40/44/48/52 and 29/33/37/41/45/49/53 reuse kernels at the same geometry, slots
 24 and 25 are single-use `inpview` kernels, slots
@@ -45,12 +44,12 @@ slot 77's `projection` chained launch reusing slot 72's kernel and slot 78's
 chained launch reusing slot 82's kernel, and slot 88's `ffn_expand` chained
 launch reusing slot 83's kernel, and slot 89's `ffn_contract` chained launch
 reusing slot 84's kernel) of the vendor's 156-launch sequence are covered;
-slots 24–89 have reproduced the vendor's captured pool state byte-for-byte.** Each kernel's launch is rebuilt from its captured parameter
+slots 24–90 have reproduced the vendor's captured pool state byte-for-byte in local evidence (slots 24–89 published; slot 90 reviewed, publication pending).** Each kernel's launch is rebuilt from its captured parameter
 block and executed through the **native Linux CUDA driver** on the RTX 4070
 Ti SUPER — no Windows code, DirectX or Proton — and the native pool state
 after the launch equals the vendor's ladder capture at the matching cut point
 ([LADDER.md](LADDER.md)) over the **whole 62,684,160-byte pool: 0 differing
-bytes on all three frames, in both execute runs, for all sixty-six completed replays (slots 24–89)**.
+bytes on all three frames, in both execute runs, for all sixty-seven completed replays with local evidence (slots 24–90; 66 published, slot 90 reviewed with publication pending)**.
 
 | Slot | Kernel (NVAPI-ARGS.md) | Contract | Cut | Grid |
 |---|---|---|---|---|
@@ -120,6 +119,7 @@ bytes on all three frames, in both execute runs, for all sixty-six completed rep
 | 87 | `cc_vit_1d_projection_chained_fp8` | reads slot86 attention w0 (59,931,648) + residual w1 (59,145,216) + sync w6 (88,064); w3 binds `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864); writes w2 (196,608 B at 60,128,256), w5 (3,932,160 B at 46,808,064), w4 data (64 B at 88,576), w7 sync (64 B at 89,088); constant w8=(12,16) | s86→s87 | (16,1,4) |
 | 88 | `cc_vit_1d_ffn_expand_chained_fp8` | reads input w0 (60,128,256) + weights `block37.layer0.layer` (4,194,320 B); binds previous sync w6 at address 89,088 (slot87 publishes 64 B there); writes output w2 (786,432 B at 39,091,200) + sync w7 (256 B at 89,600); constant w8=(12,16) | s87→s88 | (64,1,1) |
 | 89 | `cc_vit_1d_ffn_contract_chained_fp8` | reads expansion w0 (786,432 B at 39,091,200) + residual w1 (196,608 B at 60,128,256); w3 binds `block37.layer1.layer` (4,196,352 B at heap 102,754,304); consumes slot88 w7 at w6=89,600; writes w2 (196,608 B at 60,324,864), w5 (393,216 B at 47,201,280), w4 output data (64 B at 90,112), w7 sync (64 B at 90,624); constant w8=(12,16) | s88→s89 | (16,1,4) |
+| 90 | `cc_vit_1d_qkv_chained_fp8` | reads slot89 contraction w0 (196,608 B at 60,324,864); w4 binds `block37.layer2.layer` (3,145,856 B); writes q/k/v w1/w2/w3 (196,608 B each at 60,914,688 / 60,718,080 / 60,521,472), fourth region w6 (1,179,648 B at 30,833,664), output data w5 (128 B at 91,136), sync w8 (128 B at 91,648); consumes slot89 w7 at w7=90,624; constant w9=(12,16) | s89→s90 | (32,1,2) |
 
 Slot 25 is the `ffwd→proj` pair's second half and the first kernel with the
 **chained sync handoff**: it consumes slot 24's sync record (w7 at pool
@@ -1079,13 +1079,13 @@ only (windows are written before verdicts on any mismatch). Slots 24–84 use
 complete runs `{a,b,skip,wrong,tail}`; slot85's complete runs are
 `{a,b,skip,wrong-record-final,tail-final}`; slot86 has execute pair and
 skip/wrong/tail controls under `/tmp/dlss86-*`, slot87's published runs use
-`/tmp/dlss87-published-*` and `/tmp/dlss87-final-*`, slot88 published runs use `/tmp/dlss88-*`; slot89 local runs use `/tmp/dlss89-*` (exploratory retry directories are retained separately). The `pair` command persists its result as `pair.json`
+`/tmp/dlss87-published-*` and `/tmp/dlss87-final-*`, slot88 published runs use `/tmp/dlss88-*`; slot89 published runs use `/tmp/dlss89-*`; slot90 local runs use `/tmp/dlss90-*` (exploratory retry directories are retained separately). The `pair` command persists its result as `pair.json`
 beside the first run.
 
 Self-test: **40 corruption controls** (14 verdict, 6 consistency, 5 pair, 1
-metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **810
+metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **822
 known answers (3 diff, 4 layout, 4 following-record, 2 heap-instance, 1 metadata, 1 grid,
-3 rotation, and 12 contract-table shape checks per contract — 792 across the sixty-six
+3 rotation, and 12 contract-table shape checks per contract — 804 across the sixty-seven
 table entries, counted per contract rather than per table). The contract table's shape is itself
 pinned (slot key equals the table key, class-table length = parameter size,
 constant words carry a pinned entry for exactly the constant-class indices
@@ -3336,14 +3336,14 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Scope and limitations
 
-- The claim covers **sixty-six launches of the 156** (slots 24–89 replayed; fifteen distinct
+- The claim covers **sixty-seven locally evidenced launches of the 156** (slots 24–90 replayed; slots 24–89 published and slot 90 reviewed with publication pending; fifteen distinct
   kernel names, one shared across two geometries (26/30/34/38/42/46/50/54), three reused at
   the same geometry (27/31/35/39/43/47/51, 28/32/36/40/44/48/52, 29/33/37/41/45/49/53), two
   single-use `inpview` (24/25), two single-use `proj_pool` and `final_head`
   variants (55/56), one single-use
   `repack` (57), one single-use `ffn_expand` `publish` variant (58), the
   `ffn_contract` `chained` variant (59/64/69/74/79/84/89), the `qkv` `chained` variant
-  (60/65/70/75/80/85/90/95), the `attention` `chained` variant (61/66/71/76/81/86/91/96), the `projection`
+  (60/65/70/75/80/85/90), the `attention` `chained` variant (61/66/71/76/81/86/91/96), the `projection`
   `chained` variant (62/67/72/77/82/87/92) and the `ffn_expand` `chained` variant (63/68/73/78/83/88/93), for fifteen distinct kernel names in total; one resolution
   (720×720, eye0), three frames under the stationary-input protocol. The
   method is generic — the parameter block, geometry, word classes and weight
@@ -3490,9 +3490,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Next
 
-Slots 87, 88 and 89 have been replayed against paired captures. Slot 87 was independently reviewed and published in commit `4a8d8bf`; slot 88 was independently reviewed, verified and published in commit `13346c6` (pushed to `origin/main`). Slot89 contract/results are recorded below; independent review passed and publication is pending. Next proceed to slot90 after publishing slot89. The remaining named kernels are in
+Slots 87–89 have been replayed against paired captures; slots 87, 88 and 89 are independently reviewed and published in commits `4a8d8bf`, `13346c6` and `120e124` respectively (pushed to `origin/main`). Slot90's paired captures validate and match; its write-set is fully attributed below. Slot90 has now passed independent review; commit and publish its qualified contract/evidence, then continue with slot91 and the remaining native migration work. The remaining named kernels are in
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
-ViT stage (85–98; slots 81–89 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
+ViT stage (85–98; slots 81–90 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
 [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md) and slot 154 (the final
 blend) writes only outside the working pool. Each remaining kernel needs a
@@ -4861,7 +4861,7 @@ At stage 69, this was the current coverage: **54/156** (slots 24–77).
 
 The slot 87 `cc_vit_1d_projection_chained_fp8` (s86 → s87) contract is now in `vr/native-slot-replay-probe.py`. It repeats the nine-word projection map: psize 72, grid (16,1,4), block (32,4,1), w8=(12,16); w0=59,931,648, w1=59,145,216, w2=60,128,256 (196,608 B), w3=`block36.layer4.layer` (1,050,624 B at heap offset 97,508,864; record SHA-256 `2cea0c9cc438cfe9a1b4c9a352667b670dc3b4149dc2e64dae8c731aef1c4903`), w4=88,576 (64 B), w5=46,808,064 (3,932,160 B), w6=88,064, w7=89,088 (64 B), w8=(12,16). DLL-derived record mapping, trace bindings and the named s86→s87 write-set corroborate the contract.
 
-Paired captures validate and match; write-set totals 586,723/586,934/586,810 changed bytes with four attributed regions and zero unattributed. Execute pair is bit-identical over six entries, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; chained whole-pool output matches, sibling matches w2/w5/w4 and differs only in the 64-byte w7 handoff. Skip, wrong-input and tail controls each cover six entries with no enforced failures; wrong input rejects and tail reproduces execute. The paired execute run hash is also recorded in `vr/CAMPAIGN-HANDOVER.md`; the local control run hashes are `skip` `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, `wrong` `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, and `tail` `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113` (SHA-256 of each `run.json`; control files ephemeral under `/tmp/dlss87-final-*`, execute pair under `/tmp/dlss87-published-*`). At slot87 publication, probe tests passed 786 known answers/40 corruption controls; current slot89 verification passes 810 known answers/40 corruption controls, ladder-report 19 and ladder-names 14 controls. Coverage is locally verified at 66/156 (slots 24–89); slot89 independent review passed; publication is pending.
+Paired captures validate and match; write-set totals 586,723/586,934/586,810 changed bytes with four attributed regions and zero unattributed. Execute pair is bit-identical over six entries, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; chained whole-pool output matches, sibling matches w2/w5/w4 and differs only in the 64-byte w7 handoff. Skip, wrong-input and tail controls each cover six entries with no enforced failures; wrong input rejects and tail reproduces execute. The paired execute run hash is also recorded in `vr/CAMPAIGN-HANDOVER.md`; the local control run hashes are `skip` `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, `wrong` `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, and `tail` `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113` (SHA-256 of each `run.json`; control files ephemeral under `/tmp/dlss87-final-*`, execute pair under `/tmp/dlss87-published-*`). At slot87 publication, probe tests passed 786 known answers/40 corruption controls; slot89 publication verification passed 810 known answers/40 corruption controls; current slot90 verification passes 822 known answers/40 corruption controls (804 contract-shape checks), ladder-report 19 and ladder-names 14 controls. Published coverage is 66/156 (slots 24–89); local coverage including slot90 is 67/156; slot90 review has passed and publication is pending.
 
 ## Slot 88 verification (published, 24/10/2026)
 
@@ -4874,4 +4874,11 @@ Execute pair has six entries and is bit-identical (run SHA-256 `0165ba503c8be7c1
 
 Slot 89 `cc_vit_1d_ffn_contract_chained_fp8` (s88→s89), psize 72, grid (16,1,4), block (32,4,1), repeats the established contraction map: w0 input at 39,091,200, w1 residual at 60,128,256, w2 output at 60,324,864 (196,608 B), w3 weights `block37.layer1.layer` (4,196,352 B at heap offset 102,754,304; payload SHA-256 `b93228e97354c86a08973180f3ea549153f97ae360a0586e5f1360345b770957`), w4 data at 90,112 (64 B), w5 output at 47,201,280 (393,216 B), w6 binds slot88 w7 at 89,600, w7 publishes 64 B at 90,624, and w8=(12,16). Paired captures validate and match; s88→s89 write-set totals 587,053/587,154/587,239 changed bytes, attributed to w5 (390,409/390,484/390,568), w2 (196,516/196,542/196,543), and w4/w7 (64 B each), zero unattributed. The trace weight scan resolves 459/459 addressed heap words in each trace to record starts, zero mid-record.
 
-Execute pair has six entries, bit-identical, run SHA-256 `cafafb39f687df8562c8f0954438cbff4a34189aecc5f4598c2d18b2908b1f2c`; all six chained whole-pool comparisons match. Skip, wrong and tail controls each have six entries and no enforced failures; skip leaves the input pool unchanged and does not match output, wrong input changes the output and does not match, and tail reproduces execute. Run.json SHA-256 values: skip `c21a549ea3bb949715548125b8c8c34eed0fe9ea65262dd64f9feddd5f2701d1`, wrong `3e641e661579880afae22a897628c634ca9be750db9aaf778315fbe3b0fadeb0`, tail `02ac1b94eb6f3fb7076247fa195478b60ed76ff5deb158dc46bd8deedcf443e5` (ephemeral `/tmp/dlss89-*`). Paired captures and traces are local at `vr/logs/ladder/s89{a,b}` and `vr/logs/capture/nvapi-trace-ladder-s89{a,b}.log`. Current coverage is 66/156; the slot89 independent review passed and publication is pending.
+Execute pair has six entries, bit-identical, run SHA-256 `cafafb39f687df8562c8f0954438cbff4a34189aecc5f4598c2d18b2908b1f2c`; all six chained whole-pool comparisons match. Skip, wrong and tail controls each have six entries and no enforced failures; skip leaves the input pool unchanged and does not match output, wrong input changes the output and does not match, and tail reproduces execute. Run.json SHA-256 values: skip `c21a549ea3bb949715548125b8c8c34eed0fe9ea65262dd64f9feddd5f2701d1`, wrong `3e641e661579880afae22a897628c634ca9be750db9aaf778315fbe3b0fadeb0`, tail `02ac1b94eb6f3fb7076247fa195478b60ed76ff5deb158dc46bd8deedcf443e5` (ephemeral `/tmp/dlss89-*`). Paired captures and traces are local at `vr/logs/ladder/s89{a,b}` and `vr/logs/capture/nvapi-trace-ladder-s89{a,b}.log`. Published coverage is 66/156 (slots 24–89); slot89 was independently reviewed and published in `120e124`. Slot90 is qualified locally and independently reviewed; local coverage is 67/156, with publication pending.
+
+
+## Slot 90 verification (local, 25/10/2026; review passed, publication pending)
+
+Slot 90 `cc_vit_1d_qkv_chained_fp8` (s89→s90), psize80, grid (32,1,2), block (32,4,1), reads slot89 contraction at w0=60,324,864, consumes w7=90,624, and binds `block37.layer2.layer` at w4 (3,145,856 B; heap offset 106,950,656; payload SHA-256 `2319a1aed3c121b005e210af6c44bce0bbe5ef3d5cfed548a8d95d9d5d78d16b`). It writes q/k/v w1/w2/w3 at 60,914,688/60,718,080/60,521,472 (196,608 B each), fourth output w6 at 30,833,664 (1,179,648 B), variant-independent data w5 at 91,136 (128 B), and sync w8 at 91,648 (128 B); w9=(12,16). Paired captures validate and match. s89b→s90a changed 1,759,578/1,758,926/1,758,890 bytes, all attributed to six regions with zero unattributed: w6 1,170,084/1,169,496/1,169,476; w1 196,546 each; w3 196,523/196,519/196,507; w2 196,169/196,109/196,105; w5 and w8 128 B each. Trace weight scan: 459/459 addressed words resolve to record starts in both traces, zero mid-record.
+
+Execute pair `/tmp/dlss90-exec-{a,b}`: six entries, bit-identical run SHA-256 `6db7fdd6995ec76cc3975bf5d93160e1a132e66e1058f2ae7708554d8625fe80`; three chained full-pool matches. fp8 sibling matches q/k/v, w6 and w5 outputs and differs only in the 128-byte w8 handoff (all three entries). Skip/wrong/tail controls each cover six entries with no enforced failures: skip is unchanged/non-matching; wrong input changes pool/output and rejects; tail reproduces the chained result and its sibling findings. Run hashes: skip `bd68180a4dd71930f6098d88c1dd08aa05948c0af83d4a4a317bbaff6651f0c1`, wrong `27ddcdc4acdeb14fcd52e4dd0f205df5fab134c5951ee95c6e9ca5eee196e8b6`, tail `9247c8832636301841153f83b04cf878f8f80be53c1dfbb9ee45347703913eb0`. Artefacts are ephemeral under `/tmp/dlss90-*`; paired captures/traces remain local under `vr/logs/ladder/s90{a,b}` and `vr/logs/capture/nvapi-trace-ladder-s90{a,b}.log`. Local coverage is 67/156 (slots 24–90); slot90 passed independent review, publication pending.

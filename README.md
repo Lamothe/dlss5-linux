@@ -11,10 +11,10 @@ Repository: [Lamothe/dlss5-linux](https://github.com/Lamothe/dlss5-linux). Local
 
 The earlier Proton-based desktop/VR demonstrations are reference experiments, **not proof of a native Linux migration**. Proton may still be used to capture vendor reference data; the final native evaluator must not depend on it.
 
-## Current migration status — 24/10/2026
+## Current migration status — 25/10/2026
 
-- Published reference baseline: 66 pre-decoder slot contracts (slots 24–89) out of the archival 156-launch inventory, through upstream commit `120e124`.
-- Slot 90 work was copied intact into this workspace but remains uncommitted, pending final documentation corrections and independent review. Do not count it as published/qualified coverage.
+- Published reference baseline: 66 pre-decoder slot contracts (slots 24–89) out of the archival 156-launch inventory, through commit `120e124` in the source history.
+- Slot 90 is qualified locally with paired captures, native replay and controls, and has passed independent review; commit/publication is pending. Local coverage is 67/156, while published coverage remains 66/156.
 - These counts describe the pre-decoder replay campaign, not percentage completion of the entire migration. Decoder and temporal investigations have their own bounded evidence.
 - A complete native input-to-output pipeline and native neural-rendered image are **not yet established**. VR/Genesis integration is out of scope for the current campaign.
 
