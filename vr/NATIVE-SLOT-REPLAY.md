@@ -1,9 +1,9 @@
-# Native pre-decoder kernel replay (slots 24-87) — 24/10/2026
+# Native pre-decoder kernel replay (slots 24-88) — 24/10/2026
 
 ## Result
 
-**Sixty-four pre-decoder kernel launches (slots 24–87) have been replayed;
-inventory and replay coverage are both 64/156. The 64 launches (slots 24–87; fifteen distinct kernel
+**Sixty-five pre-decoder kernel launches (slots 24–88) have been replayed;
+replay coverage is 65/156. The archival vendor inventory covers 156 launches; fifteen distinct kernel
 names — slots 26/30/34/38/42/46/50/54 share one kernel across two geometries, slots
 27/31/35/39/43/47/51, 28/32/36/40/44/48/52 and 29/33/37/41/45/49/53 reuse kernels at the same geometry, slots
 24 and 25 are single-use `inpview` kernels, slots
@@ -41,15 +41,15 @@ slot 77's `projection` chained launch reusing slot 72's kernel and slot 78's
 `projection` chained launch reusing slot 77's kernel, followed by slot 83's
 `ffn_expand` chained launch reusing slot 78's kernel, and slot 84's
 `ffn_contract` chained launch reusing slot 79's kernel, followed by slot 85's
-`qkv` chained launch reusing slot 80's kernel, and slot 87's `projection`
-chained launch reusing slot 82's kernel) of the vendor's
-156-launch sequence are covered; slots 24–87 have reproduced the vendor's captured pool state
-byte-for-byte.** Each kernel's launch is rebuilt from its captured parameter
+`qkv` chained launch reusing slot 80's kernel, and slot 86's `attention` chained launch reusing slot 81's kernel, slot 87's `projection`
+chained launch reusing slot 82's kernel, and slot 88's `ffn_expand` chained
+launch reusing slot 83's kernel) of the vendor's 156-launch sequence are covered; slots 24–88
+have reproduced the vendor's captured pool state byte-for-byte.** Each kernel's launch is rebuilt from its captured parameter
 block and executed through the **native Linux CUDA driver** on the RTX 4070
 Ti SUPER — no Windows code, DirectX or Proton — and the native pool state
 after the launch equals the vendor's ladder capture at the matching cut point
 ([LADDER.md](LADDER.md)) over the **whole 62,684,160-byte pool: 0 differing
-bytes on all three frames, in both execute runs, for all sixty-four completed replays (slots 24–87)**.
+bytes on all three frames, in both execute runs, for all sixty-five completed replays (slots 24–88)**.
 
 | Slot | Kernel (NVAPI-ARGS.md) | Contract | Cut | Grid |
 |---|---|---|---|---|
@@ -90,17 +90,17 @@ bytes on all three frames, in both execute runs, for all sixty-four completed re
 | 58 | `cc_vit_1d_ffn_expand_publish_fp8` | reads input w0 (196,608 B) + weights `block31.layer0.layer`; writes output w2 (786,432 B) + sync w7 (256 B) | s57→s58 | (64,1,1) |
 | 59 | `cc_vit_1d_ffn_contract_chained_fp8` | reads input w0 (786,432 B) + residual w1 (196,608 B) + weights `block31.layer1.layer` + previous sync w6; writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s58→s59 | (16,1,4) |
 | 60 | `cc_vit_1d_qkv_chained_fp8` | reads input w0 (196,608 B) + weights `block31.layer2.layer` + previous sync w7; writes q/k/v w1, w2, w3 (196,608 B each) + output w6 (1,179,648 B) + output w5 (128 B) + sync w8 (128 B) | s59→s60 | (32,1,2) |
-| 61 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block31.layer3.layer` (2 B placeholder — a dead binding) + previous sync w5; writes output w3 (196,608 B) + sync w6 (256 B) | s60→s61 | (32,1,1) |
+| 61 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block31.layer3.layer` (2 B placeholder; finite mutation evidence only, not proof of universal insensitivity) + previous sync w5; writes output w3 (196,608 B) + sync w6 (256 B) | s60→s61 | (32,1,1) |
 | 62 | `cc_vit_1d_projection_chained_fp8` | reads input w0 (196,608 B) + residual w1 (196,608 B) + weights `block31.layer4.layer` + previous sync w6; writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s61→s62 | (16,1,4) |
 | 63 | `cc_vit_1d_ffn_expand_chained_fp8` | reads input w0 (196,608 B) + weights `block32.layer0.layer` + previous sync w6 (64 B); writes output w2 (786,432 B) + sync w7 (256 B) | s62→s63 | (64,1,1) |
 | 64 | `cc_vit_1d_ffn_contract_chained_fp8` | reads input w0 (786,432 B) + residual w1 (196,608 B) + weights `block32.layer1.layer` + previous sync w6 (256 B); writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s63→s64 | (16,1,4) |
 | 65 | `cc_vit_1d_qkv_chained_fp8` | reads input w0 (196,608 B) + weights `block32.layer2.layer` + previous sync w7 (64 B); writes q/k/v w1, w2, w3 (196,608 B each) + output w6 (1,179,648 B) + output w5 (128 B) + sync w8 (128 B) | s64→s65 | (32,1,2) |
-| 66 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block32.layer3.layer` (2 B placeholder — a dead binding) + previous sync w5 (128 B); writes output w3 (196,608 B) + sync w6 (256 B) | s65→s66 | (32,1,1) |
+| 66 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block32.layer3.layer` (2 B placeholder; finite mutation evidence only, not proof of universal insensitivity) + previous sync w5 (128 B); writes output w3 (196,608 B) + sync w6 (256 B) | s65→s66 | (32,1,1) |
 | 67 | `cc_vit_1d_projection_chained_fp8` | reads input w0 (196,608 B) + residual w1 (196,608 B) + weights `block32.layer4.layer` + previous sync w6 (256 B); writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s66→s67 | (16,1,4) |
 | 68 | `cc_vit_1d_ffn_expand_chained_fp8` | reads input w0 (196,608 B) + weights `block33.layer0.layer` + previous sync w6 (64 B); writes output w2 (786,432 B) + sync w7 (256 B) | s67→s68 | (64,1,1) |
 | 69 | `cc_vit_1d_ffn_contract_chained_fp8` | reads input w0 (786,432 B) + residual w1 (196,608 B) + weights `block33.layer1.layer` + previous sync w6 (256 B); writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s68→s69 | (16,1,4) |
 | 70 | `cc_vit_1d_qkv_chained_fp8` | reads input w0 (196,608 B) + weights `block33.layer2.layer` + previous sync w7 (64 B); writes q/k/v w1, w2, w3 (196,608 B each) + output w6 (1,179,648 B) + output w5 (128 B) + sync w8 (128 B) | s69→s70 | (32,1,2) |
-| 71 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block33.layer3.layer` (2 B placeholder — a dead binding) + previous sync w5 (128 B); writes output w3 (196,608 B) + sync w6 (256 B) | s70→s71 | (32,1,1) |
+| 71 | `cc_vit_1d_attention_chained_fp8` | reads q/k/v w0, w1, w2 (196,608 B each) + weights `block33.layer3.layer` (2 B placeholder; finite mutation evidence only, not proof of universal insensitivity) + previous sync w5 (128 B); writes output w3 (196,608 B) + sync w6 (256 B) | s70→s71 | (32,1,1) |
 | 72 | `cc_vit_1d_projection_chained_fp8` | reads input w0 (196,608 B) + residual w1 (196,608 B) + weights `block33.layer4.layer` + previous sync w6 (256 B); writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s71→s72 | (16,1,4) |
 | 73 | `cc_vit_1d_ffn_expand_chained_fp8` | reads input w0 (196,608 B) + weights `block34.layer0.layer` + previous sync w6 (64 B); writes output w2 (786,432 B) + sync w7 (256 B) | s72→s73 | (64,1,1) |
 | 74 | `cc_vit_1d_ffn_contract_chained_fp8` | reads input w0 (786,432 B) + residual w1 (196,608 B) + weights `block34.layer1.layer` + previous sync w6 (256 B); writes output w2 (196,608 B) + second output w5 (393,216 B) + third output w4 (64 B) + sync w7 (64 B) | s73→s74 | (16,1,4) |
@@ -115,8 +115,9 @@ bytes on all three frames, in both execute runs, for all sixty-four completed re
 | 83 | `cc_vit_1d_ffn_expand_chained_fp8` | reads slot82 projection output w0 (196,608 B at 58,948,608); w3 binds `block36.layer0.layer` (4,194,320 B at heap offset 85,970,944); w6 consumes slot82 w7 (64 B at 84,992); writes w2 (786,432 B at 38,304,768), w7 sync (256 B at 85,504); constant w8=(12,16) | s82→s83 | (64,1,1) |
 | 84 | `cc_vit_1d_ffn_contract_chained_fp8` | reads slot83 expansion w0 (786,432 B at 38,304,768) + residual slot82 projection w1 (196,608 B at 57,768,960); w3 binds `block36.layer1.layer` (4,196,352 B at heap offset 90,165,760); writes w2 (196,608 B at 59,145,216), w5 (393,216 B at 40,664,064), w4 output data (64 B at 86,016), w7 sync (64 B at 86,528); consumes slot83 w7 (256 B at 85,504), constant w8=(12,16) | s83→s84 | (16,1,4) |
 | 85 | `cc_vit_1d_qkv_chained_fp8` | reads slot84 contraction w0 (196,608 B at 59,145,216); w4 binds `block36.layer2.layer` (3,145,856 B at heap offset 94,362,112); writes q/k/v w1/w2/w3 (196,608 B each), fourth output w6 (1,179,648 B at 25,328,640), data w5 (128 B at 87,040), sync w8 (128 B at 87,552); consumes slot84 w7 at w7=86,528; constant w9=(12,16) | s84→s85 | (32,1,2) |
-| 86 | `cc_vit_1d_attention_chained_fp8` | reads slot85 q/k/v w0/w1/w2 (196,608 B each at 59,735,040 / 59,538,432 / 59,341,824) + slot85 w8 sync (128 B at 87,552); w4 binds `block36.layer3.layer` (2 B at heap offset 97,508,352; mutation sensitivity untested); writes output w3 (196,608 B at 59,931,648) + sync w6 (256 B at 88,064); constant w7=(12,16) | s85→s86 | (32,1,1) |
+| 86 | `cc_vit_1d_attention_chained_fp8` | reads slot85 q/k/v w0/w1/w2 (196,608 B each at 59,735,040 / 59,538,432 / 59,341,824) + slot85 w8 sync (128 B at 87,552); w4 binds `block36.layer3.layer` (2 B at heap offset 97,508,352; an unretained whole-record complement run matched the captured output, but no per-bit test ran and this is not one of the four documented mutation-supported cases); writes output w3 (196,608 B at 59,931,648) + sync w6 (256 B at 88,064); constant w7=(12,16) | s85→s86 | (32,1,1) |
 | 87 | `cc_vit_1d_projection_chained_fp8` | reads slot86 attention w0 (59,931,648) + residual w1 (59,145,216) + sync w6 (88,064); w3 binds `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864); writes w2 (196,608 B at 60,128,256), w5 (3,932,160 B at 46,808,064), w4 data (64 B at 88,576), w7 sync (64 B at 89,088); constant w8=(12,16) | s86→s87 | (16,1,4) |
+| 88 | `cc_vit_1d_ffn_expand_chained_fp8` | reads input w0 (60,128,256) + weights `block37.layer0.layer` (4,194,320 B); binds previous sync w6 at address 89,088 (slot87 publishes 64 B there); writes output w2 (786,432 B at 39,091,200) + sync w7 (256 B at 89,600); constant w8=(12,16) | s87→s88 | (64,1,1) |
 
 Slot 25 is the `ffwd→proj` pair's second half and the first kernel with the
 **chained sync handoff**: it consumes slot 24's sync record (w7 at pool
@@ -444,7 +445,7 @@ capture semantics were invented:
 | parameter block | trace slot dump (24 B / 40 B / 56 B / 72 B / 80 B), pinned equal across evals, runs and the capture sidecar |
 | input pool state | the capture after slot n−1 (exactly what slot n reads) |
 | reference pool state | the capture after slot n |
-| weight bytes | `block23.layer0.layer` (524,288 B) / `block23.layer1.layer` (263,168 B) / `block23.layer2.layer` (917,568 B) / `block23.layer3.layer` (263,168 B) / `block24.layer0.layer` (524,288 B) / `block24.layer1.layer` (263,168 B) / `block24.layer2.layer` (917,568 B) / `block24.layer3.layer` (263,168 B) / `block25.layer0.layer` (524,288 B) / `block25.layer1.layer` (263,168 B) / `block25.layer2.layer` (917,568 B) / `block25.layer3.layer` (263,168 B) / `block26.layer0.layer` (524,288 B) / `block26.layer1.layer` (263,168 B) / `block26.layer2.layer` (917,568 B) / `block26.layer3.layer` (263,168 B) / `block27.layer0.layer` (524,288 B) / `block27.layer1.layer` (263,168 B) / `block27.layer2.layer` (917,568 B) / `block27.layer3.layer` (263,168 B) / `block28.layer0.layer` (524,288 B) / `block28.layer1.layer` (263,168 B) / `block28.layer2.layer` (917,568 B) / `block28.layer3.layer` (263,168 B) / `block29.layer0.layer` (524,288 B) / `block29.layer1.layer` (263,168 B) / `block29.layer2.layer` (917,568 B) / `block29.layer3.layer` (263,168 B) / `block3.layer0.layer` (20,672 B — the record walk's interloper, not contract-bound) / `block30.layer0.layer` (524,288 B) / `block30.layer1.layer` (263,168 B) / `block30.layer2.layer` (917,568 B) / `block30.layer3.layer` (263,168 B) / `block30.layer4.layer` (524,304 B) / `block31.layer0.layer` (4,194,320 B) / `block31.layer1.layer` (4,196,352 B) / `block31.layer2.layer` (3,145,856 B) / `block31.layer3.layer` (2 B — the attention family's placeholder) / `block31.layer4.layer` (1,050,624 B) / `block32.layer0.layer` (4,194,320 B) / `block32.layer1.layer` (4,196,352 B) / `block32.layer2.layer` (3,145,856 B) / `block32.layer3.layer` (2 B — the second attention placeholder) / `block32.layer4.layer` (1,050,624 B) / `block33.layer0.layer` (4,194,320 B) / `block33.layer1.layer` (4,196,352 B) / `block33.layer2.layer` (3,145,856 B) / `block33.layer3.layer` (2 B — the third attention placeholder) / `block33.layer4.layer` (1,050,624 B) / `block34.layer0.layer` (4,194,320 B) / `block34.layer1.layer` (4,196,352 B) / `block34.layer2.layer` (3,145,856 B) / `block34.layer3.layer` (2 B — fourth attention placeholder); `block34.layer4.layer` (1,050,624 B); `block35.layer0.layer` (4,194,320 B at heap offset 73,382,400, slot78); `block35.layer1.layer` (4,196,352 B at heap offset 77,577,216, slot79); `block35.layer2.layer` (3,145,856 B at heap offset 81,773,568, slot80); `block35.layer3.layer` (2 B — fifth attention placeholder at heap offset 84,919,808, slot81); `block35.layer4.layer` (1,050,624 B at heap offset 84,920,320, slot82); and `block36.layer0.layer` (4,194,320 B at heap offset 85,970,944, slot83); `block36.layer1.layer` (4,196,352 B at heap offset 90,165,760, slot84) from the DLL's WEIGHTS_HT resource |
+| weight bytes | `block23.layer0.layer` (524,288 B) / `block23.layer1.layer` (263,168 B) / `block23.layer2.layer` (917,568 B) / `block23.layer3.layer` (263,168 B) / `block24.layer0.layer` (524,288 B) / `block24.layer1.layer` (263,168 B) / `block24.layer2.layer` (917,568 B) / `block24.layer3.layer` (263,168 B) / `block25.layer0.layer` (524,288 B) / `block25.layer1.layer` (263,168 B) / `block25.layer2.layer` (917,568 B) / `block25.layer3.layer` (263,168 B) / `block26.layer0.layer` (524,288 B) / `block26.layer1.layer` (263,168 B) / `block26.layer2.layer` (917,568 B) / `block26.layer3.layer` (263,168 B) / `block27.layer0.layer` (524,288 B) / `block27.layer1.layer` (263,168 B) / `block27.layer2.layer` (917,568 B) / `block27.layer3.layer` (263,168 B) / `block28.layer0.layer` (524,288 B) / `block28.layer1.layer` (263,168 B) / `block28.layer2.layer` (917,568 B) / `block28.layer3.layer` (263,168 B) / `block29.layer0.layer` (524,288 B) / `block29.layer1.layer` (263,168 B) / `block29.layer2.layer` (917,568 B) / `block29.layer3.layer` (263,168 B) / `block3.layer0.layer` (20,672 B — the record walk's interloper, not contract-bound) / `block30.layer0.layer` (524,288 B) / `block30.layer1.layer` (263,168 B) / `block30.layer2.layer` (917,568 B) / `block30.layer3.layer` (263,168 B) / `block30.layer4.layer` (524,304 B) / `block31.layer0.layer` (4,194,320 B) / `block31.layer1.layer` (4,196,352 B) / `block31.layer2.layer` (3,145,856 B) / `block31.layer3.layer` (2 B — the attention family's placeholder) / `block31.layer4.layer` (1,050,624 B) / `block32.layer0.layer` (4,194,320 B) / `block32.layer1.layer` (4,196,352 B) / `block32.layer2.layer` (3,145,856 B) / `block32.layer3.layer` (2 B — the second attention placeholder) / `block32.layer4.layer` (1,050,624 B) / `block33.layer0.layer` (4,194,320 B) / `block33.layer1.layer` (4,196,352 B) / `block33.layer2.layer` (3,145,856 B) / `block33.layer3.layer` (2 B — the third attention placeholder) / `block33.layer4.layer` (1,050,624 B) / `block34.layer0.layer` (4,194,320 B) / `block34.layer1.layer` (4,196,352 B) / `block34.layer2.layer` (3,145,856 B) / `block34.layer3.layer` (2 B — fourth attention placeholder); `block34.layer4.layer` (1,050,624 B); `block35.layer0.layer` (4,194,320 B at heap offset 73,382,400, slot78); `block35.layer1.layer` (4,196,352 B at heap offset 77,577,216, slot79); `block35.layer2.layer` (3,145,856 B at heap offset 81,773,568, slot80); `block35.layer3.layer` (2 B at heap offset 84,919,808, slot81; mutation sensitivity untested); `block35.layer4.layer` (1,050,624 B at heap offset 84,920,320, slot82); and `block36.layer0.layer` (4,194,320 B at heap offset 85,970,944, slot83); `block36.layer1.layer` (4,196,352 B at heap offset 90,165,760, slot84) from the DLL's WEIGHTS_HT resource |
 
 The slot-25 word map (72-byte block, 9 words): w0 output-of-slot-24, w1
 residual input, w2 output, w3 weights, w4 the recovered `(24, 28)` geometry
@@ -663,8 +664,8 @@ slot 50's word 2, slot 51's word 3, slot 52's word 2,
 slot 53's word 3, slot 54's word 2, slot 55's word 4, slot 56's word 2,
 slot 58's word 3, slot 59's word 3, slot 60's word 4, slot 61's word 4,
 slot 62's word 3, slot 63's word 3, slot 64's word 3, slot 65's word 4, slot 66's word 4, slot 67's word 3, slot 68's word 3, slot 69's word 3, slot 70's word 4, slot 71's word 4, slot 72's word 3, slot 73's word 3, slot 74's word 3, slot 75's word 4, slot 76's word 4, slot 77's word 3, slot 78's word 3, slot 79's word 3, slot 80's word 4,
-slot 81's word 4, slot 82's word 3, slot 83's word 3, slot 84's word 3, slot 85's word 4, slot 86's word 4 and slot 87's word 3
-(all weighted contracts through slot 87 — slot 57 carries no weights word at all,
+slot 81's word 4, slot 82's word 3, slot 83's word 3, slot 84's word 3, slot 85's word 4, slot 86's word 4 and slot 87's word 3, slot 88's word 3
+(all weighted contracts through slot 88 — slot 57 carries no weights word at all,
 the only weights-less block)
 all land **exactly at
 their record
@@ -755,18 +756,17 @@ zero mid-record** (the initial scan summary covered s23–s78; each later weight
 524,304 B at slot 56; `block31.layer0.layer`, 4,194,320 B at slot 58;
 `block31.layer1.layer`, 4,196,352 B at slot 59; `block31.layer2.layer`,
 3,145,856 B at slot 60; `block31.layer3.layer`, 2 B at slot 61 — the
-attention family's placeholder record, its payload two bytes and a dead
-binding; `block31.layer4.layer`, 1,050,624 B at slot 62 — the projection
+attention family's placeholder record; finite mutation evidence is limited
+to tested inputs and is not proof of universal insensitivity; `block31.layer4.layer`, 1,050,624 B at slot 62 — the projection
 family's live record, closing block31's five-record set; `block32.layer0.layer`,
 4,194,320 B at slot 63 — the second ViT block's first record and live;
 `block32.layer1.layer`, 4,196,352 B at slot 64 — the contraction
 family's live record; `block32.layer2.layer`, 3,145,856 B at slot 65 — the
 qkv family's live record, the wrong control rotating it normally;
 `block32.layer3.layer`, 2 B at slot 66 — the attention family's
-placeholder, a dead binding again: the wrong control re-bases onto the
-query tensor as at slot 61, and the record rotation and whole-record
-complementation experiments both reproduce the execute pools
-byte-for-byte; `block32.layer4.layer`, 1,050,624 B at slot 67 — the
+placeholder; finite record-rotation and complementation experiments matched
+the execute pools, but do not prove universal insensitivity; the wrong control
+therefore targets the query tensor as at slot 61; `block32.layer4.layer`, 1,050,624 B at slot 67 — the
 projection family's live record, the wrong control rotating it normally,
 closing block32's five-record set exactly at `block33.layer0.layer`'s
 start at 48,205,312; `block33.layer0.layer`, 4,194,320 B at slot 68 —
@@ -778,7 +778,7 @@ weights word; `block33.layer2.layer`,
 3,145,856 B at slot 70 — block33's third record and live, the
 qkv family's record, its start pinned exactly by slot 70's own
 weights word; `block33.layer3.layer`, 2 B at slot 71 —
-block33's placeholder record, the attention family's third dead binding;
+block33's 2-byte placeholder record; finite experiments matched execute, not proof of universal insensitivity;
 `block33.layer4.layer`, 1,050,624 B at slot 72 —
 block33's closing record and live, the projection family's record, its
 start pinned exactly by slot 72's own weights word, closing block33's
@@ -797,7 +797,7 @@ at their successor's first record; block35's first record is pinned by
 slot 78 at 73,382,400; `block35.layer1.layer`, 4,196,352 B at slot 79,
 at heap offset 77,577,216, pinned by slot 79's own weights word;
 `block35.layer2.layer` (3,145,856 B at 81,773,568) is bound by slot 80;
-`block35.layer3.layer` (2 B at 84,919,808) is slot 81's fifth observed 2-byte attention placeholder; mutation sensitivity has not been established; `block35.layer4.layer` (1,050,624 B at 84,920,320) is slot 82;
+`block35.layer3.layer` (2 B at 84,919,808) is slot 81's separately observed 2-byte record; mutation sensitivity has not been established; `block35.layer4.layer` (1,050,624 B at 84,920,320) is slot 82;
 `block36.layer0.layer` (4,194,320 B at 85,970,944) is slot 83's live expansion
 record; `block36.layer1.layer` (4,196,352 B at 90,165,760) is slot 84's live
 contraction record; `block36.layer2.layer` (3,145,856 B at 94,362,112) is slot 85's live qkv record; `block36.layer3.layer` (2 B at 97,508,352) is slot86's record, independently identified and pinned by the DLL weight table and contract; `block36.layer4.layer` (1,050,624 B at heap offset 97,508,864) is slot87's projection record, pinned by its contract SHA-256 and enforced at runtime, named in the source contract table; what the evidence retains is the
@@ -807,7 +807,7 @@ record rename would not disturb any run's verdicts.
 
 ## Variant finding: the tilesync/chained sync record
 
-All sixty-three variant-bearing contracts' fp8 siblings (`..._fp8`) are
+The sixty-four variant-bearing contracts' fp8 siblings (`..._fp8`) are
 **created but never
 launched by the vendor** (pinned: 0 launches in every trace), so they have no
 launch contract of their own; each is replayed at the live variant's geometry
@@ -817,10 +817,10 @@ repack family has one kernel per direction — the `2d_to_1d` here, the
 replay applies and the whole-pool compare alone carries the claim.) In every case the sibling's **output tensor matches the
 reference byte-for-byte** (both output tensors at slot 55, all three at
 slot 59, all five at slot 60, the single attention output at slot 61, all
-three at slot 62, the single expansion output at slot 63, all three at slot 64, the q/k/v triplet and fourth region at slot 65, the single attention output at slot 66, all three at slot 67, single expansion outputs at slots 68, 73, 78 and 83; slot84's three outputs are listed with contractions below; the q/k/v triplet and fourth region at slots 60, 65, 70, 75, 80 and 85, including the sibling-shared w5 data output at slot 85; the single attention outputs at slots 61, 66, 71, 76, 81 and 86; projection at slots 62, 67, 72, 77, 82 and 87; expansions at slots 63, 68, 73, 78 and 83; and contractions at slots 59, 64, 69, 74, 79 and 84) but its **sync record is left at the input state**
+three at slot 62, the single expansion output at slot 63, all three at slot 64, the q/k/v triplet and fourth region at slot 65, the single attention output at slot 66, all three at slot 67, single expansion outputs at slots 68, 73, 78, 83 and 88; slot84's three outputs are listed with contractions below; the q/k/v triplet and fourth region at slots 60, 65, 70, 75, 80 and 85, including the sibling-shared w5 data output at slot 85; the single attention outputs at slots 61, 66, 71, 76, 81 and 86; projection at slots 62, 67, 72, 77, 82 and 87; expansions at slots 63, 68, 73, 78, 83 and 88; and contractions at slots 59, 64, 69, 74, 79 and 84) but its **sync record is left at the input state**
 (`sync_from_input` true on every sibling entry) while the live variant (tilesync at
 slot 24, chained at slots 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37,
-38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86 and 87, publish at slot 58) writes it —
+38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87 and 88, publish at slot 58) writes it —
 except at slot 56, the first `wait`-family kernel, where **neither variant
 writes a sync record** and the sibling therefore matches the reference over
 the **whole pool** (the first zero-divergence sibling: `pool_diff_count` 0
@@ -834,7 +834,7 @@ proves every differing byte lies within the record — and the record itself
 must differ in **every byte of its changed extent**. The extent is **per
 slot, not a constant**: 96 B at slots 24, 25, 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55,
 **192 B at slots 26, 34, 42 and 50**
-and **256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73, 76, 78, 81, 83 and 86**, **64 B at slot 87** (each predicted from the independent ladder
+and **256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73, 76, 78, 81, 83 and 86**, **64 B at slot 87, 256 B at slot 88** (each predicted from the independent ladder
 write-set and confirmed exactly by
 the replay's sibling divergence — two sources, one number), **64 B at
 slots 59, 62, 64, 67, 69, 72, 74, 77, 79, 82 and 84**, **128 B at
@@ -916,25 +916,25 @@ divergence,
 pinned), while w5 (bound by no other launch in the sequence) is output
 data written byte-identically by both variants — the eighth
 sibling-shared publication beyond the main tensors. The tilesync-only
-sync record is now observed at sixty-three sites — the decoder's out2, and slots
-24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86 and 87 — a family trait of the `*_tilesync_*` / `*_chained_*` / `*_publish_*`
+sync record is now observed at sixty-four sites — the decoder's out2, and slots
+24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87 and 88 — a family trait of the `*_tilesync_*` / `*_chained_*` / `*_publish_*`
 kernels' chain handoff (slot 58's `publish` is the wait family's mirror: it
 publishes the ViT chain's first record at w7 without consuming one — its
 parameter block binds no sync-in word); slot 56 (`*_wait_*`) is the first kernel outside
 that family, consuming the handoff without publishing one.
 
-The slot 78 sibling result is consistent with the family pattern: its expansion output matches all three reference frames, while the 256-byte w7 handoff remains at input state. The executed sibling is `cc_vit_1d_ffn_expand_fp8`; the three retained entries each show `main_match=true`, `sync_from_input=true` and `sync_diff_count=256`. Slot 79's `cc_vit_1d_ffn_contract_fp8` sibling likewise matches the main outputs and leaves its 64-byte w7 handoff unchanged (`sync_diff_count=64` in all three retained entries). Slot 80's `cc_vit_1d_qkv_fp8` sibling matches all four tensor outputs and leaves its 128-byte w8 handoff unchanged (`sync_diff_count=128` in all three retained entries). Slot 81's `cc_vit_1d_attention_fp8` sibling matches its output tensor and leaves its 256-byte w6 handoff unchanged (`sync_diff_count=256` in all three retained entries). Slot 82's `cc_vit_1d_projection_fp8` sibling matches outputs w2, w5 and w4 and leaves the 64-byte w7 handoff at input in all three retained entries. Slot 85 sibling likewise matches its q/k/v and w6/w5 outputs and leaves only w8 sync unchanged. Slot 83 live matches the whole reference pool in all three frames and both execute runs; its sibling `cc_vit_1d_ffn_expand_fp8` matches the 786,432-byte output and differs only in the 256-byte w7 sync. Skip, wrong-weight/input and tail controls each contain six entries and reject as expected.
+The slot 78 sibling result is consistent with the family pattern: its expansion output matches all three reference frames, while the 256-byte w7 handoff remains at input state. The executed sibling is `cc_vit_1d_ffn_expand_fp8`; the three retained entries each show `main_match=true`, `sync_from_input=true` and `sync_diff_count=256`. Slot 79's `cc_vit_1d_ffn_contract_fp8` sibling likewise matches the main outputs and leaves its 64-byte w7 handoff unchanged (`sync_diff_count=64` in all three retained entries). Slot 80's `cc_vit_1d_qkv_fp8` sibling matches all four tensor outputs and leaves its 128-byte w8 handoff unchanged (`sync_diff_count=128` in all three retained entries). Slot 81's `cc_vit_1d_attention_fp8` sibling matches its output tensor and leaves its 256-byte w6 handoff unchanged (`sync_diff_count=256` in all three retained entries). Slot 82's `cc_vit_1d_projection_fp8` sibling matches outputs w2, w5 and w4 and leaves the 64-byte w7 handoff at input in all three retained entries. Slot 85 sibling likewise matches its q/k/v and w6/w5 outputs and leaves only w8 sync unchanged. Slot 83 live matches the whole reference pool in all three frames and both execute runs; its sibling `cc_vit_1d_ffn_expand_fp8` matches the 786,432-byte output and differs only in the 256-byte w7 sync. Slot 88's sibling matches its expansion output and differs only in the 256-byte w7 sync, consistent with the handoff consumed by slot89. Skip, wrong-weight/input and tail controls each contain six entries and reject as expected.
 
 ## Controls
 
-The slot-by-slot matrix below is historical through slot 82; slots 83–86 were added afterwards, with their live/sibling and negative-control evidence recorded in the evidence subsection above.
+The slot-by-slot matrix below is historical through slot 82; slots 83–88 were added afterwards, with their live/sibling and negative-control evidence recorded in the evidence subsection above (including slots 87 and 88).
 
 | Mode | Slot 24 | Slot 25 | Slot 26 | Slot 27 | Slot 28 | Slot 29 | Slot 30 | Slot 31 | Slot 32 | Slot 33 | Slot 34 | Slot 35 | Slot 36 | Slot 37 | Slot 38 | Slot 39 | Slot 40 | Slot 41 | Slot 42 | Slot 43 | Slot 44 | Slot 45 | Slot 46 | Slot 47 | Slot 48 | Slot 49 | Slot 50 | Slot 51 | Slot 52 | Slot 53 | Slot 54 | Slot 55 | Slot 56 | Slot 57 | Slot 58 | Slot 59 | Slot 60 | Slot 61 | Slot 62 | Slot 63 | Slot 64 | Slot 65 | Slot 66 | Slot 67 | Slot 68 | Slot 69 | Slot 70 | Slot 71 | Slot 72 | Slot 73 | Slot 74 | Slot 75 | Slot 76 | Slot 77 | Slot 78 | Slot 79 | Slot 80 live | Slot 80 sibling | Slot 81 live | Slot 81 sibling | Slot 82 live | Slot 82 sibling |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `execute` ×2 | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; runs **pair bit-identical** | whole pool exact 3/3 frames; pair bit-identical | whole pool exact 3/3 frames; pair bit-identical | sibling outputs match all frames; only 128-byte sync differs | whole pool exact 3/3 frames | sibling output exact; only 256-byte w6 sync differs | whole pool exact 3/3 frames | sibling outputs exact; only 64-byte w7 sync differs |
 | `skip` (no launch) | pool bit-identical to input and non-matching — diff counts **344,085 / 344,104 / 344,110**, exactly the ladder write-set counts | same, diffs **340,602 / 341,160 / 341,167** = the s24→s25 ladder counts | same, diffs **342,905 / 342,801 / 342,841** = the s25→s26 ladder counts | same, diffs **340,726 / 341,250 / 341,150** = the s26→s27 ladder counts | same, diffs **344,027 / 344,077 / 344,069** = the s27→s28 ladder counts | same, diffs **341,165 / 341,559 / 341,526** = the s28→s29 ladder counts | same, diffs **343,293 / 343,253 / 343,275** = the s29→s30 ladder counts | same, diffs **340,970 / 341,345 / 341,358** = the s30→s31 ladder counts | same, diffs **342,117 / 342,432 / 342,376** = the s31→s32 ladder counts | same, diffs **340,754 / 341,134 / 341,144** = the s32→s33 ladder counts | same, diffs **342,020 / 341,782 / 341,773** = the s33→s34 ladder counts | same, diffs **340,617 / 340,872 / 340,885** = the s34→s35 ladder counts | same, diffs **342,288 / 341,759 / 341,735** = the s35→s36 ladder counts | same, diffs **340,998 / 342,180 / 342,179** = the s36→s37 ladder counts | same, diffs **341,836 / 342,467 / 342,490** = the s37→s38 ladder counts | same, diffs **340,575 / 341,602 / 341,525** = the s38→s39 ladder counts | same, diffs **342,483 / 342,991 / 342,940** = the s39→s40 ladder counts | same, diffs **341,529 / 341,682 / 341,833** = the s40→s41 ladder counts | same, diffs **341,857 / 342,616 / 342,726** = the s41→s42 ladder counts | same, diffs **341,031 / 341,654 / 341,826** = the s42→s43 ladder counts | same, diffs **342,613 / 343,155 / 343,140** = the s43→s44 ladder counts | same, diffs **340,586 / 341,494 / 341,395** = the s44→s45 ladder counts | same, diffs **341,677 / 342,212 / 342,214** = the s45→s46 ladder counts | same, diffs **340,810 / 340,607 / 340,618** = the s46→s47 ladder counts | same, diffs **341,033 / 341,572 / 341,529** = the s47→s48 ladder counts | same, diffs **340,692 / 340,683 / 340,636** = the s48→s49 ladder counts | same, diffs **340,830 / 341,096 / 341,110** = the s49→s50 ladder counts | same, diffs **340,652 / 340,704 / 340,674** = the s50→s51 ladder counts | same, diffs **340,904/341,369/341,391** = the s51→s52 ladder counts | same, diffs **340,381/340,630/340,634** = the s52→s53 ladder counts | same, diffs **341,044/341,703/341,653** = the s53→s54 ladder counts | same, diffs **441,562/441,807/441,778** = the s54→s55 ladder counts | same, diffs **171,969/171,970/171,962** = the s55→s56 ladder counts | same, diffs **171,969/171,970/171,962** = the s56→s57 ladder counts | same, diffs **780,050/780,083/780,132** = the s57→s58 ladder counts | same, diffs **514,777/514,797/514,750** = the s58→s59 ladder counts | same, diffs **1,688,821/1,688,383/1,688,429** = the s59→s60 ladder counts | same, diffs **196,791/196,780/196,752** = the s60→s61 ladder counts | same, diffs **588,114/588,104/588,011** = the s61→s62 ladder counts | same, diffs **778,609/777,943/778,137** = the s62→s63 ladder counts | same, diffs **588,385/588,329/588,347** = the s63→s64 ladder counts | same, diffs **1,762,655/1,762,087/1,761,862** = the s64→s65 ladder counts | same, diffs **196,803/196,800/196,803** = the s65→s66 ladder counts | same, diffs **588,216/588,117/588,107** = the s66→s67 ladder counts | same, diffs **779,710/779,061/779,068** = the s67→s68 ladder counts | same, diffs **588,445/588,465/588,361** = the s68→s69 ladder counts | same, diffs **1,762,760/1,762,100/1,761,914** = the s69→s70 ladder counts | same, diffs **196,779/196,783/196,805** = the s70→s71 ladder counts | same, diffs **588,335/588,190/588,390** = the s71→s72 ladder counts | same, diffs **779,731 / 779,122 / 778,916** = the s72→s73 ladder counts | same, diffs **588,369 / 588,420 / 588,397** = the s73→s74 ladder counts | same, diffs **1,760,497 / 1,759,938 / 1,760,032** = ladder write-set | same, diffs **196,786 / 196,788 / 196,776** = ladder write-set | same; diffs **588,104 / 588,135 / 588,161** = ladder write-set | same; diffs **779,833 / 779,350 / 779,315** = ladder write-set | same; diffs **1,760,641 / 1,759,249 / 1,759,573** = ladder write-set | same; diffs **1,760,641 / 1,759,249 / 1,759,573** = ladder write-set | pool remains at input; target mismatch | same expected outcome | pool remains at input; target mismatch | same expected outcome ||
-| `wrong` (weights rotated inwards 1,024 B; input tensor rotated at the weights-less slot 57 and at slots 61, 66, 71, 76 and 81, whose records are dead bindings) | rejects in all entries (319,425–319,537 bytes differ), pool changed from input (dead-launch detection) | rejects (319,545–319,658 bytes differ), pool changed from input | rejects (341,086–342,203 bytes differ), pool changed from input | rejects (342,666–342,849 bytes differ), pool changed from input | rejects (343,654–343,784 bytes differ), pool changed from input | rejects (343,429–343,791 bytes differ), pool changed from input | rejects (341,008–341,728 bytes differ), pool changed from input | rejects (343,233–343,398 bytes differ), pool changed from input | rejects (340,696–340,891 bytes differ), pool changed from input | rejects (342,186–342,308 bytes differ), pool changed from input | rejects (339,481–340,740 bytes differ), pool changed from input | rejects (342,832–343,015 bytes differ), pool changed from input | rejects (340,920–341,551 bytes differ), pool changed from input | rejects (341,331–342,654 bytes differ), pool changed from input | rejects (339,569–340,249 bytes differ), pool changed from input | rejects (342,908–343,043 bytes differ), pool changed from input | rejects (341,039–341,235 bytes differ), pool changed from input | rejects (342,327–342,472 bytes differ), pool changed from input | rejects (340,161–340,730 bytes differ), pool changed from input | rejects (342,490–342,698 bytes differ), pool changed from input | rejects (340,856–341,150 bytes differ), pool changed from input | rejects (342,399–342,648 bytes differ), pool changed from input | rejects (340,296–341,393 bytes differ), pool changed from input | rejects (342,899–343,156 bytes differ), pool changed from input | rejects (341,024–341,224 bytes differ), pool changed from input | rejects (342,682–342,841 bytes differ), pool changed from input | rejects (340,007–340,822 bytes differ), pool changed from input | rejects (342,432–342,542 bytes differ), pool changed from input | rejects (340,929–341,109 bytes differ), pool changed from input | rejects (342,329–342,499 bytes differ), pool changed from input | rejects (340,577–341,053 bytes differ), pool changed from input | rejects (428,917–429,168 bytes differ), pool changed from input | rejects (169,884–169,992 bytes differ), pool changed from input | rejects (342,948–343,184 bytes differ) — the **input tensor** rotated inwards (weights-less contract), pool changed from input | rejects (636,844–637,271 bytes differ), pool changed from input | rejects (500,508–501,272 bytes differ), pool changed from input | rejects (1,539,533–1,539,856 bytes differ), pool changed from input | rejects (331,565–331,890 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (the weights record is a 2-byte dead binding) | rejects (577,032–577,587 bytes differ), pool changed from input | rejects (730,753–733,258 bytes differ), pool changed from input | rejects (576,052–576,607 bytes differ), pool changed from input | rejects (1,744,940–1,745,632 bytes differ), pool changed from input | rejects (381,748–382,857 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (the weights record is a 2-byte dead binding) | rejects (574,479–574,631 bytes differ), pool changed from input | rejects (725,392–726,875 bytes differ), pool changed from input | rejects (573,813–574,284 bytes differ), pool changed from input | rejects (1,744,678–1,745,066 bytes differ), pool changed from input | rejects (382,682–383,440 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (the weights record is a 2-byte dead binding) | rejects (573,283–573,762 bytes differ), pool changed from input | rejects (720,842–725,565 bytes differ), pool changed from input; live weights record rotated inwards 1,024 B | rejects (see retained stage-66 run evidence) | rejects all six entries (1,745,087–1,745,368 B differ) | rejects all six entries (query rotation; record is a dead binding) | rejects all six entries (wrong weights) | rejects all six entries (718,831–725,840 B differ) | rejects all six entries (wrong-binding control; query rotation; pool differs from reference) | rejects all six entries (wrong-binding control; query rotation; pool differs from reference) | rejected; query-rotation control changes pool | rejected; query-rotation control changes pool | rejected; query rotation changes pool | rejected; query rotation changes pool ||
-| `tail` (bytes beyond the record / input tensor replaced 0x5A vs 0xA5) | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,304-byte record | **output unchanged** — reads bounded by the 196,608-byte input tensor (pattern at the output extent's pre-launch bytes) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the weights record is a dead binding (whole-record complementation leaves the output unchanged too; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the weights record is a dead binding (record rotation and whole-record complementation both leave the output unchanged, measured in the retained experiment runs; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the weights record is a dead binding (record rotation and whole-record complementation both leave the output unchanged, measured in the retained experiment runs; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record | **output unchanged** — bounded by the 4,194,320-byte record (fp8 sibling entries carry only the 256-byte sync divergence) | output unchanged beyond the 4,196,352-byte record | **output unchanged** — bounded by the 3,145,856-byte record | **output unchanged** — two-byte placeholder; independent rotation/complement controls also reproduce execute | output unchanged; bounded to 1,050,624-byte record | output unchanged; bounded to 4,194,320-byte record | live output unchanged; bounded to 3,145,856-byte record | sibling output unchanged; 128-byte sync remains input | live output unchanged; bounds hold | sibling tensor unchanged; sync differs 256 B | live output unchanged; bounds hold | sibling tensor unchanged; sync differs 64 B ||
+| `wrong` (weights rotated inwards 1,024 B; input tensor rotated at the weights-less slot 57 and at slots 61, 66, 71, 76, 81, 86, 87 and 88, where input rotation is a sensitivity control and does not test the weight record) | rejects in all entries (319,425–319,537 bytes differ), pool changed from input (dead-launch detection) | rejects (319,545–319,658 bytes differ), pool changed from input | rejects (341,086–342,203 bytes differ), pool changed from input | rejects (342,666–342,849 bytes differ), pool changed from input | rejects (343,654–343,784 bytes differ), pool changed from input | rejects (343,429–343,791 bytes differ), pool changed from input | rejects (341,008–341,728 bytes differ), pool changed from input | rejects (343,233–343,398 bytes differ), pool changed from input | rejects (340,696–340,891 bytes differ), pool changed from input | rejects (342,186–342,308 bytes differ), pool changed from input | rejects (339,481–340,740 bytes differ), pool changed from input | rejects (342,832–343,015 bytes differ), pool changed from input | rejects (340,920–341,551 bytes differ), pool changed from input | rejects (341,331–342,654 bytes differ), pool changed from input | rejects (339,569–340,249 bytes differ), pool changed from input | rejects (342,908–343,043 bytes differ), pool changed from input | rejects (341,039–341,235 bytes differ), pool changed from input | rejects (342,327–342,472 bytes differ), pool changed from input | rejects (340,161–340,730 bytes differ), pool changed from input | rejects (342,490–342,698 bytes differ), pool changed from input | rejects (340,856–341,150 bytes differ), pool changed from input | rejects (342,399–342,648 bytes differ), pool changed from input | rejects (340,296–341,393 bytes differ), pool changed from input | rejects (342,899–343,156 bytes differ), pool changed from input | rejects (341,024–341,224 bytes differ), pool changed from input | rejects (342,682–342,841 bytes differ), pool changed from input | rejects (340,007–340,822 bytes differ), pool changed from input | rejects (342,432–342,542 bytes differ), pool changed from input | rejects (340,929–341,109 bytes differ), pool changed from input | rejects (342,329–342,499 bytes differ), pool changed from input | rejects (340,577–341,053 bytes differ), pool changed from input | rejects (428,917–429,168 bytes differ), pool changed from input | rejects (169,884–169,992 bytes differ), pool changed from input | rejects (342,948–343,184 bytes differ) — the **input tensor** rotated inwards (weights-less contract), pool changed from input | rejects (636,844–637,271 bytes differ), pool changed from input | rejects (500,508–501,272 bytes differ), pool changed from input | rejects (1,539,533–1,539,856 bytes differ), pool changed from input | rejects (331,565–331,890 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (input-targeted sensitivity control; not a test of the 2-byte record) | rejects (577,032–577,587 bytes differ), pool changed from input | rejects (730,753–733,258 bytes differ), pool changed from input | rejects (576,052–576,607 bytes differ), pool changed from input | rejects (1,744,940–1,745,632 bytes differ), pool changed from input | rejects (381,748–382,857 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (input-targeted sensitivity control; not a test of the 2-byte record) | rejects (574,479–574,631 bytes differ), pool changed from input | rejects (725,392–726,875 bytes differ), pool changed from input | rejects (573,813–574,284 bytes differ), pool changed from input | rejects (1,744,678–1,745,066 bytes differ), pool changed from input | rejects (382,682–383,440 bytes differ), pool changed from input — the **query tensor at w0** rotated inwards (input-targeted sensitivity control; not a test of the 2-byte record) | rejects (573,283–573,762 bytes differ), pool changed from input | rejects (720,842–725,565 bytes differ), pool changed from input; live weights record rotated inwards 1,024 B | rejects (see retained stage-66 run evidence) | rejects all six entries (1,745,087–1,745,368 B differ) | rejects all six entries (query rotation; record is a dead binding) | rejects all six entries (wrong weights) | rejects all six entries (718,831–725,840 B differ) | rejects all six entries (wrong-binding control; query rotation; pool differs from reference) | rejects all six entries (wrong-binding control; query rotation; pool differs from reference) | rejected; query-rotation control changes pool | rejected; query-rotation control changes pool | rejected; query rotation changes pool | rejected; query rotation changes pool ||
+| `tail` (bytes beyond the record / input tensor replaced 0x5A vs 0xA5) | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,288-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 917,568-byte record | **output unchanged** — bounded by the 263,168-byte record | **output unchanged** — bounded by the 524,304-byte record | **output unchanged** — reads bounded by the 196,608-byte input tensor (pattern at the output extent's pre-launch bytes) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the 2-byte placeholder was invariant under the documented finite mutation experiment; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the weights record is a dead binding (record rotation and whole-record complementation both leave the output unchanged, measured in the retained experiment runs; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 4,194,320-byte record (the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 4,196,352-byte record (the fp8 sibling entries carry only the 64-byte sync divergence) | **output unchanged** — bounded by the 3,145,856-byte record (the fp8 sibling entries carry only the 128-byte sync divergence) | **output unchanged** — the weights record is a dead binding (record rotation and whole-record complementation both leave the output unchanged, measured in the retained experiment runs; the fp8 sibling entries carry only the 256-byte sync divergence) | **output unchanged** — bounded by the 1,050,624-byte record | **output unchanged** — bounded by the 4,194,320-byte record (fp8 sibling entries carry only the 256-byte sync divergence) | output unchanged beyond the 4,196,352-byte record | **output unchanged** — bounded by the 3,145,856-byte record | **output unchanged** — two-byte placeholder; independent rotation/complement controls also reproduce execute | output unchanged; bounded to 1,050,624-byte record | output unchanged; bounded to 4,194,320-byte record | live output unchanged; bounded to 3,145,856-byte record | sibling output unchanged; 128-byte sync remains input | live output unchanged; bounds hold | sibling tensor unchanged; sync differs 256 B | live output unchanged; bounds hold | sibling tensor unchanged; sync differs 64 B ||
 
 Two cross-tool agreements pin the numbers: the skip diff counts equal the
 independent `ladder-report diff` changed-byte counts to the byte, and the
@@ -1046,7 +1046,7 @@ siblings show the tensor-only counts, exactly the sync extent less).
 ## Method
 
 `vr/native-slot-replay-probe.py` now carries a **per-slot contract table**
-(`CONTRACTS`, `--slot {24..87}`): parameter-block size and word classes
+(`CONTRACTS`, `--slot {24..88}`): parameter-block size and word classes
 (pool / weights / constant / zero; constant words pinned per word in
 `constant_values` — a block can carry more than one, at more than one
 value), output and sync word indices, the primary output tensor's extent
@@ -1065,8 +1065,7 @@ sibling exists), **weights-less** (`CLS_WEIGHTS` absent,
 `input_word`/`input_bytes` pinning the input tensor the controls re-base
 onto) and **sync-less** (`sync_word` None — no sync record to compare), and
 slot 61 adds the wrong-control **re-targeting** (`wrong_word`/`wrong_bytes` —
-a contract whose weights record is a dead binding pins the input tensor the
-wrong rotation targets instead of the record). Input-targeted wrong
+a contract with a small placeholder record and finite mutation observations pins the input tensor the wrong rotation targets instead of the record). Input-targeted wrong
 controls additionally require output-region divergence: the deliberately
 corrupted input cannot by itself satisfy the sensitivity check. A synthetic
 input-only corruption regression exercises this rejection. Grid
@@ -1077,14 +1076,16 @@ own pool offsets; guards sit around every allocation and the weight buffer is
 immutable-checked. Evidence under `vr/logs/slot-replay/sN/` retains digests and bounded windows
 only (windows are written before verdicts on any mismatch). Slots 24–84 use
 complete runs `{a,b,skip,wrong,tail}`; slot85's complete runs are
-`{a,b,skip,wrong-record-final,tail-final}` (exploratory retry directories are
-retained separately). The `pair` command persists its result as `pair.json`
+`{a,b,skip,wrong-record-final,tail-final}`; slot86 has execute pair and
+skip/wrong/tail controls under `/tmp/dlss86-*`, slot87's published runs use
+`/tmp/dlss87-published-*` and `/tmp/dlss87-final-*`, and slot88's local runs
+use `/tmp/dlss88-*` (exploratory retry directories are retained separately). The `pair` command persists its result as `pair.json`
 beside the first run.
 
 Self-test: **40 corruption controls** (14 verdict, 6 consistency, 5 pair, 1
-metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **786
+metadata, 1 grid, 1 rotation, 12 contract-shape) each rejected with its pinned label or message, plus **798
 known answers (3 diff, 4 layout, 4 following-record, 2 heap-instance, 1 metadata, 1 grid,
-3 rotation, and 12 contract-table shape checks per contract — 768 across the sixty-four
+3 rotation, and 12 contract-table shape checks per contract — 780 across the sixty-five
 table entries, counted per contract rather than per table). The contract table's shape is itself
 pinned (slot key equals the table key, class-table length = parameter size,
 constant words carry a pinned entry for exactly the constant-class indices
@@ -1297,7 +1298,7 @@ Runs on 23/10/2026 against the slot-76 source (stage 68):
 - `vr/logs/slot-replay/s{75,71}/recheck-stage68/pair.json` retain
   bit-identical six-entry neutrality pairs, SHA-256 `4de1f010…` and
   `50ce1b9d…`; `vr/logs/stage68/verified-evidence.txt` records checks
-  of all normal runs, both dead-binding experiments, and all three pairs.
+  of all normal runs, both finite mutation experiments, and all three pairs.
 - `vr/logs/stage68/selftest.json`: 654 known answers / 40 corruption
   controls (53 × 12 contract checks + 18 other answers).
   `ladder-selftest.txt` and `names-selftest.txt` retain 19 and 14 controls.
@@ -1429,19 +1430,19 @@ the source-neutrality note below):
   196,779/196,779/196,783/196,783/196,805/196,805 = the
   s70→s71 ladder counts, wrong changed from input and non-matching —
   382,682–383,440 bytes differ from the reference with the query tensor
-  at w0 rotated inwards 1,024 B, the family's third dead-binding
+  at w0 rotated inwards 1,024 B, the family's third input-targeted wrong-control
   re-targeting, tail output unchanged — the weights record is a 2-byte
-  dead binding). The fp8 sibling's entries match the reference's
+  placeholder; these finite tests do not establish universal insensitivity). The fp8 sibling's entries match the reference's
   output byte-for-byte with divergence exactly the 256-byte sync record in
   every frame (`sync_from_input` true) — the attention family's third
   single-publication handoff (w6 the chain handoff, no sibling-shared
-  publication at this contract). The dead-binding claim has its own
+  publication at this contract). Finite-condition mutation results have their own
   slot-71 evidence: the retained `wrong-record-rotation-experiment` and
   `wrong-complement-experiment` runs (temporary probe variants with the
   query re-targeting removed — record rotation and whole-record
   complementation respectively) both reproduce every execute pool
-  byte-for-byte (live entries 0 diffs / `pool_match` true), proving the
-  kernel reads nothing from the placeholder record.
+  byte-for-byte (live entries 0 diffs / `pool_match` true), showing only that those tested mutations did not change the captured
+  outputs; they do not establish universal insensitivity to the record.
 - **Additivity/source neutrality:** the slot-70 and slot-69 execute runs were
   re-taken under the slot-71 source (`s70/recheck-stage63`,
   `s69/recheck-stage63`; the pairings persisted beside the recheck runs as
@@ -1661,13 +1662,13 @@ the source-neutrality note below):
   196,803/196,800/196,803 = the s65→s66 ladder counts, wrong changed from
   input and non-matching — 381,748–382,857 bytes differ from the reference
   with the **query tensor at w0** rotated inwards (the wrong control
-  re-bases there because the weights record is a 2-byte dead binding),
+  re-bases there because the weights record is a 2-byte placeholder, with finite-condition invariance only),
   tail output unchanged). The fp8 sibling's entries match the reference's
   output byte-for-byte with divergence exactly the 256-byte sync record in
   every frame (`sync_from_input` true) — the single-publication handoff
   prediction pinned a third time.
 - `vr/logs/slot-replay/s66/wrong-record-rotation-experiment`,
-  `…/wrong-complement-experiment` — the dead-binding proof at slot 66: with
+  `…/wrong-complement-experiment` — the finite-condition mutation experiment at slot 66: with
   the wrong control aimed at the weights record (the query re-targeting
   removed for the run), both content-changing mutations — an inward
   rotation of the 2-byte record and whole-record complementation —
@@ -1675,8 +1676,8 @@ the source-neutrality note below):
   `0xcd00572d…/0x96952417…/0x87c0f1b1…` and the fp8 entries'
   `0x0f7b0853…/0xd90fd53d…/0xca3ba2d7…` identical to the execute run's),
   the wrong mode's expected `wrong-matched` enforcement failures retained
-  as the invariance evidence. The weight-free attention family therefore
-  reads nothing from its placeholder record at this block too.
+  as evidence that these specific mutations leave the captured outputs
+  unchanged. This does not establish universal insensitivity to the record.
 - **Additivity/source neutrality:** the slot-65 and slot-64 execute runs were
   re-taken under the slot-66 source (`s65/recheck-stage58`,
   `s64/recheck-stage58`; the pairings persisted beside the recheck runs as
@@ -1920,14 +1921,15 @@ the source-neutrality note below):
   with divergence exactly the 256-byte sync record in every frame
   (`sync_from_input` true), confirming the single-publication handoff
   prediction.
-- **Dead binding (the stage's finding):** `block31.layer3.layer`'s 2-byte
-  payload is not read by the kernel — the retained
-  `s61/wrong-superseded-record-swap` run (the record rotated one byte) and
-  `s61/wrong-complement-experiment` (every record byte complemented)
-  reproduce the execute pools byte-for-byte in both variants (`pool_fnv`
-  equal to `s61/a`'s per entry), so the wrong control re-bases onto the
-  query tensor (`wrong_word` — the probe's first control re-targeting) and
-  the pre-retarget runs are retained as
+- **Finite-condition mutation evidence:** `block31.layer3.layer` is a 2-byte
+  placeholder. In the retained `s61/wrong-superseded-record-swap` run (one-byte
+  record rotation) and `s61/wrong-complement-experiment` (both bytes
+  complemented), the execute pools match byte-for-byte in both variants
+  (`pool_fnv` equal to `s61/a` per entry). This establishes invariance only
+  for those tested mutations and captures, not that the kernel never reads the
+  record. The wrong-control sensitivity test therefore targets the query
+  tensor (`wrong_word` — the probe's first control re-targeting); the
+  pre-retarget runs are retained as
   `s61/{a,b,skip}-superseded-pre-retarget`.
 - **Additivity/source neutrality:** the slot-60 and slot-59 execute runs were
   re-taken under the slot-61 source (`s60/recheck-stage53`,
@@ -3334,15 +3336,15 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Scope and limitations
 
-- The claim covers **sixty-four launches of the 156** (slots 24–87 replayed; fifteen distinct
+- The claim covers **sixty-five launches of the 156** (slots 24–88 replayed; fifteen distinct
   kernel names, one shared across two geometries (26/30/34/38/42/46/50/54), three reused at
   the same geometry (27/31/35/39/43/47/51, 28/32/36/40/44/48/52, 29/33/37/41/45/49/53), two
   single-use `inpview` (24/25), two single-use `proj_pool` and `final_head`
   variants (55/56), one single-use
   `repack` (57), one single-use `ffn_expand` `publish` variant (58), the
   `ffn_contract` `chained` variant (59/64/69/74/79/84), the `qkv` `chained` variant
-  (60/65/70/75/80/85), the `attention` `chained` variant (61/66/71/76/81), the `projection`
-  `chained` variant (62/67/72/77/82/87) and the `ffn_expand` `chained` variant (63/68/73/78/83), for fifteen distinct kernel names in total; one resolution
+  (60/65/70/75/80/85), the `attention` `chained` variant (61/66/71/76/81/86), the `projection`
+  `chained` variant (62/67/72/77/82/87) and the `ffn_expand` `chained` variant (63/68/73/78/83/88), for fifteen distinct kernel names in total; one resolution
   (720×720, eye0), three frames under the stationary-input protocol. The
   method is generic — the parameter block, geometry, word classes and weight
   record are all contract fields now (with single-variant, weights-less and
@@ -3355,7 +3357,7 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   by canaries (same caveat as earlier stages).
 - The `wrong`-mode rotation follows the decoder record's 1,024-byte
   alternative-split convention; no split semantics are claimed for these
-  records (the rotation targets the input tensor at eight contracts: slot 57 (weights-less input) and slots 61, 66, 71, 76, 81, 86 and 87. For slots 61/66/71/76 the historical finite-condition mutation evidence is described separately; slot81's record mutation sensitivity remains a hypothesis, and slot86's mutation test was not run. Query-input corruption is not evidence that a weight record is unread).
+  records (the rotation targets the input tensor at nine contracts: slot 57 (weights-less input) and slots 61, 66, 71, 76, 81, 86, 87 and 88. For slots 61/66/71/76 the historical finite-condition mutation evidence is described separately; slot81 has no record-mutation run; slot86 has the separate unretained complement run noted above, but no per-bit test and is not one of the four documented mutation-supported cases. Query-input corruption is not evidence that a weight record is unread).
 - The write-set does not separate reads from writes: slot 24's w0 read,
   slot 25's w0, w1 and w7
   reads (previous output, residual, previous sync), slot 26's w0 and w5
@@ -3421,10 +3423,10 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
   and w6 reads (the expansion output of slot 73, the residual from slot 72,
   the weights record and the previous sync record), and slot 75's w0, w4
   and w7 reads (slot 74's contraction output, the qkv weights and slot 74's
-  64-byte handoff), and slot 76's w0/w1/w2 and w5 bindings; slot 77's w0/w1/w2/w3/w6 and w8 bindings, and slot 87's w0/w1/w3/w6 inputs, w2/w4/w5 outputs and w7 sync publication; slot 78's w0, w3 and w6 reads (slot 77's projection output, block35 weights and 64-byte handoff), w2 output and w7 sync publication; slot 86's w0/w1/w2 q/k/v, w4 two-byte record and w5 sync reads, w3 output and w6 sync publication; slot 79's w0/w1/w3/w6 inputs, w2/w5 outputs, w4 data and w7 sync; slots 28/29's w0 and (w4/w7) reads — slot 29
+  64-byte handoff), and slot 76's w0/w1/w2 and w5 bindings; slot 77's w0/w1/w2/w3/w6 and w8 bindings, and slot 87's w0/w1/w3/w6 inputs, w2/w4/w5 outputs and w7 sync publication; slot 88's w0/w3/w6 inputs, w2 output and w7 sync publication; slot 78's w0, w3 and w6 reads (slot 77's projection output, block35 weights and 64-byte handoff), w2 output and w7 sync publication; slot 86's w0/w1/w2 q/k/v, w4 two-byte record and w5 sync reads, w3 output and w6 sync publication; slot 79's w0/w1/w3/w6 inputs, w2/w5 outputs, w4 data and w7 sync; slots 28/29's w0 and (w4/w7) reads — slot 29
   additionally its residual w1 — are inferred from the attribution (those words never change) and the
   word map, not from a measured read-set.
-- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256/64/128/64/128/64/256/64/128/256/64 B for slots 24–87) are the records'
+- The sync extents (96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256/64/128/64/128/64/256/64/128/256/64/256 B for slots 24–88) are the records'
   **changed** extents under
   this protocol; records whose unchanged bytes extend further are not
   excluded (slot 56's 0 is the wait family's read-only handoff; slot 57's is
@@ -3473,13 +3475,14 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
    slot 79 w6; slot 79 consumes it, writes a 64-byte w7 handoff consumed by
    slot 80 w7, and publishes variant-independent data at w4; slot 80 writes its
    128-byte w8 handoff consumed by slot 81 w5, whose 256-byte w6 handoff is
-   a fifth observed 2-byte attention-placeholder binding; slot 81 writes the
-   256-byte w6 handoff consumed by slot 82, which publishes its 64-byte w7; slot 82's w7 is consumed by slot 83, slot 83's w7 by slot 84, slot 84's w7 by slot 85, slot 85's w8 by slot 86, slot 86's w6 by slot 87, and slot 87's w7 by slot 88. Slot 85 publishes its 128-byte qkv w8 handoff consumed by slot86, which binds another 2-byte placeholder; its mutation sensitivity remains untested).
-- This campaign uses stored learned weight bytes through sixty-three extracted records
-  (slots 24–56, 58–87; slot 57 binds none — the first weights-less contract;
+   the slot81 2-byte attention-placeholder binding; mutation sensitivity remains untested; slot 81 writes the
+   256-byte w6 handoff consumed by slot 82, which publishes its 64-byte w7; slot 82's w7 is consumed by slot 83, slot 83's w7 by slot 84, slot 84's w7 by slot 85, slot 85's w8 by slot 86, slot 86's w6 by slot 87, and slot 87's w7 by slot 88. Slot 88's `cc_vit_1d_ffn_expand_chained_fp8` sibling replay confirms that slot 88 w2 is the 786,432-byte output and w7 is the 256-byte handoff (consumed by slot 89 w6); its w2 output matches while only w7 remains at input state. Slot 85 publishes its 128-byte qkv w8 handoff consumed by slot86, which binds another 2-byte placeholder; its mutation sensitivity remains untested).
+- This campaign uses stored learned weight bytes through sixty-four extracted records
+  (slots 24–56, 58–88; slot 57 binds none — the first weights-less contract;
   slots 61, 66, 71, 76, 81 and 86 bind six 2-byte attention placeholders;
-  mutation sensitivity has not been established for slot86, and finite-condition
-  sibling results for earlier slots do not imply universal insensitivity). This is
+  mutation sensitivity has not been established for slots 81 and 86. Slots
+  61/66/71/76 have finite-condition mutation results only; these do not imply
+  universal insensitivity). This is
   bounded model-weight computation ([NATIVE-FP8.md](NATIVE-FP8.md)
   precedent) and is **not** a neural-rendered image. Proprietary
   reuse/publication rights remain unresolved; evidence retains digests and
@@ -3487,9 +3490,9 @@ Runs on 15/10/2026 against the final sources of the slot-24–28 stages:
 
 ## Next
 
-Slot 87 projection has now been replayed and locally verified against paired captures. Contract, exact run results and controls are recorded in the 24/10/2026 evidence section below; it has been independently reviewed and published in commit `4a8d8bf`. Next investigate slot 88 only after validating its complete trace and DLL weight/layout roles. The remaining named kernels are in
+Slots 87 and 88 have been replayed against paired captures. Slot 87 was independently reviewed and published in commit `4a8d8bf`; slot 88's independent review and publication remain pending. Next proceed to slot 89 after completing slot 88 review/publication, then validate slot 89's complete trace and DLL weight/layout roles. The remaining named kernels are in
 [LADDER-NAMES.md](LADDER-NAMES.md) — the encoder (slots 1–23), the
-ViT stage (85–98; slots 81–87 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
+ViT stage (85–98; slots 81–88 replayed), transformer-2 (100–131) and the decoder pyramid (132–153);
 slot 99 (the decoder) is already covered by
 [NATIVE-VENDOR-COMPARE.md](NATIVE-VENDOR-COMPARE.md) and slot 154 (the final
 blend) writes only outside the working pool. Each remaining kernel needs a
@@ -3509,7 +3512,7 @@ sync shape; slot 60 again needed none — its five outputs compose
 `output_bytes` plus four `extra_outputs` entries and the re-classified w5
 publication is an output word like slot 59's w4; slot 61 needed the
 wrong-control **re-targeting** (`wrong_word`/`wrong_bytes` — its weights
-record is a 2-byte dead binding, so the wrong rotation targets the query
+record is a 2-byte placeholder; the wrong-control sensitivity test therefore targets the query
 tensor at w0 instead of the record) plus the tiny-record rotation extent;
 slot 62 needed none — its three outputs and two record-walk publications
 compose the slot-59/60 shapes exactly, the re-classification rule
@@ -3524,7 +3527,7 @@ exactly (the same (12, 16) constant at w9), the two-publication
 re-classification confirmed a fifth time; slot 66 needed none either — it
 shares slot 61's eight-word attention shape exactly (the same (12, 16)
 constant at w7), its single publication resolving by consumption as at
-slot 61, and the dead-binding wrong-control re-targeting repeats at the
+slot 61, and the input-targeted wrong-control re-targeting repeats at the
 family's placeholder record (`wrong_word` — the query at w0 again);
 slot 67 needed none either — it shares slot 62's nine-word projection
 shape exactly (the same (12, 16) constant at w8, the same three output
@@ -3541,7 +3544,7 @@ constant at w9, the same two-publication split), the re-classification
 confirmed an eighth time; slot 71 needed none either — it
 shares slot 61's eight-word attention shape exactly (the same (12, 16)
 constant at w7, the same single-publication handoff), the family's third
-dead-binding re-targeting; slot 72 needed none either — it
+input-targeted wrong-control re-targeting; slot 72 needed none either — it
 shares slot 62's nine-word projection shape exactly (the same (12, 16)
 constant at w8, the same three output regions and two record-walk
 publications), the two-publication re-classification confirmed a ninth
@@ -4245,12 +4248,10 @@ the projection block's w6 sync-in). Its w5 consumes slot 60's sync record
 `block31.layer3.layer` (a 2-byte payload at heap offset 34,565,632 — the
 layout walk's next record start after `block31.layer2.layer`, whose end at
 34,565,248 rounds up at the 512 boundary) — and the stage's finding is
-that this record is a **dead binding**: the ViT attention family is
-weight-free and the kernel's output is invariant under whole-record
-complementation as well as under the wrong control's one-byte rotation,
-measured in both variants (the retained `wrong-superseded-record-swap` and
-`wrong-complement-experiment` runs reproduce the execute pools
-byte-for-byte). The record therefore cannot carry the wrong control's
+that this record is a **2-byte placeholder**: finite record-rotation and
+whole-record complementation experiments matched the execute pools for the
+tested capture, but do not establish universal insensitivity to the weight
+record. The record is unsuitable for the wrong control's
 sensitivity claim, so the control **re-bases onto the query tensor at w0**
 — the probe's first control re-targeting, pinned per contract as
 `wrong_word`/`wrong_bytes` with a shape check of its own (paired,
@@ -4462,8 +4463,8 @@ renders every earlier contract byte-identically (probe self-test 522 known
 answers / 39 corruption controls, 12 shape checks per contract across
 forty-two). The natural next candidate is slot 66 (block32's `attention`
 `chained` — its 8-word block already visible at psize 64, binding
-`block32.layer3.layer`'s 2-byte placeholder, so the dead-binding
-wrong-control re-targeting returns there); the temporal/history state
+`block32.layer3.layer`'s 2-byte placeholder, so the input-targeted wrong-control
+re-targeting returns there); the temporal/history state
 (`prev_output`, counter) then connects the kernels into a full native
 evaluation for the native-vs-vendor comparison of the whole pipeline.
 
@@ -4490,8 +4491,7 @@ execute pool byte-for-byte in the retained
 `wrong-record-rotation-experiment` and `wrong-complement-experiment` runs
 (all six digests per run identical to the execute run's, the wrong mode's
 `wrong-matched` enforcement failures retained as the invariance
-evidence), so the weight-free attention family reads nothing from its
-placeholder record at block32 either and the wrong control **re-bases
+evidence), so the tested mutations leave the block32 output unchanged; this finite evidence does not prove universal insensitivity to its placeholder record and the wrong control **re-bases
 onto the query tensor at w0** — the family's second re-targeting, pinned
 per contract as `wrong_word`/`wrong_bytes`. The standard wrong run then
 rejects as it must (381,748–382,857 bytes differ from the reference, the
@@ -4696,8 +4696,7 @@ contract byte-identically (probe self-test 582 known answers / 39
 corruption controls, 12 shape checks per contract across forty-seven).
 The natural
 next candidate is slot 71 (block33's `attention` `chained` — the
-attention shape on slot 61's eight-word map, the third dead-binding
-case: its block binds `block33.layer3.layer`, the block33 placeholder,
+attention shape on slot 61's eight-word map, the third 2-byte placeholder case: its block binds `block33.layer3.layer`, the block33 placeholder,
 so the wrong control will need re-targeting onto the query tensor);
 the temporal/history state (`prev_output`, counter) then connects the
 kernels into a full native evaluation for the native-vs-vendor comparison
@@ -4720,8 +4719,9 @@ layout walk's next record start after `block33.layer2.layer`, whose
 3,145,856-byte payload at 56,596,480 ends
 at 59,742,336 and rounds up across 384 bytes at the 512 boundary; the
 ViT attention blocks' layer3 records all measure a 2-byte payload) and
-the record is the family's third **dead binding**: the wrong control
-re-bases onto the query tensor at w0 (the family's third re-targeting,
+the record is the family's third **2-byte placeholder**: finite capture
+experiments matched execute but do not prove universal insensitivity. The wrong
+control re-bases onto the query tensor at w0 (the family's third re-targeting,
 pinned by `wrong_word`), where the inward 1,024-byte rotation breaks the
 output everywhere (382,682–383,440 bytes differ from the reference
 across the six entries). The write-set is two segments per frame
@@ -4823,7 +4823,7 @@ w3 writes 196,608 B at 57,572,352, closing at 57,768,960 (slot 77's output
 base). w4 binds `block34.layer3.layer`, two bytes at heap 72,331,264,
 after layer2 ends at 72,330,880 plus 384 B alignment padding. Independent
 record rotation and whole-record complementation reproduce execute results,
-confirming the fourth attention placeholder's dead-binding behaviour under
+confirming the fourth attention placeholder's finite mutation behaviour under
 these captured conditions; the sensitivity control targets the query at w0.
 w5 consumes slot 75's 128-byte w8 handoff at 79,360; w6 publishes 256 B at
 79,872, consumed as w6 by slot 77. The two-region write-set totals
@@ -4857,8 +4857,14 @@ w2 196,550/196,533/196,528; w4/w7 64 B each. Totals
 At stage 69, this was the current coverage: **54/156** (slots 24–77).
 
 
-## Current slot 87 verification (24/10/2026)
+## Slot 87 verification (published 24/10/2026)
 
 The slot 87 `cc_vit_1d_projection_chained_fp8` (s86 → s87) contract is now in `vr/native-slot-replay-probe.py`. It repeats the nine-word projection map: psize 72, grid (16,1,4), block (32,4,1), w8=(12,16); w0=59,931,648, w1=59,145,216, w2=60,128,256 (196,608 B), w3=`block36.layer4.layer` (1,050,624 B at heap offset 97,508,864; record SHA-256 `2cea0c9cc438cfe9a1b4c9a352667b670dc3b4149dc2e64dae8c731aef1c4903`), w4=88,576 (64 B), w5=46,808,064 (3,932,160 B), w6=88,064, w7=89,088 (64 B), w8=(12,16). DLL-derived record mapping, trace bindings and the named s86→s87 write-set corroborate the contract.
 
-Paired captures validate and match; write-set totals 586,723/586,934/586,810 changed bytes with four attributed regions and zero unattributed. Execute pair is bit-identical over six entries, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; chained whole-pool output matches, sibling matches w2/w5/w4 and differs only in the 64-byte w7 handoff. Skip, wrong-input and tail controls each cover six entries with no enforced failures; wrong input rejects and tail reproduces execute. The paired execute run hash is also recorded in `vr/CAMPAIGN-HANDOVER.md`; the local control run hashes are `skip` `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, `wrong` `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, and `tail` `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113` (SHA-256 of each `run.json`; control files ephemeral under `/tmp/dlss87-final-*`, execute pair under `/tmp/dlss87-published-*`). Probe tests now pass 786 known answers/40 corruption controls; ladder-report passes 19 and ladder-names 14 controls. Coverage is published at 64/156 (slots 24–87; commit `4a8d8bf`).
+Paired captures validate and match; write-set totals 586,723/586,934/586,810 changed bytes with four attributed regions and zero unattributed. Execute pair is bit-identical over six entries, run SHA-256 `c9ded176542e2faacc4033a2a0dac4e4b2a20d0039d1fb8fbfb5efa97e9c922d`; chained whole-pool output matches, sibling matches w2/w5/w4 and differs only in the 64-byte w7 handoff. Skip, wrong-input and tail controls each cover six entries with no enforced failures; wrong input rejects and tail reproduces execute. The paired execute run hash is also recorded in `vr/CAMPAIGN-HANDOVER.md`; the local control run hashes are `skip` `78de1e27c85a2d88decc4c28243f235758cda1ff481b04a1416ae05b6b018eb8`, `wrong` `2fdccca2c1e6cfeb7d2ace526c38b7c50d8438333e08a885afee39bd63de5d18`, and `tail` `7975e7e130a30c5389597768211afa731ad79f05fc5382ae1fec5c1c97b55113` (SHA-256 of each `run.json`; control files ephemeral under `/tmp/dlss87-final-*`, execute pair under `/tmp/dlss87-published-*`). At slot87 publication, probe tests passed 786 known answers/40 corruption controls; current slot88 verification passes 798 known answers/40 corruption controls, ladder-report 19 and ladder-names 14 controls. Coverage is locally verified at 65/156 (slots 24–88); slot 88 review and publication are pending.
+
+## Slot 88 verification (local, 24/10/2026; review/publication pending)
+
+Slot 88 `cc_vit_1d_ffn_expand_chained_fp8` (s87→s88), psize 72, grid (64,1,1), block (32,4,1), uses w0 input at 60,128,256, w2 output at 39,091,200 (786,432 B), w3 weights `block37.layer0.layer` (4,194,320 B at heap+98,559,488; payload SHA-256 `e36c6666015fec3458b35ffe5b44e4052dc58baaa863934a01356cc0dc022d26`), w6 binds the slot87 publication address 89,088, w7 publishes 256 B at 89,600, and w8=(12,16). Paired captures validate and match; s87→s88 write-set totals are 778,147/780,357/780,439 changed bytes, attributed to w2 (777,891/780,101/780,183) and w7 (256 each), zero unattributed.
+
+Execute pair has six entries and is bit-identical (run SHA-256 `0165ba503c8be7c19cec8d87f0ae5f802b2f54e0a2c3b364555e9e3b996f0c6a`); all three chained whole-pool results match. The sibling matches the 786,432-byte output and differs only in its 256-byte w7 handoff. Skip/wrong/tail each have six entries: skip fails output matching, wrong-input changes the output, and tail reproduces execute; no control reported an enforced failure. `run.json` SHA-256 values: skip `e97abfa7271f79c9f7c607982841c9eef6472ddcf32ddb478fd8e2a98d43458f`, wrong `825d1263240ac6e90ddd3ae323a2f7ba2bb74b7af1512b23bb25f0bfd811e547`, tail `09d92eb03f59fe84b984b962f8dacf1542bd32531c4792252d7e5de1d191ae59`; run artefacts are ephemeral under `/tmp/dlss88-*`.

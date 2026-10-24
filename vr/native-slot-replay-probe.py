@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Native pre-decoder kernel replay: slots 24-87 against ladder references.
+"""Native pre-decoder kernel replay: slots 24-88 against ladder references.
 
 Generalises the decoder replay (NATIVE-VENDOR-COMPARE.md) to pre-decoder
 kernels: vendor launches of the 156-launch inventory (NVAPI-ARGS.md) are
 replayed natively on Linux (CUDA driver; no Windows code, DirectX or Proton)
 from their captured parameter blocks, and the native pool state is compared
 byte-for-byte against the vendor's own captured state at the matching ladder
-cut point (LADDER.md). Sixty-four per-slot contracts are covered:
+cut point (LADDER.md). Sixty-five per-slot contracts are covered:
 
 - slot 24 `cc_split_swin_16h_ffwd_inpview_512_tilesync_fp8` (s23 -> s24):
   reads w0, writes its output tensor at w1 (344,064 bytes) and a 96-byte
@@ -686,11 +686,10 @@ cut point (LADDER.md). Sixty-four per-slot contracts are covered:
   weights (`block31.layer3.layer`, a 2-byte payload at heap offset
   34,565,632 — the layout walk's next record start after
   `block31.layer2.layer`, whose end at 34,565,248 rounds up at the 512
-  boundary — a placeholder record and a dead binding: the kernel's output
-  is invariant under whole-record complementation as well as the wrong
-  control's rotation, measured in both variants, so the wrong control
-  re-bases onto the query tensor at w0 — `wrong_word`, the probe's first
-  control re-targeting), w5 sync in (67,072 — slot 60's record), w6 the
+  boundary — a placeholder record. Slot 61's output matched under the
+  documented finite complementation and wrong-control rotation experiments;
+  this does not establish universal insensitivity. The wrong control targets
+  query w0 — `wrong_word`, the probe's first control re-targeting), w5 sync in (67,072 — slot 60's record), w6 the
   sync record (67,584 — 256 bytes, the 512-byte stride continuing:
   67,072 -> 67,584; slot 62 binds its record at the projection block's w6
   sync-in), w7 the (12, 16) constant 0x000000100000000C recurring. The
@@ -859,14 +858,14 @@ cut point (LADDER.md). Sixty-four per-slot contracts are covered:
   the layout walk's next record start after `block32.layer2.layer`, whose
   end at 47,153,792 rounds up across 384 bytes at the 512 boundary; the
   ViT attention blocks' layer3 records all measure a 2-byte payload —
-  block32's `f3 b3`) — a dead binding like slot 61's: with the wrong
+  block32's `f3 b3`) — a placeholder like slot 61's; finite mutation evidence does not prove universal insensitivity: with the wrong
   control aimed at the record (the query re-targeting removed for the
   experiment), both an inward rotation and whole-record complementation
   reproduce every execute pool byte-for-byte in the retained
   `wrong-record-rotation-experiment` and `wrong-complement-experiment`
-  runs, so the weight-free attention family reads nothing from its
-  placeholder record and the wrong control re-bases onto the input tensor
-  the kernel functionally reads (the query at w0) — the family's second
+  runs, showing only that these specific mutations leave the captured outputs
+  unchanged; they do not prove universal insensitivity to the placeholder.
+  The wrong control re-bases onto the query input at w0 — the family's second
   re-targeting, pinned by `wrong_word`), w5 sync in (71,168 — slot 65's
   record, the chained handoff continuing), w6 the sync record (71,680 —
   256 bytes, the 512-byte stride continuing: 71,168 -> 71,680; slot 67
@@ -1038,9 +1037,7 @@ cut point (LADDER.md). Sixty-four per-slot contracts are covered:
   59,742,720 — the layout walk's next record start after
   `block33.layer2.layer`, whose end at 59,742,336 rounds up across 384
   bytes at the 512 boundary; the ViT attention blocks' layer3 records all
-  measure a 2-byte payload) — a dead binding like slots 61 and 66's: the
-  weight-free attention family reads nothing from its placeholder record,
-  so the wrong control re-bases onto the query tensor at w0, the family's
+  measure a 2-byte payload) — a placeholder like slots 61 and 66's; finite mutation experiments matched execute but do not establish universal insensitivity. The wrong control re-bases onto the query tensor at w0, the family's
   third re-targeting pinned by `wrong_word` (the rotation and
   complementation experiments reproduce the execute pools
   byte-for-byte), w5 sync in (75,264 — slot 70's record) and w6 the sync
@@ -1266,7 +1263,7 @@ Inputs come from retained evidence only:
   (the record immediately after `block31.layer2.layer`, at heap offset
   34,565,632 — `block31.layer2.layer`'s end at 34,565,248 rounded up at
   the 512 boundary; the record carries a 2-byte payload, the ViT attention
-  blocks' layer3 placeholder shape — a dead binding, see the contract-61
+  blocks' layer3 placeholder shape — finite evidence only, see the contract-61
   entry), slot 62 binds `block31.layer4.layer` (the record immediately
   after `block31.layer3.layer`, at heap offset 34,566,144 —
   `block31.layer3.layer`'s 2-byte payload at 34,565,632 rounded up across
@@ -1338,7 +1335,7 @@ per entry (the decoder stage found the same family record at out2; the
 record's changed extent is per slot — 96 B at the decoder and slots 24, 25,
 27, 28, 29, 31, 32, 33, 35, 36, 37, 39, 40, 41, 43, 44, 45, 47, 48, 49, 51, 52, 53 and 55, 192 B at slots 26, 34,
 42 and 50, 256 B at slots 30, 38, 46, 54, 58, 61, 63, 66, 68, 71, 73 and 76, 64 B at slots 59, 62, 64, 67, 69, 72 and 74, 128 B at
-slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81, 83 and 86, 64 B at slots 77, 79, 82 and 84, 128 B at slot 85, 64 B at slot 87 — and 0 B at slot 56, the
+slots 60, 65, 70, 75 and 80, 256 B at slots 78, 81, 83, 86 and 88, 64 B at slots 77, 79, 82, 84 and 87, 128 B at slot 85 — and 0 B at slot 56, the
 first `wait`-family kernel: it waits on w3's record without writing one,
 so its sibling's divergence pin of 0 enforces whole-pool sibling equality,
 the first contract to need it). Single-variant contracts (slot 57: the
@@ -1428,7 +1425,7 @@ CLS_ZERO = "zero"
 # captured block, value pinned per word in constant_values), zero (reserved,
 # must be 0). extra_outputs lists (word, span) pairs of further written
 # output tensors beyond the primary output_word binding (slot 55's pooled
-# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72, 74, 79 and 84's second and third outputs at
+# tensor at w3, 98,304 bytes; slots 59, 62, 64, 67, 69, 72, 74, 79, 84, and 87's second and third outputs at
 # w5, 393,216 bytes, and w4, 64 bytes; slot 77's second output at w5
 # (3,932,160 bytes), and w4 (64 bytes); slots 60, 65, 70, 75 and 80's q/k/v siblings at w2
 # and w3,
@@ -1437,7 +1434,7 @@ CLS_ZERO = "zero"
 # output — their only other written region is the sync record); the primary
 # binding's own extent is
 # OUTPUT_BYTES unless the contract pins output_bytes (slots 56 and 57's
-# 196,608-byte tensors, slots 58, 63, 68, 73, 78 and 83's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82/84's
+# 196,608-byte tensors, slots 58, 63, 68, 73, 78, 83 and 88's 786,432-byte expansions, slots 59, 62, 64, 67, 69, 72, 74, 77 and 79/82/84's
 # contractions/projections, slots 60, 65, 70, 75, 80 and 85's q/k/v and slots 61, 66, 71, 76, 81 and 86's attention outputs
 # likewise). input_word/input_bytes pin the input tensor
 # binding for weights-less contracts (the wrong control's rotation target
@@ -1449,7 +1446,7 @@ CLS_ZERO = "zero"
 # measured per
 # slot in the ladder write-sets (LADDER-NAMES.md segments;
 # 96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/96/96/192/96/96/96/256/96/0/0/256/64/128/256/64/256/64/128/256/64/256/64/128/256/64/256/64/128/256/256 for
-# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83/84/85/86) — the fp8
+# slots 24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43/44/45/46/47/48/49/50/51/52/53/54/55/56/57/58/59/60/61/62/63/64/65/66/67/68/69/70/71/72/73/74/75/76/77/78/79/80/81/82/83/84/85/86/87/88) — the fp8
 # sibling's divergence from the reference is enforced to equal it exactly
 # (0 at slot 56: the wait family waits on w3's record without writing one,
 # so the pin enforces whole-pool sibling equality; 0 at slot 57 with no
@@ -2372,15 +2369,12 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         # rounded up at the 512 boundary — and by far the smallest record in
         # the walk: the ViT attention blocks' layer3 records all measure a
         # 2-byte payload (block32's `f3 b3`, block33's `49 03`), unlike the
-        # transformer interval's 263,168-byte layer3 records) — a dead
-        # binding: the kernel's output is invariant under whole-record
-        # complementation as well as under the wrong control's rotation,
-        # measured in both variants (the retained wrong run and the
-        # complementation experiment reproduce the execute pools
-        # byte-for-byte), so the weight-free attention family reads nothing
-        # from its placeholder record and the wrong control re-bases onto the
-        # input tensor the kernel functionally reads (the query at w0) —
-        # the probe's first control re-targeting, pinned by `wrong_word`),
+        # transformer interval's 263,168-byte layer3 records) — a placeholder
+        # binding. Slot 61's output matched under the finite whole-record
+        # complementation and query-rotation experiments; this evidence is
+        # specific to those captures and does not establish that the family
+        # never reads the record. The wrong control re-bases onto the input
+        # tensor (query at w0), pinned by `wrong_word`),
         # w5 sync in (67,072 — slot 60's record, the chained handoff
         # continuing), w6 the sync record (67,584 — 256
         # bytes, the 512-byte stride continuing: 67,072 -> 67,584; slot 62
@@ -2911,9 +2905,9 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         # `block33.layer2.layer`, whose end at 59,742,336 rounds up
         # across 384 bytes at the 512 boundary; the ViT attention blocks'
         # layer3 records all measure a 2-byte payload — block32's `f3 b3`)
-        # — a dead binding like slot 61's and slot 66's: the
-        # weight-free attention family reads nothing from its placeholder
-        # record, so the wrong control re-bases onto the input tensor the
+        # — a placeholder like slot 61's and slot 66's; finite tests matched
+        # execute but do not establish universal insensitivity. The wrong
+        # control re-bases onto the input tensor the
         # kernel functionally reads (the query at w0), the family's third
         # re-targeting pinned by `wrong_word` (the rotation and
         # complementation experiments reproduce the execute pools
@@ -3406,6 +3400,28 @@ CONTRACTS: dict[int, dict[str, Any]] = {
         extra_outputs=((5, 3932160), (4, 64)),
         sync_word=7, sync_bytes=64,
         input_label=86, reference_label=87),
+    88: dict(
+        slot=88,
+        psize=72,
+        name_live="cc_vit_1d_ffn_expand_chained_fp8",
+        name_sibling="cc_vit_1d_ffn_expand_fp8",
+        tag_live="chained", tag_sibling="fp8",
+        # Slot88 repeats the ViT expansion map. Paired captures and traces
+        # pin w0 input, w2 expanded output, w3 weights, w6 previous sync,
+        # w7 sync publication and w8=(12,16); s87->s88 names fully attributes
+        # both changed regions with zero unattributed bytes. The captured DLL
+        # record and heap walk pin block37.layer0.layer (4,194,320 B at
+        # heap+98,559,488; extracted payload SHA-256 pinned below).
+        container=5,
+        record_name="block37.layer0.layer", record_bytes=4194320,
+        record_sha256="e36c6666015fec3458b35ffe5b44e4052dc58baaa863934a01356cc0dc022d26",
+        constant_values={8: 0x000000100000000C},
+        word_classes=(CLS_POOL, CLS_ZERO, CLS_POOL, CLS_WEIGHTS, CLS_ZERO,
+                      CLS_ZERO, CLS_POOL, CLS_POOL, CLS_CONSTANT),
+        output_word=2, output_bytes=786432,
+        sync_word=7, sync_bytes=256,
+        input_label=87, reference_label=88,
+        wrong_word=0, wrong_bytes=196608),
 }
 
 
@@ -4273,7 +4289,7 @@ def contract_shape(slot: int, contract: dict[str, Any]) -> None:
                  (weighted and input_word is None),
                  f"self-test: contract {slot} input binding")
     # The wrong control's rotation target: the weights record by default; a
-    # contract whose record is a dead binding (slot 61) pins the input tensor
+    # contract whose 2-byte placeholder has finite mutation invariance evidence (slot 61) pins the input tensor
     # the kernel functionally reads instead.
     wrong_word = contract.get("wrong_word")
     base.require((wrong_word is None) == (contract.get("wrong_bytes") is None) and
@@ -4680,7 +4696,7 @@ def main() -> int:
         return 1 if result["pair_failures"] else 0
     if len(args.paths) != 1 or args.slot is None:
         print("usage: native-slot-replay-probe "
-              "{execute|skip|wrong|tail} OUTDIR --slot {24..87}")
+              "{execute|skip|wrong|tail} OUTDIR --slot {24..88}")
         return 2
     evidence = Path(args.paths[0])
     evidence.mkdir(parents=True, exist_ok=True)
