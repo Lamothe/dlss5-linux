@@ -171,7 +171,11 @@ def self_test() -> int:
     bad = json.loads(json.dumps(good)); bad["events"].pop(); cases.append((bad, "launch-binding-missing"))
     bad = json.loads(json.dumps(good)); bad["events"].insert(6, json.loads(json.dumps(bad["events"][5]))); cases.append((bad, "event-6-launch-duplicate"))
     bad = json.loads(json.dumps(good)); bad["events"].append(json.loads(json.dumps(bad["events"][6]))); cases.append((bad, "event-7-binding-duplicate"))
-    multi_mapping = json.loads(json.dumps(good)); multi_mapping["events"][4]["mapping_id"] = "m2"; multi_mapping["events"].insert(5, {"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"}); multi_mapping["events"].append({"type": "launch_binding", "slot": 0, "parameter_capture_id": "b1", "mapping_id": "m2"}); assert validate(multi_mapping) == []
+    multi_mapping = json.loads(json.dumps(good))
+    multi_mapping["events"][4]["mapping_id"] = "m2"
+    multi_mapping["events"].insert(5, {"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"})
+    multi_mapping["events"].append({"type": "launch_binding", "slot": 0, "parameter_capture_id": "b1", "mapping_id": "m2"})
+    assert validate(multi_mapping) == []
     for case, expected in cases:
         found = validate(case)
         assert expected in found, (expected, found)
