@@ -1,6 +1,6 @@
 # DLSS5 native Linux migration — current handover
 
-Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD for this update: `ffd808c` (`main`, `origin/main`, `origin/HEAD` aligned; clean). The evidence audit described below was performed at `1f03478`; `ffd808c` clarified and published the external-gate wording. This handover replaces older pointers; historical evidence remains in the linked reports.
+Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD for this maintenance update: `ac58577`; current verified HEAD is recorded in Git. `main`, `origin/main` and `origin/HEAD` were aligned and clean at that update. The evidence audit described below was performed at `1f03478`; `ffd808c` clarified and published the external-gate wording. This handover replaces older pointers; historical evidence remains in the linked reports.
 
 ## Goal and boundaries
 
@@ -32,9 +32,13 @@ No unblocked static writer or decoder experiment remains identified: the `state+
 
 The repository does contain local, ignored probe runs demonstrating the SM89 upsampling kernel's structural influence mapping and single-product use of one stored record (`NATIVE-DECODER-EXTENSION.md`, `NATIVE-DECODER-BINDING.md`). Treat those as bounded existing evidence, not general layer or native image validation. The next stage written in those reports is Proton reference evaluation, which requires explicit capture authorisation and still cannot close the raw-input/interop gap. Likewise the temporal recurrence/reset contract is Proton-side evidence only (`TEMPORAL-HISTORY.md`, `TEMPORAL-STATE.md`), not native temporal execution. No further CPU-only reformulation of those findings would advance the missing pipeline edges.
 
-## This session's checks and verification
+## Latest maintenance update — 25/10/2026
 
-The slot-replay self-test passed 834 known answers and rejected 40 corruption controls, with zero kernels launched. Graph self-test passed. Decoder CPU self-test passed: 9 sizing answers, 616 arithmetic comparisons, 9 invalid-domain and 3 incorrect-execution rejections, arena arithmetic controls, 4 grid answers and malformed metadata controls. For this handover update, `git diff --check` passed; no new source edits, captures or GPU probes were made.
+The provenance header was corrected in commit `ac58577`; no source, evidence, capture or GPU probe was changed. The audit remains based on `1f03478`, with wording clarified in `ffd808c`. No qualifying new local producer→consumer evidence or authorised ABI/capture materials were found during this maintenance pass. The worktree was verified clean and `main` aligned with `origin/main` at `ac58577` before this update.
+
+## Prior checks and verification
+
+At the gate documentation update, the slot-replay self-test passed 834 known answers and rejected 40 corruption controls, with zero kernels launched. Graph self-test passed. Decoder CPU self-test passed: 9 sizing answers, 616 arithmetic comparisons, 9 invalid-domain and 3 incorrect-execution rejections, arena arithmetic controls, 4 grid answers and malformed metadata controls. The `ac58577` provenance update passed `git diff --check`; no new source edits, captures or GPU probes were made.
 
 ## References
 

@@ -24,7 +24,7 @@ Historical handovers still name the predecessor workspace/remote: for all contin
 
 Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
 
-The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified and published in `ffd808c`; this is a blocker record, not a completion claim.
+The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified and published in `ffd808c`; follow-up local evidence/artifact checks found no new qualifying input. This is a blocker record, not a completion claim.
 
 ## Layout, dependencies and checks
 
