@@ -98,10 +98,10 @@ domains, register clobbers and wrong coverage/row-stride formulas.
 
 ## Verification and remaining work
 
-Final-source positive/negative evidence and independent-review outcome will be
-recorded below after completion. Exploratory command section selection failed
-before GPU work, and early launcher runs failed due to duplicated disassembly
-ranges or a missing Python import; none is successful inference evidence.
+Final-source positive/negative evidence and the independent-review outcome are
+recorded below. Exploratory command section selection failed before GPU work,
+and early launcher runs failed due to duplicated disassembly ranges or a missing
+Python import; none is successful inference evidence.
 
 Remaining: prove group-selector arithmetic, resolve main/skip activation layouts,
 all output/scratch extents, suffix coefficient semantics, actual learned-weight
