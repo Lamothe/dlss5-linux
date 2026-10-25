@@ -43,6 +43,10 @@ Earlier provenance: the audit state from `1f03478` was clarified in `ffd808c`; l
 
 At the gate documentation update, the slot-replay self-test passed 834 known answers and rejected 40 corruption controls, with zero kernels launched. Graph self-test passed. Decoder CPU self-test passed: 9 sizing answers, 616 arithmetic comparisons, 9 invalid-domain and 3 incorrect-execution rejections, arena arithmetic controls, 4 grid answers and malformed metadata controls. The `ac58577` provenance update passed `git diff --check`; no new source edits, captures or GPU probes were made.
 
+### Follow-up worker check — 26/10/2026
+
+I re-read `README.md` and this handover, then confirmed the active `main` checkout was clean and aligned with `origin/main` at `a060431` (`Record safe native migration regression results`). The gate still records no authorised version-matched NR target ABI/capture scope or new producer→launch identity evidence; the decoder-store bounds and approval are also unresolved. A bounded web search found no newer official Linux NR SDK announcement; this is not proof that restricted materials do not exist. I ran the CPU-only slot replay self-test (834 known answers, 40 corruption controls, zero GPU kernels), ladder report (19 controls), ladder names (14 controls), native input-layout (9 invalid-layout controls), and resource-event schema self-test (1 known answer, 19 corruption controls); all passed. These checks validate tooling only and do not advance the missing runtime evidence edges. No archive, binary, capture, GPU probe or proprietary payload was inspected or run; no implementation change was justified, and the native migration remains incomplete. No commit was made in this check.
+
 ## References
 
 `NATIVE-SLOT-REPLAY.md`, `NATIVE-GRAPH.md`, `NATIVE-GRAPH-NEXT.md`, `NATIVE-HOOK-PLAN.md`, `NATIVE-CHAIN.md`, `NATIVE-DECODER.md`, `NATIVE-DECODER-BINDING.md`, `NATIVE-VENDOR-COMPARE.md`, `NATIVE-DECODER-STORE-ENVELOPE.md`, `NATIVE-DECODER-IO.md`, `TEMPORAL-HISTORY.md`. Recheck branch, worktree and origin before future edits/pushes.
