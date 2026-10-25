@@ -1,6 +1,6 @@
 # DLSS5 native Linux migration — current handover
 
-Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD: `1fdedd9d17baec91f439514e63a0ffc660462841` (`main`, `origin/main`, `origin/HEAD` aligned; clean). This handover replaces older pointers; historical evidence remains in the linked reports.
+Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD for this update: `ffd808c` (`main`, `origin/main`, `origin/HEAD` aligned; clean). The evidence audit described below was performed at `1f03478`; `ffd808c` clarified and published the external-gate wording. This handover replaces older pointers; historical evidence remains in the linked reports.
 
 ## Goal and boundaries
 
@@ -16,7 +16,7 @@ Build and validate a native Linux evaluator from live inputs through preprocessi
 
 ## Current external dependency gate
 
-A current status note in `NATIVE-MIGRATION-GATE.md` records why the producer→consumer path cannot safely advance from available materials: there is no concrete input-resource-to-launch identity edge, no supplied version-matched NR ABI/integration material plus capture authorisation, and the separate decoder experiment still lacks store/CFG/address bounds and approval. No GPU/capture work was run for that status update. The overall migration remains incomplete. Reassess only if authorised, version-matched target materials arrive or genuinely new local producer→consumer evidence becomes available; do not repeat schema/static-anchor work or invent bindings.
+A current status note in `NATIVE-MIGRATION-GATE.md` records why the producer→consumer path cannot safely advance from available materials: there is no concrete input-resource-to-launch identity edge, no supplied version-matched NR ABI/integration material plus capture authorisation, and the separate decoder experiment still lacks store/CFG/address bounds and approval. The evidence audit underlying that note was performed at `1f03478`; its wording was subsequently clarified and published at `ffd808c`. No GPU/capture work was run for the status update. The overall migration remains incomplete. Reassess only if authorised, version-matched target materials arrive or genuinely new local producer→consumer evidence becomes available; do not repeat schema/static-anchor work or invent bindings.
 
 ## Static graph and decoder evidence
 

@@ -6,7 +6,7 @@ The active deliverable remains a native Linux live-input→image evaluator, incl
 
 ## Current repository state checked
 
-At inspection, `main` and `origin/main` were aligned at `1f03478` (`Update native migration gate handover`) with a clean working tree. The current `README.md`, `vr/CAMPAIGN-HANDOVER.md`, and `vr/NATIVE-GRAPH-NEXT.md` document the same unresolved boundary:
+The evidence audit underlying this gate was performed at `1f03478` (`Update native migration gate handover`); the gate was subsequently clarified and published at `ffd808c` (`Clarify native migration evidence gate`). At the audit, `main` and `origin/main` were aligned and the working tree was clean. The current `README.md`, `vr/CAMPAIGN-HANDOVER.md`, and `vr/NATIVE-GRAPH-NEXT.md` document the same unresolved boundary:
 
 - Existing harness evidence does not join raw input producers to launch-readable resources. No additional schema, static routing assertion, or address coincidence can supply that missing observed edge.
 - The target NR-specific ABI/integration materials and explicit authority to perform the bounded reference capture are absent from the supplied repository evidence.
