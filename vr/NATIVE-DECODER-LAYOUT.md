@@ -9,8 +9,12 @@ context and launches no decoder or other GPU computation. The working
 Windows/DX12/Proton VR PoC and existing probes remain unchanged.
 
 This is not a complete decoder contract, a captured runtime binding, or a native
-neural-rendered image. Skip-input addressing, final output addressing, suffix
-weight semantics and dynamic buffer association remain unverified.
+neural-rendered image. At the time of this layout audit, skip-input and final
+output addressing were outside scope; bounded static addressing is documented
+later in [NATIVE-DECODER-IO.md](NATIVE-DECODER-IO.md). Complete output bounds,
+suffix weight semantics and dynamic arena-to-buffer associations remain
+unverified. Learned weight-record binding is separately established in
+[NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md).
 
 ## Derived layout, conditional domain
 
@@ -144,7 +148,11 @@ or independently disassemble vendor pointer assembly; the parent performed the
 hash/test reproduction above. Only these three new layout probe/launcher/document
 files were created; existing PoC/native/scene files were not changed.
 
-Next: recover skip-input and final output/work addressing, suffix coefficients,
-and dynamic arena associations before any guarded decoder launch. This round
-narrows two buffer extents; it does not close all launch requirements. Nothing
-committed or pushed.
+At the time this layout stage was completed, skip-input and final output/work
+addressing remained open; bounded static formulas were later added in
+[NATIVE-DECODER-IO.md](NATIVE-DECODER-IO.md). Remaining requirements include a
+complete output-address bound, suffix coefficient semantics and dynamic arena
+associations before a guarded decoder computation. The finite IO probe does not
+prove a generally safe output allocation size (see
+[NATIVE-DECODER-STORE-ENVELOPE.md](NATIVE-DECODER-STORE-ENVELOPE.md)). This
+layout report was published in `805d1a5`.
