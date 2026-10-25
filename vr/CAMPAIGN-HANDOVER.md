@@ -1,6 +1,6 @@
 # DLSS5 native slot replay campaign handover
 
-Updated 25/10/2026 (Australia/Sydney). Immediately before this handover-only correction, the verified checkout was `9342657`, containing the bounded source-provenance update in `fde5be6`; at that verification `main` and `origin/main` were aligned and the working tree was clean. This note records that prior check and is not an assertion about the checkout after this edit. The preceding decoder VMM candidate was explicitly left unqualified in `c723417`. Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. Historical notes below may name the predecessor workspace/remote; do not publish there.
+Updated 25/10/2026 (Australia/Sydney). Current published main is `3e26839`; `fde5be6` is the latest substantive source-provenance update, and commits `9342657`, `8bbb3c1` and `3e26839` carry follow-up handover/status wording. At post-push verification, `main` and `origin/main` were aligned at `3e26839` and the working tree was clean. The preceding decoder VMM candidate was explicitly left unqualified in `c723417`. Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. Historical notes below may name the predecessor workspace/remote; do not publish there.
 
 ## Source-provenance update in this handover
 
