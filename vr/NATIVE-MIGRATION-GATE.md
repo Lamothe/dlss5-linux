@@ -38,3 +38,7 @@ This dependency is a blocker on this evidence path, not an assertion that the wh
 ## Additional public Linux Vulkan lead — DLSSNR-AMD (25/10/2026)
 
 `mochizuki0323/DLSSNR-AMD` documents GLSL Vulkan-compute network reimplementations for RDNA4 and user-extracted model weights. Its upstream reports are not independently validated here; documented Linux game integration is primarily Proton and includes a Windows NGX core DLL, so the Vulkan-game route does not establish a standalone native Linux host. It may be a shader/temporal-design reference, but does not resolve the lawful model provenance or raw-input/launch gates. No code, DLL, weights or fixtures were fetched or run. Full bounded assessment is in `CAMPAIGN-HANDOVER.md`; require separate licence/NOTICE review, source-level host-boundary validation, and an authorised model path before considering adaptation.
+
+## Native-game layer does not imply native evaluator — DLSS5VKLayer (25/10/2026)
+
+`bmitch87/DLSS5VKLayer` advertises interception of native Linux Vulkan games, but its README states that frames are forwarded to a Windows NGX helper running under Wine/Proton. The model DLL is user-imported; it is not included. This remains a Windows-hosted inference bridge and does not meet the strict native evaluator requirement. No source/assets were fetched or executed. See `CAMPAIGN-HANDOVER.md` for bounded details.
