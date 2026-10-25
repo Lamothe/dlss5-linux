@@ -24,6 +24,8 @@ Historical handovers still name the predecessor workspace/remote: for all contin
 
 Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
 
+The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). It is a blocker record, not a completion claim.
+
 ## Layout, dependencies and checks
 
 The existing `vr/` directory name is retained to preserve imports, capture paths and historical evidence. Native migration probes live there alongside the inherited reference harness; the directory name does not make VR part of this milestone. The Git history is preserved from `dlss5-vr`; inherited VR source is historical/reference material, not the active deliverable.
