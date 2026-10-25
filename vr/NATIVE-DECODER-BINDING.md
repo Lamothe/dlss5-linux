@@ -65,8 +65,11 @@ readbacks**, 81 entries (1 zero-impulse base + 80 impulses); both runs
   `0x80` signed-zero variants across all runs); the 4,096-byte poison margin
   stayed intact in every entry (enforced); counters `[3]×8` everywhere
   (enforced); main, skip, weights, partials, out3, out2 immutable and all
-  guards intact (enforced); writes confined to `[0, 131072)` with a final
-  full-region check (enforced).
+  guards intact (enforced); no changed bytes were observed outside
+  `[0, 131072)` within the monitored out0 allocation, whose final region scan
+  was clean. Writes beyond that allocation or matching the poison pattern are
+  not detectable; this does not establish a maximum effective address (see
+  `NATIVE-DECODER-STORE-ENVELOPE.md`).
 - The checks cover every fed position of the closed form per entry — including
   entries whose feeding matrix byte is `m = 0` (read from the partition base),
   whose invisibility to bit-signature decoding was a stage-4/5 evidence gap.

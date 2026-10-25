@@ -25,7 +25,7 @@ produces **no neural-rendered image**.
 
 Output cells are named with the general hypothesis-independent factorisation
 `unit_offset = row_term*8192 + column*512 + channel_block*16` (any 16-byte-aligned
-unit inside the `16×16×512 = 131072`-byte output extent). The **canonical set**
+unit inside the nominal `16×16×512 = 131072`-byte output region (a hypothesis/design range, not a proven maximum effective output address; see `NATIVE-DECODER-STORE-ENVELOPE.md`). The **canonical set**
 (the locked unit-0 footprint) is `row_term ∈ {0,4}`, `column ∈ 0–15`,
 `channel_block ∈ {0–7, 16–23}` — 512 units.
 

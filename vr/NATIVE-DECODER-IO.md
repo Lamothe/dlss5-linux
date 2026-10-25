@@ -87,11 +87,11 @@ covers 512 contiguous bytes; the per-index write span is exactly `0x27f0`.
 Per execution of the pinned store group that is `2 indices × 8 slots × 32 units
 × 16 B = 8192 B`; **per-CTA totals depend on unmodelled warp and loop counts**.
 The **maximum output index and therefore the output buffer extent remain
-unverified**; a guarded launch must size the output with margin and canaries.
+unverified**. The existing launch's margin and canaries describe one tested finite allocation only; they do not establish a safe output size or maximum effective address (see `NATIVE-DECODER-STORE-ENVELOPE.md`).
 
 `IMAD.SHL.U32` is interpreted as `d = a*b + c` with power-of-two `b`, per the
 published disassembler convention; `IMAD.WIDE` forms exact 64-bit addresses.
-Indices above `2^30 - 1` are rejected.
+The helper rejects test-vector indices above `2^30 - 1`; this is not a runtime/kernel index bound.
 
 ## Validation
 

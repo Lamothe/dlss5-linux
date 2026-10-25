@@ -42,7 +42,7 @@ not a captured tensor binding or proof of every device access.
 - GPU source and destination guards remain unchanged. Source buffers are checked
   in their entirety. Destination payload is checked against independent division.
 - Skipped execution and intentionally increased divisors must cause numerical
-  disagreement while keeping all writes inside the same guarded allocations.
+  disagreement while preserving the tested allocation guards. These finite guards do not establish a maximum effective output address or generally safe allocation bound.
 
 ### Important arithmetic detail
 

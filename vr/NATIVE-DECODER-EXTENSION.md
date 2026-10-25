@@ -57,8 +57,11 @@ signature/direct, 24 phase-2 extension); both runs **bit-identical**
 Checks: 12 training fits self-predict; **8 held-out predictions exact** (2,048
 mapped entries each); 1 identity regression (`n = 0`); **21 matrix-byte-0
 preimage checks**; 3 spot triples; impulse-only leakage absent; decoupling and
-the coupled 512-unit reference enforced; counters `[3]×8`; writes inside
-`[0, 131072)`; full-region final check clean. The skip control
+the coupled 512-unit reference enforced; counters `[3]×8`; no changed bytes were
+observed outside `[0, 131072)` within the monitored out0 allocation; the
+full-region final check was clean. This finite scan cannot detect writes beyond
+the allocation or writes matching the poison pattern, and does not establish a
+maximum effective address (see `NATIVE-DECODER-STORE-ENVELOPE.md`). The skip control
 (`decoder-extension-skip-GKGUc26c`) leaves output untouched and reports
 `matrix_permutation_recovered: false` as required.
 

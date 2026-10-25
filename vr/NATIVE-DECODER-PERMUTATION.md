@@ -51,8 +51,11 @@ response-constancy checks**, **40 direct/signature value-agreement checks**,
 18/18 direct predictions exact, 2/2 sign mirrors exact, impulse-only leakage
 absent, coupled reference exactly the canonical 512-unit set with the
 established `{0,1,2,3,8,9,10,11}` within-unit byte pattern, decoupled control
-unchanged, counters `[3]×8`, guards and immutability clean, writes inside the
-established extent `[0, 131072)`.
+unchanged, counters `[3]×8`, guards and immutability clean; within the monitored out0 allocation, no
+changed bytes were observed outside `[0, 131072)`. This finite scan cannot detect
+writes beyond the allocation or writes matching the poison pattern, and does
+not establish a maximum effective address (see
+[`NATIVE-DECODER-STORE-ENVELOPE.md`](NATIVE-DECODER-STORE-ENVELOPE.md)).
 
 ## Measured structure (findings)
 
@@ -122,9 +125,11 @@ validated it.
 
 Containment unchanged: bubblewrap, no network, no home, pinned source
 snapshots, hash-verified DLL read as data, 300 s bound, disabled core dumps.
-Per-entry out0 traffic is bounded to the established write extent plus margin,
-with one full-region poison upload per run and a final full-region check (a
-write whose bytes coincide with the 0xA5 poison is undetectable). Run manifests
+For each tested entry, the finite out0 allocation was poison-initialised and
+scanned; this observed changes within the monitored region but cannot detect
+writes beyond the allocation or stores matching the 0xA5 poison. It does not
+establish a maximum effective output address or allocation bound (see
+[`NATIVE-DECODER-STORE-ENVELOPE.md`](NATIVE-DECODER-STORE-ENVELOPE.md)). Run manifests
 pin the probe chain; the oracle is retained beside the evidence
 (`oracle-source.py`, `oracle-self-test.json`) but is not hashed by the run
 manifests. Swap, driver persistence and memory erasure remain uncontrolled;

@@ -69,11 +69,12 @@ final partition.
 
 ## What this does and does not establish
 
-Established: the recovered argument contract, launch geometry, counter protocol
-and output extent are **mutually consistent and executable on native Linux**.
-From synthetic inputs the kernel completes and produces an output write extent
-spanning `[0, 131072)` (byte-completeness not counted) whose numerical content
-is undetermined.
+Established: the recovered argument contract and tested launch geometry/counter
+protocol execute on native Linux. For the tested synthetic input, changed bytes
+were observed across `[0, 131072)` within the finite monitored out0 allocation
+(byte-completeness was not counted); numerical content is undetermined. This
+observation does not prove a maximum effective output address or generally safe
+allocation bound (see `NATIVE-DECODER-STORE-ENVELOPE.md`).
 
 Not established: the numerical meaning of that output — weight packing
 semantics, activation semantics, the upsampling computation and temporal state
