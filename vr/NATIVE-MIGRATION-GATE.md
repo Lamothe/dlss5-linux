@@ -1,10 +1,12 @@
-# Native migration external dependency gate — 25/10/2026
+# Native migration external dependency gate — 26/10/2026
 
 ## Scope
 
 The active deliverable remains a native Linux live-input→image evaluator, including preprocessing, learned-weight binding, complete graph execution, temporal history/reset and output conversion. This note records the dependency status; it is not a claim of migration completion. VR/Genesis remains a later, separate project.
 
 ## Current repository state checked
+
+The current-checkout/evidence review began at `f4eca7a` on 26/10/2026 (Australia/Sydney), with `main`, `origin/main`, and `origin/HEAD` aligned and a clean worktree. The bounded public-source recheck of NVIDIA's 22/09/2026 DLSS 5 developer article found feature description but no SDK-availability statement; this is not evidence that restricted or separately distributed materials are unavailable. The renderer's beta guide continues to require a compatible limited-availability NR SDK, without establishing Linux support. The detailed result and qualifications are recorded in `CAMPAIGN-HANDOVER.md`; no archive, binary or capture was inspected in this check.
 
 The evidence audit underlying this gate was performed at `1f03478` (`Update native migration gate handover`); the gate was subsequently clarified and published at `ffd808c` (`Clarify native migration evidence gate`). At the audit, `main` and `origin/main` were aligned and the working tree was clean. A follow-up search of local ignored run manifests and supplied SDK/artifact listings found no later producer→consumer identity evidence or version-matched NR ABI/integration material. That bounded check was read-only: no probe, archive download, capture or GPU execution was performed; its result was recorded in maintenance commit `a5a52f6`. The current `README.md`, `vr/CAMPAIGN-HANDOVER.md`, and `vr/NATIVE-GRAPH-NEXT.md` document the same unresolved boundary.
 

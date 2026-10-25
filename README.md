@@ -11,7 +11,7 @@ Repository: [Lamothe/dlss5-linux](https://github.com/Lamothe/dlss5-linux). Local
 
 The earlier Proton-based desktop/VR demonstrations are reference experiments, **not proof of a native Linux migration**. Proton may still be used to capture vendor reference data; the final native evaluator must not depend on it.
 
-## Current migration status — 25/10/2026
+## Current migration status — 26/10/2026
 
 Published source checks remain bounded: `vk_gltf_renderer` v2026.11 release notes do not announce a DLSS-NR SDK/header availability change; that does not establish whether the SDK changed elsewhere. Its guide still requires a compatible beta NGX SDK. Official NVIDIA/DLSS `v310.9.16` tracked source lacks `nvsdk_ngx_helpers_dlssnr_vk.h`; its Linux demo archive was not inspected, and separately distributed restricted packages are not ruled out. Official Streamline 2.14.0 changelog lists `sl.dlss_nr`, but its Vulkan support entry is for Reflex, not NR; its current programming guide specifies a 64-bit Windows requirement. These sources do not document a native Linux/Vulkan NR ABI. Target availability, authorisation, ABI compatibility and interop remain unverified; no capture or GPU probe is authorised. The bounded source finding and its qualifications are recorded in `a30bee1`; the Streamline Linux-support issue response is summarised in the latest handover update. A bounded staged-download inventory is recorded in `bf4fdbf` and the gate note: the workspace contains an NR archive and a Windows demo archive, but no Linux demo archive or Streamline NR header; the proprietary files were not inspected. NVIDIA/DLSS release `v310.9.16` does publish a Linux demo archive, verified from official release metadata, but its contents remain uninspected; see the gate note.
 
@@ -24,7 +24,7 @@ Historical handovers still name the predecessor workspace/remote: for all contin
 
 Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
 
-The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified in `ffd808c`; subsequent read-only local evidence/artifact checks recorded in `a5a52f6` and `37c251a` found no new qualifying input. This is a blocker record, not a completion claim.
+The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified in `ffd808c`; subsequent read-only local evidence/artifact checks recorded in `a5a52f6` and `37c251a` found no new qualifying input. The bounded 26/10/2026 source recheck is recorded in `f4eca7a` and the campaign handover. This is a blocker record, not a completion claim.
 
 ## Layout, dependencies and checks
 
