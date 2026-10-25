@@ -1,6 +1,6 @@
 # DLSS5 native Linux migration — current handover
 
-Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Latest verified pre-edit HEAD for this update: `a30bee1`; `main`, `origin/main` and `origin/HEAD` were aligned and clean. The earlier evidence audit was performed at `1f03478`; later maintenance and official-source checks are recorded in the sections below. This handover replaces older pointers; historical evidence remains in the linked reports.
+Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Latest verified pre-edit HEAD for this update: `9d75fbc`; `main`, `origin/main` and `origin/HEAD` were aligned and clean. The earlier evidence audit was performed at `1f03478`; later maintenance and official-source checks are recorded in the sections below. This handover replaces older pointers; historical evidence remains in the linked reports.
 
 ## Goal and boundaries
 
@@ -34,9 +34,9 @@ The repository does contain local, ignored probe runs demonstrating the SM89 ups
 
 ## Latest maintenance update — 25/10/2026
 
-The prior local-evidence maintenance check was performed at `a10318e`. The official Streamline source check was recorded in `a30bee1`; this update began from clean, aligned `main` at `a30bee1`. The bounded read found no documented native Linux/Vulkan NR ABI: changelog 2.14.0 lists `sl.dlss_nr`, while its Vulkan entry concerns Reflex; the current guide states a Windows requirement. This is not proof that no separately distributed or restricted target package exists. No archive, capture, or GPU work was performed. The local evidence inventory and existing decoder IO/store-envelope notes still expose no new producer→consumer identity evidence or proven reachable output-address bound. No code or proprietary evidence changed in this pass.
+The prior local-evidence maintenance check was performed at `a10318e`, and the official Streamline source check was recorded in `a30bee1`. The current maintenance check began from clean, aligned `main` at `9d75fbc`. The bounded read found no documented native Linux/Vulkan NR ABI: changelog 2.14.0 lists `sl.dlss_nr`, while its Vulkan entry concerns Reflex; the current guide states a Windows requirement. This is not proof that no separately distributed or restricted target package exists. No archive, capture, or GPU work was performed. The local evidence inventory and existing decoder IO/store-envelope notes still expose no new producer→consumer identity evidence or proven reachable output-address bound. No code or proprietary evidence changed in this pass.
 
-Earlier provenance: the audit state from `1f03478` was clarified in `ffd808c`; local evidence/artifact checks were recorded in `a5a52f6` and `37c251a`; status handover refreshed in `a10318e`; official Streamline-source interpretation was documented in `a30bee1`. These are documentation checkpoints, not native inference progress.
+Earlier provenance: the audit state from `1f03478` was clarified in `ffd808c`; local evidence/artifact checks were recorded in `a5a52f6` and `37c251a`; status handover refreshed in `a10318e`; official Streamline-source interpretation was documented in `a30bee1`; wording qualification and chronology were corrected in `9d75fbc`. These are documentation checkpoints, not native inference progress.
 
 ## Prior checks and verification
 
