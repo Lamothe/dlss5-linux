@@ -24,6 +24,10 @@ The static IO probe now builds direct-branch reachability from the pinned, conti
 
 This is a bounded graph-shape inventory only. It does not establish predicate values, complete path semantics, address-register liveness/ranges, loop bounds or a safe allocation envelope. It does not qualify decoder execution; the required proof remains open.
 
+## Implementation gate and current stopping point
+
+The CPU probe is not a kernel migration: it checks selected arithmetic against synthetic positive vectors and inventories structural control flow, while its own code explicitly leaves predicate values, register origins, CFG liveness and launch-derived bounds unresolved. The independent review found no safe, narrowly scoped source-only change that can establish a finite runtime output envelope from current inputs. In particular, extending helper range tests or adding more fixed arithmetic vectors would not constrain live kernel values; pinning instructions by hashes would not prove path-sensitive register liveness. Do not claim further progress on the allocation gate without new authorised launch-geometry/source facts or a complete SASS-level proof. No GPU execution is allowed until the envelope proof and independent review close this gate.
+
 ## Required next proof before any decoder GPU run
 
 1. Extend the static audit beyond structural reachability to cover every store's relevant predicate/loop semantics and every writer/use of address and base registers; reject unknown opcodes or paths.
