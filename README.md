@@ -35,7 +35,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 vr/native-slot-replay-probe.py self-test
 PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-report.py self-test
 PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-names.py self-test
 PYTHONDONTWRITEBYTECODE=1 python3 vr/tests/native-input-layout-test.py  # reference plane schema and row packing
-PYTHONDONTWRITEBYTECODE=1 python3 vr/native-input-layout.py vr/logs/reference/run-a  # local input-plane validation (optional)
+PYTHONDONTWRITEBYTECODE=1 python3 vr/native-input-layout.py vr/logs/reference/run-a  # local size/layout/manifest validation (optional)
 ```
 
 Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.

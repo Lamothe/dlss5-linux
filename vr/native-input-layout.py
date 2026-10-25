@@ -7,6 +7,7 @@ DLSS preprocessing, colour space, coordinate conventions, or runtime bindings.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 REFERENCE_INPUT_LAYOUTS = {
@@ -14,6 +15,16 @@ REFERENCE_INPUT_LAYOUTS = {
     "input-depth.bin": (1, 4),
     "input-motion.bin": (2, 2),
 }
+MANIFEST_LINE = re.compile(r"^(?P<name>\S+) bytes=(?P<bytes>\d+) fnv=0x(?P<fnv>[0-9a-f]{16})$")
+
+
+def fnv1a64(data: bytes | bytearray | memoryview) -> str:
+    """Return the capture manifest's FNV-1a-64 representation."""
+    value = 14695981039346656037
+    for byte in data:
+        value ^= byte
+        value = (value * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:016x}"
 
 
 def pack_rows(data: bytes | bytearray | memoryview, *, width: int, height: int,
@@ -52,8 +63,28 @@ def pack_reference_input(name: str, data: bytes | bytearray | memoryview, *,
                      bytes_per_component=bytes_per_component, row_pitch=row_pitch)
 
 
+def read_input_manifest(directory: Path) -> dict[str, tuple[int, str]]:
+    """Read required input entries from a capture manifest; reject ambiguity."""
+    manifest: dict[str, tuple[int, str]] = {}
+    for line in (directory / "manifest.txt").read_text(encoding="utf-8").splitlines():
+        fields = line.split(maxsplit=1)
+        candidate_name = fields[0] if fields else ""
+        match = MANIFEST_LINE.fullmatch(line)
+        if candidate_name in REFERENCE_INPUT_LAYOUTS:
+            if match is None:
+                raise ValueError(f"{directory / 'manifest.txt'}: malformed entry for {candidate_name}")
+            if candidate_name in manifest:
+                raise ValueError(f"{directory / 'manifest.txt'}: duplicate entry for {candidate_name}")
+            manifest[candidate_name] = (int(match.group("bytes")), match.group("fnv"))
+    missing = REFERENCE_INPUT_LAYOUTS.keys() - manifest.keys()
+    if missing:
+        raise ValueError(f"{directory / 'manifest.txt'}: missing input entries {sorted(missing)}")
+    return manifest
+
+
 def validate_capture(directory: Path, *, width: int = 720, height: int = 720) -> list[dict[str, object]]:
-    """Validate actual captured input file sizes/layout without changing payloads."""
+    """Validate actual input files against tight layout and their local manifest."""
+    expected_manifest = read_input_manifest(directory)
     reports: list[dict[str, object]] = []
     for name, (components, bytes_per_component) in REFERENCE_INPUT_LAYOUTS.items():
         path = directory / name
@@ -63,12 +94,17 @@ def validate_capture(directory: Path, *, width: int = 720, height: int = 720) ->
         actual = len(payload)
         if actual != expected:
             raise ValueError(f"{path}: size {actual} does not match expected {expected}")
+        manifest_bytes, manifest_fnv = expected_manifest[name]
+        digest = fnv1a64(payload)
+        if (manifest_bytes, manifest_fnv) != (actual, digest):
+            raise ValueError(f"{path}: size/digest does not match manifest")
         packed = pack_reference_input(name, payload, width=width, height=height,
                                       row_pitch=row_pitch)
         if len(packed) != expected:
             raise ValueError(f"{path}: packed size {len(packed)} does not match expected {expected}")
-        reports.append({"file": name, "bytes": actual, "row_pitch": row_pitch,
-                        "tight_rows": True, "unchanged": packed == payload})
+        reports.append({"file": name, "bytes": actual, "fnv1a64": digest,
+                        "row_pitch": row_pitch, "tight_rows": True,
+                        "unchanged": packed == payload})
     return reports
 
 
@@ -83,7 +119,7 @@ def main() -> None:
     except (OSError, ValueError) as error:
         parser.exit(1, f"FAIL: {error}\n")
     for report in reports:
-        print(f"PASS {report['file']}: {report['bytes']} bytes; tight rows unchanged")
+        print(f"PASS {report['file']}: {report['bytes']} bytes; manifest digest matches; tight rows unchanged")
 
 
 if __name__ == "__main__":

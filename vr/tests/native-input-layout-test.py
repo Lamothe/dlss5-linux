@@ -38,10 +38,16 @@ else:
 # Validate actual local capture files, and reject truncation without rewriting them.
 with TemporaryDirectory() as temporary:
     capture = Path(temporary)
+    manifest_lines = ["protocol capture-v1 frames=8 size=720 context=eye0 inputs=gradient-stationary reset=frame0"]
     for name, (components, bytes_per_component) in layout.REFERENCE_INPUT_LAYOUTS.items():
-        (capture / name).write_bytes(bytes(720 * 720 * components * bytes_per_component))
+        payload = bytes(720 * 720 * components * bytes_per_component)
+        (capture / name).write_bytes(payload)
+        manifest_lines.append(f"{name} bytes={len(payload)} fnv=0x{layout.fnv1a64(payload)}")
+    (capture / "manifest.txt").write_text("\n".join(manifest_lines) + "\n")
     reports = layout.validate_capture(capture)
     assert len(reports) == 3 and all(item["unchanged"] for item in reports)
+    (capture / "manifest.txt").write_text((capture / "manifest.txt").read_text() + "   \t  \n")
+    assert len(layout.validate_capture(capture)) == 3
     bad = capture / "input-depth.bin"
     bad.write_bytes(bad.read_bytes()[:-1])
     try:
@@ -51,6 +57,26 @@ with TemporaryDirectory() as temporary:
     else:
         raise AssertionError("truncated capture accepted")
     bad.write_bytes(bytes(720 * 720 * 4))
+    manifest_path = capture / "manifest.txt"
+    original_manifest = manifest_path.read_text()
+    first_line, *rest = original_manifest.splitlines()
+    rest[0] = rest[0][:-1] + ("0" if rest[0][-1] != "0" else "1")
+    manifest_path.write_text("\n".join([first_line, *rest]) + "\n")
+    try:
+        layout.validate_capture(capture)
+    except ValueError as error:
+        assert "does not match manifest" in str(error)
+    else:
+        raise AssertionError("manifest digest mismatch accepted")
+    manifest_path.write_text(original_manifest)
+    manifest_path.write_text(original_manifest + "input-colour.bin bytes=4147200 fnv=0xinvalid\n")
+    try:
+        layout.validate_capture(capture)
+    except ValueError as error:
+        assert "malformed entry" in str(error)
+    else:
+        raise AssertionError("malformed duplicate manifest entry accepted")
+    manifest_path.write_text(original_manifest)
     missing = capture / "input-motion.bin"
     missing.unlink()
     try:
