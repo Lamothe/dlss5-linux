@@ -22,6 +22,8 @@ This is a concrete instrumentation blocker for the raw-input→slot-1 edge. Do n
 
 ## Next bounded investigation
 
+The source-only path has now been exhausted against currently available materials: the resource-identity source investigation and static checker review found no further source anchor that joins the raw input planes to a consumer launch. The synthetic schema is not an implementation substitute. Do not continue adding schema controls, source hashes or speculative hooks. The next justified action requires externally supplied, explicit authorisation for a version-matched Proton reference capture and the corresponding target ABI/materials; absent that, record the blocker and do not capture or infer.
+
 A source-grounded resource-identity and provenance investigation, explicitly not capture authorization, is recorded in [`NATIVE-HOOK-PLAN.md`](NATIVE-HOOK-PLAN.md). Its source findings do not currently justify capture; obtain authorised, version-matched target materials before changing that gate.
 
 Do not repeat captured decoder comparison, byte-search opaque pools, launch GPU probes, or add more input-layout scaffolding. The previous source audit resolved the harness-only key→texture and upload→texture relationships but confirmed that available traces do not join them to a consumer. The checker-source audit below confirms that the remaining gap is not resolved by adding another static routing anchor. Keep harness evidence distinct from production/vendor caller inputs.
