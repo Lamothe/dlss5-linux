@@ -35,4 +35,4 @@ Do not inspect/export learned payload values outside the existing bounded probe 
 
 ## Status
 
-Plan only; no GPU execution performed. The real remaining prerequisite is project/operator authorization for the bounded kernel experiment plus successful current safety preflight. Official Feature 18 ABI/interop provenance remains a separate blocker for connecting this component to raw native inputs.
+Plan only; no GPU execution performed. As of 25/10/2026, the output extent is still not authoritatively bounded, so this experiment cannot safely execute. Once that bound/guard gate is resolved, explicit project/operator authorization and successful current safety preflight are also required. Official Feature 18 ABI/interop provenance remains a separate blocker for connecting this component to raw native inputs.
