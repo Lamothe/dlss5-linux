@@ -34,7 +34,9 @@ The repository does contain local, ignored probe runs demonstrating the SM89 ups
 
 ## Latest maintenance update — 25/10/2026
 
-The provenance header was corrected in commit `ac58577`; no source, evidence, capture or GPU probe was changed. The audit remains based on `1f03478`, with wording clarified in `ffd808c`. No qualifying new local producer→consumer evidence or authorised ABI/capture materials were found during this maintenance pass. The worktree was verified clean and `main` aligned with `origin/main` at `a5a52f6` before this update.
+The latest checked branch was `main` at `37c251a`, clean and aligned with `origin/main`. Local run listings and the tracked-file inventory did not reveal newer producer→consumer evidence or version-matched NR ABI materials; no probes, archives, captures or GPU work were performed. Review of the existing decoder IO/store-envelope notes reconfirmed that their formula bounds are conditional, not a proven reachable kernel address bound; no safe allocation or authorised output experiment follows from them. No code or evidence changed in this pass.
+
+Earlier provenance: the header was corrected in `ac58577`; audit state from `1f03478` was clarified in `ffd808c`; local evidence/artifact check was recorded in `a5a52f6`. These are documentation checkpoints, not native inference progress.
 
 ## Prior checks and verification
 
