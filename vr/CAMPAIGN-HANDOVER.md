@@ -12,7 +12,9 @@ Inspection of official `NVIDIA/DLSS` tag `v310.9.16` (published 16/10/2026 UTC; 
 
 ## Current decoder gate update
 
-After baseline `888b613`, the IO probe CPU self-test now asserts the conditional unsigned-32-bit address formula endpoint (`0x4000027fc`) and its excess over the existing 256 MiB output allocation. This is arithmetic under stipulated inputs only, not a runtime/kernel bound; pointer carries, CFG/path reachability and operand/launch ranges remain unproved. The change improves regression protection but does not qualify any GPU run or unblock native end-to-end evaluation.
+The output-store audit now adds a bounded direct-branch CFG inventory to the pinned SASS inspection. It preserves conditional taken/fall-through edges, models predicated termination fall-through, validates BSSY/BSYNC joins (including branch dominance and sequential barrier-register reuse), and reports immediate predecessors for all 16 store sites. CPU fixtures cover malformed/unsupported edges and barrier controls; independent review passed. The sandboxed static inspect reports all 16 stores reachable; negative mode rejects 51 pinned SASS corruptions. This remains structural graph evidence only: predicates, full address-register liveness/ranges, loop/launch bounds, pointer carries and semantic path conditions are unproved. The output-allocation proof and decoder GPU gate remain closed; no GPU kernel was launched.
+
+The earlier IO probe CPU self-test also asserts the conditional unsigned-32-bit address formula endpoint (`0x4000027fc`) and its excess over the existing 256 MiB output allocation. This is arithmetic under stipulated inputs only, not a runtime/kernel bound.
 
 ## Historical published state (through commit 8fe54ac)
 

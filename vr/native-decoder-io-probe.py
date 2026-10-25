@@ -12,8 +12,9 @@ unchanged.
 
 This is not a complete decoder contract, a captured runtime binding, semantic
 channel proof, output buffer extent proof or a native neural-rendered image.
-Index register origins are validated as decoded arithmetic only; loop and
-coordinate bounds, and multi-path control flow, remain conditional.
+Index register origins are validated as decoded arithmetic only; direct-branch
+structural reachability is inventoried, but predicate/path semantics and
+loop/coordinate bounds remain conditional.
 """
 from __future__ import annotations
 
@@ -241,8 +242,114 @@ def interpret(code: dict[int, str], offsets: tuple[int, ...], registers: dict[st
     return registers
 
 
+def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES) -> dict[str, Any]:
+    """Build conservative direct-branch reachability for the pinned SASS map.
+
+    Predicates are treated as unconstrained. This is structural reachability
+    only: it does not establish register values, loop bounds or address safety.
+    Indirect/unknown control transfers fail closed.
+    """
+    offsets = sorted(code)
+    require(offsets and offsets[0] % 16 == 0 and
+            all(right - left == 16 for left, right in zip(offsets, offsets[1:])),
+            "non-contiguous SASS map")
+    successors: dict[int, set[int]] = {offset: set() for offset in offsets}
+    reconvergence_targets: dict[int, tuple[str, int]] = {}
+    for offset in offsets:
+        text = code[offset].strip()
+        match = re.fullmatch(r"BSSY\s+(B\d+),\s*(0x[0-9a-fA-F]+)", text)
+        if match is not None:
+            reconvergence_targets[offset] = (match.group(1), int(match.group(2), 16))
+    branch_pattern = re.compile(r"(?:@[A-Z0-9!]+\s+)?BRA(?:\.[A-Z0-9]+)*\s+(0x[0-9a-fA-F]+)$")
+    active_barriers: dict[str, int] = {}
+    bsync_declarations: list[tuple[int, int]] = []
+    for index, offset in enumerate(offsets):
+        text = code[offset].strip()
+        parts = text.split()
+        opcode = parts[-2] if parts and parts[0].startswith("@") and len(parts) > 1 else (parts[0] if parts else "")
+        next_offset = offsets[index + 1] if index + 1 < len(offsets) else None
+        branch = branch_pattern.fullmatch(text)
+        if branch is not None:
+            target = int(branch.group(1), 16)
+            require(target in code, f"branch target missing at {offset:#x}")
+            successors[offset].add(target)
+            if text.startswith("@") and next_offset is not None:
+                successors[offset].add(next_offset)
+        elif opcode.split(".")[0] in {"BRA", "BRX", "JMP", "JMX", "CALL", "PRET",
+                                         "BSSY", "BSYNC", "SSY", "SYNC", "PBK", "BRK",
+                                         "CONT", "PCNT"}:
+            barrier_match = re.fullmatch(r"(?:@([A-Z0-9!]+)\s+)?BSYNC\s+(B\d+)", text)
+            if opcode.split(".")[0] == "BSYNC" and barrier_match is not None:
+                barrier = barrier_match.group(2)
+                require(barrier in active_barriers, f"unpaired reconvergence barrier at {offset:#x}")
+                declaration = active_barriers[barrier]
+                join = reconvergence_targets[declaration][1]
+                bsync_declarations.append((offset, declaration))
+                active_barriers.pop(barrier, None)
+                require(join in code, f"reconvergence target missing at {offset:#x}")
+                if next_offset is not None:
+                    successors[offset].add(next_offset)
+                if join != next_offset:
+                    successors[offset].add(join)
+            elif opcode.split(".")[0] == "BSSY" and re.fullmatch(r"BSSY\s+B\d+,\s*0x[0-9a-fA-F]+", text):
+                match = re.fullmatch(r"BSSY\s+(B\d+),\s*(0x[0-9a-fA-F]+)", text)
+                require(match is not None, f"malformed BSSY at {offset:#x}")
+                join = int(match.group(2), 16)
+                require(join in code, f"BSSY target missing at {offset:#x}")
+                require(match.group(1) not in active_barriers,
+                        f"overlapping BSSY barrier at {offset:#x}")
+                active_barriers[match.group(1)] = offset
+                if next_offset is not None:
+                    successors[offset].add(next_offset)
+            else:
+                raise ValueError(f"unsupported control/synchronisation transfer at {offset:#x}: {text}")
+        elif opcode.startswith(("EXIT", "RET")):
+            if text.startswith("@") and next_offset is not None:
+                successors[offset].add(next_offset)
+        elif next_offset is not None:
+            successors[offset].add(next_offset)
+    reachable: set[int] = set()
+    predecessors: dict[int, set[int]] = {offset: set() for offset in offsets}
+    pending = [offsets[0]]
+    while pending:
+        current = pending.pop()
+        if current in reachable:
+            continue
+        reachable.add(current)
+        for target in successors[current]:
+            predecessors[target].add(current)
+            pending.append(target)
+    require(not active_barriers, "unmatched BSSY barrier")
+    entry = offsets[0]
+    dominators = {offset: ({offset} if offset == entry else set(reachable)) for offset in reachable}
+    changed = True
+    while changed:
+        changed = False
+        for offset in reachable - {entry}:
+            incoming = [pred for pred in predecessors[offset] if pred in reachable]
+            require(incoming, f"reachable instruction without predecessor at {offset:#x}")
+            common = set.intersection(*(dominators[pred] for pred in incoming))
+            updated = {offset} | common
+            if updated != dominators[offset]:
+                dominators[offset] = updated
+                changed = True
+    for offset, declaration in bsync_declarations:
+        if offset in reachable:
+            require(declaration in dominators[offset],
+                    f"BSSY does not dominate BSYNC at {offset:#x}")
+    store_offsets = sorted(stores)
+    return {"reachable_store_count": sum(offset in reachable for offset in store_offsets),
+            "unreachable_stores": [f"{offset:#x}" for offset in store_offsets if offset not in reachable],
+            "store_predecessors": {f"{offset:#x}": [f"{p:#x}" for p in sorted(predecessors[offset])]
+                                   for offset in store_offsets},
+            "control_flow_scope": "direct branches; predicates unconstrained; no semantic/address proof"}
+
+
 def check_static(code: dict[int, str]) -> None:
     require(len(code) * 16 == KERNEL_BYTES, "unexpected kernel extent")
+    cfg = store_cfg(code)
+    require(cfg["reachable_store_count"] == len(STORES), "unreachable output store")
+    address.check_anchors(code)
     address.check_anchors(code)
     address.check_register_provenance(code)
     for offset, expected in ARITHMETIC.items():
@@ -363,6 +470,53 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
              (weight_word_address(0), 0x80000), (read_address(2, 1), 24))
     for observed, expected in known:
         require(observed == expected, "literal address answer mismatch")
+    # CFG fixtures exercise direct, conditional, looping and fail-closed edges.
+    cfg_fixtures = {
+        0: "@P0 BRA 0x20", 16: "NOP", 32: "BRA 0x40", 48: "EXIT",
+        64: "STG.E.NA.128 [R48.64], R4",
+    }
+    cfg_fixture_stores = {64: ("R48", 0)}
+    cfg = store_cfg(cfg_fixtures, cfg_fixture_stores)
+    require(cfg["reachable_store_count"] == 1 and cfg["store_predecessors"]["0x40"] == ["0x20"],
+            "direct/conditional branch CFG fixture mismatch")
+    fallthrough = {0: "@P0 BRA 0x30", 16: "STG.E.NA.128 [R48.64], R4",
+                   32: "EXIT", 48: "EXIT"}
+    require(store_cfg(fallthrough, {16: ("R48", 0)})["reachable_store_count"] == 1,
+            "conditional branch fall-through omitted")
+    bsync_reuse = {0: "BSSY B0, 0x20", 16: "BSYNC B0", 32: "BSSY B0, 0x40",
+                   48: "BSYNC B0", 64: "STG.E.NA.128 [R48.64], R4"}
+    require(store_cfg(bsync_reuse, {64: ("R48", 0)})["reachable_store_count"] == 1,
+            "reused barrier did not select latest declaration")
+    loop = {0: "BRA 0x0", 16: "STG.E.NA.128 [R48.64], R4"}
+    require(store_cfg(loop, {16: ("R48", 0)})["reachable_store_count"] == 0,
+            "unreachable CFG fixture accepted")
+    predicated_exit = {0: "@P0 EXIT", 16: "STG.E.NA.128 [R48.64], R4"}
+    require(store_cfg(predicated_exit, {16: ("R48", 0)})["reachable_store_count"] == 1,
+            "predicated exit fall-through omitted")
+    unpredicated_exit = {0: "EXIT", 16: "STG.E.NA.128 [R48.64], R4"}
+    require(store_cfg(unpredicated_exit, {16: ("R48", 0)})["reachable_store_count"] == 0,
+            "unpredicated exit fall-through accepted")
+    bsync_unpredicated = {0: "BSSY B0, 0x30", 16: "BSYNC B0",
+                          32: "STG.E.NA.128 [R48.64], R4", 48: "EXIT"}
+    require(store_cfg(bsync_unpredicated, {32: ("R48", 0)})["reachable_store_count"] == 1,
+            "unpredicated BSYNC continuation omitted")
+    bsync_predicated = {0: "BSSY B0, 0x30", 16: "@P0 BSYNC B0",
+                        32: "STG.E.NA.128 [R48.64], R4", 48: "EXIT"}
+    require(store_cfg(bsync_predicated, {32: ("R48", 0)})["reachable_store_count"] == 1,
+            "predicated BSYNC branch alternatives omitted")
+    for malformed in ({0: "BRA 0x20", 16: "EXIT"},
+                      {0: "BRX R2", 16: "STG.E.NA.128 [R48.64], R4"},
+                      {0: "BSSY B0, 0x10", 16: "EXIT"},
+                      {0: "BSSY B0, 0x20", 16: "BSYNC B0"},
+                      {0: "BSSY B0, 0x30", 16: "BSSY B0, 0x30",
+                       32: "BSYNC B0", 48: "BSYNC B0"},
+                      {0: "@P0 BRA 0x20", 16: "BSSY B0, 0x30",
+                       32: "BSYNC B0", 48: "EXIT"}):
+        try:
+            store_cfg(malformed, {16: ("R48", 0)})
+        except ValueError:
+            continue
+        raise ValueError("malformed CFG control accepted")
     # Wrong-formula controls must fail numerically, not merely by hash.
     wrong = ((0x4860, "IMAD R127, R20, 0x400, R23"),
              (0x4f10, "IMAD.WIDE R48, R45, 0x20, R46"),
@@ -444,7 +598,8 @@ def inspect(data: bytes, negative: bool) -> dict[str, Any]:
         require(rejected == len(ARITHMETIC) + len(STORES), "corrupted SASS accepted")
         return dict(sass_corruptions_rejected=rejected, gpu_kernels_launched=0)
     cpu = self_test()
-    return dict(kernel=address.NAME, cpu_self_test=cpu,
+    cfg = store_cfg(code)
+    return dict(kernel=address.NAME, cpu_self_test=cpu, store_cfg=cfg,
                 output_slot_count=len(OUTPUT_SLOTS), output_stores=len(STORES),
                 output_pointer="argument slot 16 (c[0x0][0x170]) + index*4 + unit*16 + slot",
                 output_unit="SR_LANEID (pinned S2R)", output_bytes_per_store=16,
