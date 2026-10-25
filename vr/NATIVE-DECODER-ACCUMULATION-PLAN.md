@@ -9,7 +9,7 @@ The decoder candidate record is bound to the recovered byte map for **single-pro
 - `native-decoder-launch-probe.py` establishes the bounded launch argument/counter/output contract and negative controls.
 - `native-decoder-permutation-probe.py` and `native-decoder-extension-probe.py` supply a validated `(output,input,matrix-byte)` map.
 - `native-decoder-binding-probe.py` binds the stored record for isolated single-product cases. It records the 512-element FP16 tail at bytes `[524288,525312)` and requires finite values, but does not prove those values are read or define their semantics.
-- The graph notes explicitly leave raw-input/pre-decoder dataflow, full decoder evaluation, output conversion and history unestablished. No synthetic decoder test can close those gaps.
+- The graph notes explicitly leave raw-input/pre-decoder dataflow, full decoder evaluation, output conversion and history unestablished. No synthetic decoder test can close those gaps. The static output-address gap and required proof are documented separately in [`NATIVE-DECODER-STORE-ENVELOPE.md`](NATIVE-DECODER-STORE-ENVELOPE.md); the helper's `MAX_INDEX` validation is not runtime bound evidence.
 
 Do not inspect/export learned payload values outside the existing bounded probe and retention rules. Use synthetic matrix/activation/tail buffers for the planned arithmetic test; compare against an independently implemented CPU oracle. Keep raw evidence local and ignored.
 

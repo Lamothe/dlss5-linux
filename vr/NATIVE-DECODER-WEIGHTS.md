@@ -72,9 +72,11 @@ against the current source.)
   was observed under either word-table variant, and the two variants produced
   identical coupling values. This does not establish what the `+0x80000` word
   tables mean.
-- Output writes were confined to the observed extent `[0, 131072)` in every
-  experiment (enforced; writes that equal the `0xA5` poison byte are
-  undetectable by design, as with the launch probe's canaries). Counters
+- No detectable changes were observed outside `[0, 131072)` in the monitored
+  out0 region for these experiments. Writes equal to the `0xA5` poison byte are
+  undetectable; addresses beyond the finite monitored allocation are not
+  observed. This does not establish a maximum effective output address or a
+  general safe allocation bound (see `NATIVE-DECODER-STORE-ENVELOPE.md`). Counters
   finished at `[3]×8` everywhere (enforced); main, skip, weights and
   census-unused out3/out2 stayed byte-identical (enforced); all guard zones
   intact (enforced).

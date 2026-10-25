@@ -172,7 +172,4 @@ internally consistent and found the comparison miscount, evidence misattribution
 and an atomic-return fail-open, all corrected above and re-verified.
 
 Next: bound the output index domain (loop/coordinate origins of `R8/R9/R23a/R2`).
-The guarded launch predicted here is now done: see `NATIVE-DECODER-LAUNCH.md` —
-the kernel launched natively with these recovered contracts, counters reached
-their final value and the output extent matched the nominal region. Remaining:
-weight-binding semantics and a numerical reference. Nothing committed or pushed.
+The guarded launch predicted here is done; see `NATIVE-DECODER-LAUNCH.md`. It validates launch/protocol behaviour and the observed changed-byte extent for that tested configuration only. It does not bound the maximum effective output address or prove a generally safe allocation size; the loop/coordinate origins and complete store-path bounds remain unverified (see `NATIVE-DECODER-STORE-ENVELOPE.md`). Remaining: weight-binding semantics and numerical reference. The output-bound question is still open.

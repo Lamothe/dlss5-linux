@@ -8,8 +8,10 @@ the native CUDA driver on the RTX 4070 Ti SUPER — no Windows code, no DirectX,
 no Proton, no VR. Synthetic fill is used for every input; **learned weights are
 not read from the runtime and no neural-rendered image is produced**.
 
-This is a guarded structural test — protocol completion, bounds and format
-sanity. It is **not** numerical decoder validation.
+This is a guarded structural test — protocol completion, allocation guard/canary
+integrity for the tested run, and format sanity. It does **not** establish a
+maximum effective output address or general safe allocation bound, and is not
+numerical decoder validation.
 
 ## What ran
 
@@ -27,7 +29,9 @@ out0, out3, counters, out2, partials, weights, dimension, width,
 output_axis0=16, output_axis1=16 (twice input, per the recovered host rule).
 Buffers: 256 MiB out0, 4 MiB main/skip/partials, 8 MiB weights, 2 MiB out3/out2
 (the slots the census shows unused; sized at the nominal output extent plus
-margin so a violated census keeps bounded writes inside the allocation), 8
+margin for this tested launch only. This allocation does not prove the maximum
+effective output address for other dimensions or unmodelled index/control-flow
+paths), 8
 counter words; 1 KiB guard zones around every region; distinct fill patterns
 per role.
 
@@ -163,8 +167,9 @@ What is missing and concrete:
 Each is an established-methods task, not an unknown-unknown. Pivot trigger: if
 the packing permutation cannot be pinned by one-hot/impulse probes within that
 stage, stop reconstruction and adopt an open neural backend using the recovered
-interface contract (argument slots, geometry, counter protocol, I/O extents —
-all now validated by execution).
+interface contract (argument slots, geometry, counter protocol and tested I/O observations —
+validated only for tested configurations; maximum effective output address and a general safe allocation bound remain unverified, see
+[`NATIVE-DECODER-STORE-ENVELOPE.md`](NATIVE-DECODER-STORE-ENVELOPE.md)).
 
 Strategic note: even a successful reconstruction reuses NVIDIA's proprietary
 kernels and weights — native execution removes Windows/Proton, not the
