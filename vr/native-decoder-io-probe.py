@@ -261,8 +261,7 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
         if match is not None:
             reconvergence_targets[offset] = (match.group(1), int(match.group(2), 16))
     branch_pattern = re.compile(r"(?:@[A-Z0-9!]+\s+)?BRA(?:\.[A-Z0-9]+)*\s+(0x[0-9a-fA-F]+)$")
-    active_barriers: dict[str, int] = {}
-    bsync_declarations: list[tuple[int, int]] = []
+    barrier_pairs: list[tuple[int, int, int]] = []
     for index, offset in enumerate(offsets):
         text = code[offset].strip()
         parts = text.split()
@@ -281,11 +280,12 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
             barrier_match = re.fullmatch(r"(?:@([A-Z0-9!]+)\s+)?BSYNC\s+(B\d+)", text)
             if opcode.split(".")[0] == "BSYNC" and barrier_match is not None:
                 barrier = barrier_match.group(2)
-                require(barrier in active_barriers, f"unpaired reconvergence barrier at {offset:#x}")
-                declaration = active_barriers[barrier]
+                declarations = [site for site, (declared, _) in reconvergence_targets.items()
+                                if site < offset and declared == barrier]
+                require(declarations, f"unpaired reconvergence barrier at {offset:#x}")
+                declaration = declarations[-1]
                 join = reconvergence_targets[declaration][1]
-                bsync_declarations.append((offset, declaration))
-                active_barriers.pop(barrier, None)
+                barrier_pairs.append((declaration, offset, join))
                 require(join in code, f"reconvergence target missing at {offset:#x}")
                 if next_offset is not None:
                     successors[offset].add(next_offset)
@@ -296,9 +296,6 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
                 require(match is not None, f"malformed BSSY at {offset:#x}")
                 join = int(match.group(2), 16)
                 require(join in code, f"BSSY target missing at {offset:#x}")
-                require(match.group(1) not in active_barriers,
-                        f"overlapping BSSY barrier at {offset:#x}")
-                active_barriers[match.group(1)] = offset
                 if next_offset is not None:
                     successors[offset].add(next_offset)
             else:
@@ -319,7 +316,15 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
         for target in successors[current]:
             predecessors[target].add(current)
             pending.append(target)
-    require(not active_barriers, "unmatched BSSY barrier")
+    paired_declarations = [declaration for declaration, _, _ in barrier_pairs]
+    require(len(paired_declarations) == len(reconvergence_targets) and
+            set(paired_declarations) == set(reconvergence_targets), "unmatched BSSY barrier")
+    for declaration, bsync, _ in barrier_pairs:
+        barrier = reconvergence_targets[declaration][0]
+        later = [site for site, (declared, _) in reconvergence_targets.items()
+                 if site > declaration and declared == barrier]
+        if later and declaration in reachable:
+            require(bsync < later[0], f"overlapping BSSY barrier at {declaration:#x}")
     entry = offsets[0]
     dominators = {offset: ({offset} if offset == entry else set(reachable)) for offset in reachable}
     changed = True
@@ -333,10 +338,18 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
             if updated != dominators[offset]:
                 dominators[offset] = updated
                 changed = True
-    for offset, declaration in bsync_declarations:
+    for declaration, offset, join in barrier_pairs:
         if offset in reachable:
             require(declaration in dominators[offset],
                     f"BSSY does not dominate BSYNC at {offset:#x}")
+            require(join in code, f"reconvergence join missing at {offset:#x}")
+    for declaration, offset, _ in barrier_pairs:
+        barrier = reconvergence_targets[declaration][0]
+        later = [site for site, (declared, _) in reconvergence_targets.items()
+                 if site > declaration and declared == barrier]
+        if later and later[0] in reachable:
+            require(offset in dominators[later[0]],
+                    f"BSYNC does not dominate reused BSSY at {later[0]:#x}")
     store_offsets = sorted(stores)
     return {"reachable_store_count": sum(offset in reachable for offset in store_offsets),
             "unreachable_stores": [f"{offset:#x}" for offset in store_offsets if offset not in reachable],
@@ -511,7 +524,13 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
                       {0: "BSSY B0, 0x30", 16: "BSSY B0, 0x30",
                        32: "BSYNC B0", 48: "BSYNC B0"},
                       {0: "@P0 BRA 0x20", 16: "BSSY B0, 0x30",
-                       32: "BSYNC B0", 48: "EXIT"}):
+                       32: "BSYNC B0", 48: "EXIT"},
+                      {0: "BSSY B0, 0x60", 16: "@P0 BRA 0x30",
+                       32: "BSYNC B0", 48: "BSSY B0, 0x70",
+                       64: "BSYNC B0", 80: "EXIT", 96: "EXIT", 112: "EXIT"},
+                      {0: "BSSY B0, 0x40", 16: "BRA 0x30",
+                       32: "BSYNC B0", 48: "BSSY B0, 0x60",
+                       64: "BSYNC B0", 80: "EXIT", 96: "EXIT"}):
         try:
             store_cfg(malformed, {16: ("R48", 0)})
         except ValueError:
@@ -611,7 +630,7 @@ def inspect(data: bytes, negative: bool) -> dict[str, Any]:
                 weight_words="argument slot 56 (c[0x0][0x198]) + index*4 + 0x80000; 4-byte reads pinned at two sites",
                 constant_census_regions=len(CENSUS), kernel_extent=KERNEL_BYTES,
                 provenance_windows=len(PROVENANCE),
-                index_semantics="decoded arithmetic only; loop/coordinate bounds and CFG paths conditional",
+                index_semantics="decoded arithmetic only; loop/coordinate bounds and predicate/path semantics conditional; direct-branch reachability inventoried",
                 output_buffer_extent_verified=False, channel_semantics_verified=False,
                 complete_decoder_contract=False, numerical_decoder_validation=False,
                 gpu_kernels_launched=0)
