@@ -115,8 +115,10 @@ of reachable runtime addresses.
   weight word chains) additionally have their formation-to-consumer spans
   checked free of intervening writers; the fifth read chain (`0x31b0 → 0x3370`)
   is validated arithmetically only, with no pinned consumer.
-- 12 per-index coverage oracles (no unit/slot alias, contiguous slot blocks,
-  exact `0x27f0` difference between minimum and maximum store-start offsets (the stipulated byte extent including the final 16-byte store is `0x2800`) at four indices, plus six literal address answers.
+- 12 per-index coverage oracles at four indices (no unit/slot alias, contiguous
+  slot blocks, exact `0x27f0` difference between minimum and maximum store-start
+  offsets; the stipulated byte extent including the final 16-byte store is
+  `0x2800`), plus six literal address answers.
 - The full-kernel constant-bank census (three regions, exact counts) and four
   register provenance windows.
 - Four wrong-formula controls fail **numerically** (wrong index multiplier,
