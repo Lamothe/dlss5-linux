@@ -213,12 +213,18 @@ persistence and memory erasure remain uncontrolled.
 
 ## Next stage
 
-1. Capture Proton reference evaluations (controlled colour/depth/motion
-   inputs from the working VR PoC) and compare one native evaluation against
-   the vendor reference — the gate item that converts structural recovery into
-   a validated pipeline.
-2. Establish multi-term accumulation and the FP16 scales' role if the
-   comparison requires them.
+The bounded synthetic arithmetic experiment is specified in
+[`NATIVE-DECODER-ACCUMULATION-PLAN.md`](NATIVE-DECODER-ACCUMULATION-PLAN.md).
+It is not run-authorised by this document: explicit project/operator approval
+and a fresh safety preflight are required before any GPU submission. If allowed,
+first determine multi-term accumulation and whether/how the FP16 tail affects
+outputs, using synthetic buffers and no learned payload. This can refine only
+this kernel's synthetic arithmetic contract.
+
+A Proton vendor-reference evaluation and comparison is a separate, later gate;
+it needs explicit capture authorization and cannot substitute for the native
+input/interop binding. Neither experiment alone establishes the full evaluator
+or a live-input image pipeline.
 
 Containment unchanged: bubblewrap, no network, no home, pinned source
 snapshots, hash-verified DLL read as data, 480 s probe bound (120 s oracle),
