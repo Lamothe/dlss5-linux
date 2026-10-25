@@ -13,8 +13,10 @@ unchanged.
 This is not a complete decoder contract, a captured runtime binding, semantic
 channel proof, output buffer extent proof or a native neural-rendered image.
 Index register origins are validated as decoded arithmetic only; direct-branch
-structural reachability is inventoried, but predicate/path semantics and
-loop/coordinate bounds remain conditional.
+structural reachability and may-reaching static writer offsets for the four
+store-base registers are inventoried. The destination/width classifier is a
+bounded fail-closed model, not complete SASS semantics; predicate/path semantics
+and loop/coordinate bounds remain conditional.
 """
 from __future__ import annotations
 
@@ -242,6 +244,158 @@ def interpret(code: dict[int, str], offsets: tuple[int, ...], registers: dict[st
     return registers
 
 
+# Deliberately narrow destination classifier for reaching-definitions inventory.
+# It recognises ordinary single-destination scalar forms and explicit width
+# markers; unsupported/ambiguous forms fail closed rather than being treated as
+# no-write. This is not a general SASS instruction-semantics model.
+NO_GPR_DESTINATION = {
+    "NOP", "ISETP", "FSETP", "PSETP", "PLOP3", "CSETP",
+    "STG", "STL", "STS", "ST", "SUST", "SURED", "RED", "GRED",
+    "BRA", "BRX", "JMP", "JMX", "CALL", "PRET", "EXIT", "RET",
+    "BSSY", "BSYNC", "SSY", "SYNC", "PBK", "BRK", "CONT", "PCNT",
+    "BAR", "WARPSYNC", "MEMBAR", "ERRBAR", "NANOSLEEP", "DEPBAR",
+    "LDGDEPBAR", "R2P", "YIELD",
+}
+SCALAR_DESTINATION_OPS = {
+    "FADD", "F2F", "F2I", "FCHK", "FSET", "FFMA", "FMNMX", "FMUL",
+    "FSEL", "I2F", "IADD", "IADD3", "IMAD", "IMNMX", "IMUL", "ISET",
+    "ISCADD", "LEA", "LOP", "MUFU", "P2R", "POPC", "PRMT", "R2UR",
+    "S2R", "S2UR", "SEL", "SHF", "SHFL", "SHL", "SHR", "USHF", "UR2R", "ULDC",
+    "CS2R",
+    "LDC", "LDG", "LDL", "LDS", "LD", "VOTE", "BFE", "BFI", "BMSK",
+    "IABS", "UIADD3", "ULEA", "LOP3", "F2FP", "QMMA",
+    "BREV", "MOV", "MOVM", "HADD2", "HFMA2", "HMUL2",
+}
+
+
+def strict_written_registers(instruction: str) -> tuple[set[str], bool]:
+    """Return GPR writes and whether the instruction is predicated.
+
+    This small width model expands explicit .128/.64/.WIDE forms and CS2R.
+    Other recognised destinations are one GPR. Predicated writes are marked
+    separately so reaching definitions retain both the old and new definition.
+    """
+    text = instruction.strip()
+    predicated = False
+    if text.startswith("@"):
+        predicate, separator, text = text.partition(" ")
+        require(bool(separator) and re.fullmatch(r"@!?(?:U?P\d+|UPT|PT)", predicate) is not None,
+                "unsupported instruction predicate")
+        predicated = True
+    parts = text.split(None, 1)
+    require(bool(parts), "malformed instruction for reaching definitions")
+    opcode = parts[0]
+    operand_text = parts[1] if len(parts) == 2 else ""
+    operands = [operand.strip() for operand in operand_text.split(",")] if operand_text else []
+    require(all(operands), "empty instruction operand")
+    base_opcode = opcode.split(".", 1)[0]
+    if opcode == "QMMA.16832.F16.E4M3.E4M3":
+        require(len(operands) == 4 and re.fullmatch(r"R\d+", operands[0]) is not None,
+                "unsupported pinned QMMA destination form")
+        first = int(operands[0][1:])
+        require(first + 4 <= 256, "QMMA destination span out of model")
+        return {f"R{register}" for register in range(first, first + 4)}, predicated
+    require(not opcode.startswith("QMMA."), f"unsupported matrix instruction {opcode}")
+    if base_opcode in NO_GPR_DESTINATION:
+        return set(), predicated
+    if base_opcode == "LDGSTS":
+        require(len(operands) == 2 and
+                re.fullmatch(r"\[R\d+\]", operands[0]) is not None and
+                re.fullmatch(r"\[R\d+\.64\]", operands[1]) is not None,
+                "unsupported LDGSTS form")
+        return set(), predicated
+    if opcode == "ATOMS.ARRIVE.64":
+        require(len(operands) == 2 and re.fullmatch(r"R\d+", operands[0]) is not None and
+                re.fullmatch(r"\[(?:R\d+(?:\+URZ)?|URZ)(?:\+0x[0-9a-f]+)?\]", operands[1]) is not None,
+                "unsupported pinned atomic-arrival form")
+        first = int(operands[0][1:])
+        require(first + 2 <= 256, "atomic-arrive destination span out of model")
+        return {f"R{first}", f"R{first + 1}"}, predicated
+    require(base_opcode != "ATOMS", f"unsupported atomic instruction {opcode}")
+    if base_opcode in {"CSETP", "PLOP3", "PSETP"}:
+        return set(), predicated
+    if base_opcode == "LOP3" and operands and re.fullmatch(r"!?U?P(?:\d+|T)", operands[0]):
+        require(len(operands) == 7 and
+                re.fullmatch(r"(?:R\d+|RZ)", operands[1]) is not None,
+                "unsupported predicate-destination LOP3 form")
+        if operands[1] == "RZ":
+            return set(), predicated
+        return {operands[1]}, predicated
+    require(base_opcode not in UNAUDITED_WIDE and
+            base_opcode not in {"ATOM", "ATOMS", "SUATOM", "SUATOMS"},
+            f"unsupported multi-register/atomic instruction {opcode}")
+    require(base_opcode in SCALAR_DESTINATION_OPS,
+            f"unsupported destination semantics for {opcode}")
+    require(bool(operands), f"missing destination operand for {opcode}")
+    destination = re.sub(r"\.(?:reuse|reuse2?)$", "", operands[0])
+    if destination in {"RZ", "URZ", "PT", "UPT"} or re.fullmatch(r"UR\d+", destination):
+        return set(), predicated
+    require(re.fullmatch(r"R\d+", destination) is not None,
+            f"unsupported GPR destination {destination!r}")
+    components = opcode.split(".")[1:]
+    width_markers = sum(component in {"128", "64", "WIDE"} for component in components)
+    require(width_markers <= 1, f"ambiguous destination width in {opcode}")
+    width = 4 if "128" in components else 2 if "64" in components or "WIDE" in components or base_opcode == "CS2R" else 1
+    first = int(destination[1:])
+    require(first + width <= 256, "GPR destination span out of model")
+    return {f"R{register}" for register in range(first, first + width)}, predicated
+
+
+def reaching_store_definitions(code: dict[int, str], reachable: set[int],
+                               predecessors: dict[int, set[int]],
+                               stores: dict[int, tuple[str, int]]) -> tuple[dict[str, list[str]], dict[str, bool]]:
+    """Compute may-reaching static writer offsets for store base registers.
+
+    Each base starts with an entry-unknown definition. Unpredicated writes kill
+    prior definitions; predicated writes may execute, so they add a definition
+    without killing prior definitions. Only static instruction offsets are
+    reported as definitions; this does not recover values or address bounds.
+    """
+    bases = sorted({base_register for base_register, _ in stores.values()})
+    entry_unknown = object()
+    definitions = {register: entry_unknown for register in bases}
+    incoming: dict[int, dict[str, set[object]]] = {
+        offset: {register: set() for register in bases} for offset in reachable
+    }
+    outgoing: dict[int, dict[str, set[object]]] = {
+        offset: {register: set() for register in bases} for offset in reachable
+    }
+    entry = min(code)
+    changed = True
+    while changed:
+        changed = False
+        for offset in sorted(reachable):
+            new_in = {register: set() for register in bases}
+            if offset == entry:
+                for register in bases:
+                    new_in[register].add(entry_unknown)
+            for predecessor in predecessors[offset]:
+                if predecessor in reachable:
+                    for register in bases:
+                        new_in[register].update(outgoing[predecessor][register])
+            writes, predicated = strict_written_registers(code[offset])
+            new_out = {register: set(values) for register, values in new_in.items()}
+            for register in bases:
+                if register in writes:
+                    if not predicated:
+                        new_out[register].clear()
+                    new_out[register].add(offset)
+            if new_in != incoming[offset] or new_out != outgoing[offset]:
+                incoming[offset] = new_in
+                outgoing[offset] = new_out
+                changed = True
+    static_at_stores: dict[str, list[str]] = {}
+    unknown_at_stores: dict[str, bool] = {}
+    for offset, (register, _) in sorted(stores.items()):
+        if offset not in reachable:
+            continue
+        key = f"{offset:#x}"
+        static_at_stores[key] = sorted(f"{definition:#x}" for definition in incoming[offset][register]
+                                       if definition is not entry_unknown)
+        unknown_at_stores[key] = entry_unknown in incoming[offset][register]
+    return static_at_stores, unknown_at_stores
+
+
 def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES) -> dict[str, Any]:
     """Build conservative direct-branch reachability for the pinned SASS map.
 
@@ -351,11 +505,15 @@ def store_cfg(code: dict[int, str], stores: dict[int, tuple[str, int]] = STORES)
             require(offset in dominators[later[0]],
                     f"BSYNC does not dominate reused BSSY at {later[0]:#x}")
     store_offsets = sorted(stores)
+    store_definitions, store_entry_unknown = reaching_store_definitions(
+        code, reachable, predecessors, stores)
     return {"reachable_store_count": sum(offset in reachable for offset in store_offsets),
             "unreachable_stores": [f"{offset:#x}" for offset in store_offsets if offset not in reachable],
             "store_predecessors": {f"{offset:#x}": [f"{p:#x}" for p in sorted(predecessors[offset])]
                                    for offset in store_offsets},
-            "control_flow_scope": "direct branches; predicates unconstrained; no semantic/address proof"}
+            "store_base_reaching_definition_offsets": store_definitions,
+            "store_base_entry_unknown": store_entry_unknown,
+            "control_flow_scope": "direct branches; predicates unconstrained; may-reaching static writer offsets only; no full SASS semantics or semantic/address proof"}
 
 
 def check_static(code: dict[int, str]) -> None:
@@ -509,6 +667,56 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
     unpredicated_exit = {0: "EXIT", 16: "STG.E.NA.128 [R48.64], R4"}
     require(store_cfg(unpredicated_exit, {16: ("R48", 0)})["reachable_store_count"] == 0,
             "unpredicated exit fall-through accepted")
+    # May-reaching definitions retain both diamond arms, preserve the entry
+    # unknown across predicated writes, kill on unconditional writes, converge
+    # through loops, and account for overlapping wide destination spans.
+    diamond = {0: "@P0 BRA 0x30", 16: "MOV R48, R1", 32: "BRA 0x40",
+               48: "MOV R48, R2", 64: "STG.E.NA.128 [R48.64], R4"}
+    diamond_defs = store_cfg(diamond, {64: ("R48", 0)})
+    require(diamond_defs["store_base_reaching_definition_offsets"]["0x40"] == ["0x10", "0x30"] and
+            not diamond_defs["store_base_entry_unknown"]["0x40"],
+            "diamond reaching definitions mismatch")
+    predicated_write = {0: "@P0 MOV R48, R1", 16: "STG.E.NA.128 [R48.64], R4"}
+    predicated_defs = store_cfg(predicated_write, {16: ("R48", 0)})
+    require(predicated_defs["store_base_reaching_definition_offsets"]["0x10"] == ["0x0"] and
+            predicated_defs["store_base_entry_unknown"]["0x10"],
+            "predicated write did not retain old/entry definition")
+    unconditional_kill = {0: "MOV R48, R1", 16: "MOV R48, R2",
+                          32: "STG.E.NA.128 [R48.64], R4"}
+    kill_defs = store_cfg(unconditional_kill, {32: ("R48", 0)})
+    require(kill_defs["store_base_reaching_definition_offsets"]["0x20"] == ["0x10"] and
+            not kill_defs["store_base_entry_unknown"]["0x20"],
+            "unconditional write failed to kill earlier definitions")
+    loop_defs = {0: "MOV R48, R1", 16: "@P0 BRA 0x30", 32: "MOV R48, R2",
+                 48: "@P1 BRA 0x10", 64: "STG.E.NA.128 [R48.64], R4"}
+    loop_result = store_cfg(loop_defs, {64: ("R48", 0)})
+    require(loop_result["store_base_reaching_definition_offsets"]["0x40"] == ["0x0", "0x20"] and
+            not loop_result["store_base_entry_unknown"]["0x40"],
+            "loop fixed-point reaching definitions mismatch")
+    wide_overlap = {0: "MOV.64 R47, R1", 16: "STG.E.NA.128 [R48.64], R4"}
+    wide_result = store_cfg(wide_overlap, {16: ("R48", 0)})
+    require(wide_result["store_base_reaching_definition_offsets"]["0x10"] == ["0x0"] and
+            not wide_result["store_base_entry_unknown"]["0x10"],
+            "wide overlapping destination was not attributed to base")
+    atomic_overlap = {0: "ATOMS.ARRIVE.64 R47, [R1]",
+                      16: "STG.E.NA.128 [R48.64], R4"}
+    atomic_result = store_cfg(atomic_overlap, {16: ("R48", 0)})
+    require(atomic_result["store_base_reaching_definition_offsets"]["0x10"] == ["0x0"] and
+            not atomic_result["store_base_entry_unknown"]["0x10"],
+            "64-bit atomic-arrive destination pair did not overlap base")
+    predicate_lop3 = {0: "LOP3.LUT P0, R48, R1, R2, R3, 0xfc, !PT",
+                       16: "STG.E.NA.128 [R48.64], R4"}
+    lop3_result = store_cfg(predicate_lop3, {16: ("R48", 0)})
+    require(lop3_result["store_base_reaching_definition_offsets"]["0x10"] == ["0x0"] and
+            not lop3_result["store_base_entry_unknown"]["0x10"],
+            "predicate-destination LOP3 GPR clobber was missed")
+    try:
+        store_cfg({0: "UNMODELLED R1, R2", 16: "STG.E.NA.128 [R48.64], R4"},
+                  {16: ("R48", 0)})
+    except ValueError:
+        pass
+    else:
+        raise ValueError("unknown instruction accepted by reaching-definition model")
     bsync_unpredicated = {0: "BSSY B0, 0x30", 16: "BSYNC B0",
                           32: "STG.E.NA.128 [R48.64], R4", 48: "EXIT"}
     require(store_cfg(bsync_unpredicated, {32: ("R48", 0)})["reachable_store_count"] == 1,
@@ -584,6 +792,20 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
             "store treated as register write")
     require(written_registers("@P3 LDG.E.128.STRONG.SM R72, [R80.64]") == {"R72", "R73", "R74", "R75"},
             "wide load span wrong")
+    require(strict_written_registers("@!P3 MOV.64 R47, R1") == ({"R47", "R48"}, True),
+            "strict predicated wide destination mismatch")
+    changed_destination = dict(diamond)
+    changed_destination[16] = "MOV R47, R1"
+    changed = store_cfg(changed_destination, {64: ("R48", 0)})
+    require(changed["store_base_reaching_definition_offsets"]["0x40"] == ["0x30"] and
+            changed["store_base_entry_unknown"]["0x40"],
+            "destination mutation did not alter reaching definitions")
+    for malformed_writer in ("MYSTERY R48, R1", "MOV.64.128 R48, R1", "MOV [R48], R1"):
+        try:
+            strict_written_registers(malformed_writer)
+        except ValueError:
+            continue
+        raise ValueError("malformed reaching-definition writer accepted")
     return dict(arithmetic_comparisons=arithmetic, coverage_checks=coverage,
                 literal_answers=len(known), store_sites=len(STORES), chains=len(CHAINS),
                 load_form_controls_rejected=2,
@@ -630,7 +852,7 @@ def inspect(data: bytes, negative: bool) -> dict[str, Any]:
                 weight_words="argument slot 56 (c[0x0][0x198]) + index*4 + 0x80000; 4-byte reads pinned at two sites",
                 constant_census_regions=len(CENSUS), kernel_extent=KERNEL_BYTES,
                 provenance_windows=len(PROVENANCE),
-                index_semantics="decoded arithmetic only; loop/coordinate bounds and predicate/path semantics conditional; direct-branch reachability inventoried",
+                index_semantics="decoded arithmetic only; loop/coordinate bounds and predicate/path semantics conditional; direct-branch reachability and may-reaching static store-base definition offsets inventoried by bounded fail-closed destination model",
                 output_buffer_extent_verified=False, channel_semantics_verified=False,
                 complete_decoder_contract=False, numerical_decoder_validation=False,
                 gpu_kernels_launched=0)

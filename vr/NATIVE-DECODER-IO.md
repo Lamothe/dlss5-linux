@@ -153,12 +153,22 @@ research disassembly remain uncontrolled. Reuse/publication rights are unresolve
 
 ## Evidence and next work
 
-Final-source evidence (both exit 0; parent re-checked snapshot hashes against
-the current files and read the recorded exit statuses):
+Reaching-definition inventory evidence (both exit 0; parent re-checked
+source-snapshot hashes against the current IO probe and read recorded exit
+statuses):
 
-- `decoder-io-inspect-uSqKqjAj` and `decoder-io-negative-zx9DiTQ5`: 68
-  arithmetic comparisons, 12 coverage checks, 6 chains, 51 corruptions
-  rejected, zero GPU launches.
+- `decoder-io-inspect-9nKmPUFS`: 16/16 stores reachable; the four store-base
+  registers have only the reported static writer offsets in this bounded may
+  analysis and no entry-unknown reaching definition. Output extent remains
+  unverified; zero GPU launches. Output JSON SHA-256:
+  `9b1070c13125370c0bf43238f5d5b9751ed5e3a0133775af3ca4312b3116f735`.
+- `decoder-io-negative-EuNAhCXB`: 51 pinned-SASS corruptions rejected, zero
+  GPU launches. Output JSON SHA-256:
+  `a57cfb956d279bca040c43ef4efe04e79a1f00a62920a957d5273da78aaeb32a`.
+- Both rerun manifests pin the updated `native-decoder-io-probe.py` SHA-256
+  `bdfa030483a6ce506be6d870fa24b631191b942a44da970f63e0a23fe9d02c1c`.
+  These static findings do not establish pointer values/ranges, path semantics,
+  or a safe output allocation bound.
 
 Superseded runs, retained as the defect history this probe's contiguity checks
 exposed (all exit 1 unless noted):
