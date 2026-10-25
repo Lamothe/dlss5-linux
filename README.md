@@ -13,7 +13,7 @@ The earlier Proton-based desktop/VR demonstrations are reference experiments, **
 
 ## Current migration status — 25/10/2026
 
-Latest published checkout is `ebbc3cf` on `main` (verified aligned with `origin/main`; clean at handover refresh). The native evaluator remains blocked on authorised, version-matched NR ABI and interop evidence; no capture or GPU probe is authorised by the current source-only evidence.
+Latest published checkout is `ef547ad` on `main` (verified aligned with `origin/main`; clean at handover refresh). The native evaluator remains blocked on authorised, version-matched NR ABI and interop evidence; no capture or GPU probe is authorised by the current source-only evidence.
 
 - Published reference baseline: 68 pre-decoder slot contracts (slots 24–91) out of the archival 156-launch inventory, through commit `33fa071`.
 - Slot 91 is qualified with paired captures, native replay and controls, and has passed independent review; its contract and summary are published in commit `33fa071`. Published contract coverage is 68/156. Raw captures, traces and replay run JSONs remain ignored local evidence and are not included in Git.
