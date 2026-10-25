@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "native-resource-events-v1"
+_ADDRESS_TOKEN = re.compile(r"(?:0x[0-9a-f]{6,}(?![a-z0-9])|(?<![a-z0-9])[0-9a-f]{12,}(?![a-z0-9]))", re.IGNORECASE)
 EVENT_FIELDS: dict[str, set[str]] = {
     "resource_create": {"type", "resource_id", "kind", "dimension", "format"},
     "set_resource": {"type", "parameter_set_id", "key", "resource_id"},
@@ -38,8 +40,7 @@ def _valid_id(value: Any) -> bool:
         isinstance(value, str)
         and 0 < len(value) <= 96
         and value[0].isalpha()
-        and not value.lower().startswith("0x")
-        and not (len(value) >= 12 and all(char in "0123456789abcdefABCDEF" for char in value))
+        and _ADDRESS_TOKEN.search(value) is None
         and not all(char.isdigit() or char in "._:-" for char in value)
         and all(char.isalnum() or char in "_.:-" for char in value)
     )
@@ -166,11 +167,16 @@ def self_test() -> int:
     bad = json.loads(json.dumps(good)); bad["unexpected"] = "value"; cases.append((bad, "document-fields-invalid"))
     bad = json.loads(json.dumps(good)); bad["events"][0]["resource_id"] = "0x123456789abcdef0"; cases.append((bad, "event-0-invalid-id"))
     bad = json.loads(json.dumps(good)); bad["events"][0]["resource_id"] = "deadbeef12345678"; cases.append((bad, "event-0-invalid-id"))
+    bad = json.loads(json.dumps(good)); bad["events"][0]["resource_id"] = "resource-0x7f1234567890"; cases.append((bad, "event-0-invalid-id"))
+    bad = json.loads(json.dumps(good)); bad["events"][0]["resource_id"] = "resource-deadbeef12345678"; cases.append((bad, "event-0-invalid-id"))
     bad = json.loads(json.dumps(good)); bad["events"][0]["record_id"] = ["rec-1"]; cases.append((bad, "event-0-unknown-fields"))
     bad = json.loads(json.dumps(good)); bad["events"].pop(); cases.append((bad, "launch-binding-missing"))
     bad = json.loads(json.dumps(good)); bad["events"].insert(6, json.loads(json.dumps(bad["events"][5]))); cases.append((bad, "event-6-launch-duplicate"))
     bad = json.loads(json.dumps(good)); bad["events"].append({"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"}); cases.append((bad, "event-7-mapping-id-invalid-or-duplicate"))
     bad = json.loads(json.dumps(good)); bad["events"].append(json.loads(json.dumps(bad["events"][6]))); cases.append((bad, "event-7-binding-duplicate"))
+    valid_long_identifier = json.loads(json.dumps(good))
+    valid_long_identifier["events"][2]["parameter_set_id"] = "p-0xabcdefg"
+    assert validate(valid_long_identifier) == []
     multi_mapping = json.loads(json.dumps(good))
     multi_mapping["events"][4]["mapping_id"] = "m2"
     multi_mapping["events"][4]["object_id"] = "o1"
