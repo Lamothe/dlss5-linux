@@ -2,9 +2,9 @@
 
 Updated 25/10/2026 (Australia/Sydney); this handover refresh is based on published checkout `104b1cc` (the preceding decoder VMM candidate qualification is `c723417`). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Historical notes below may name the predecessor workspace/remote; do not publish there.
 
-## Current source-provenance update (based on published checkout `104b1cc`)
+## Current source-provenance update (based on published checkout `03ee6e0`)
 
-Public Streamline provenance findings and their limits are documented in `NATIVE-HOOK-PLAN.md`; authorised target ABI/provenance remains required.
+Public Streamline provenance findings and their limits are documented in `NATIVE-HOOK-PLAN.md`; authorised target ABI/provenance remains required. A third-party Proton/D3D12 bridge was checked as a research lead; it explicitly labels reserved feature 18's contract unstable and supplies no evidence of native Linux NR API support, so the capture/runtime gate remains closed. No bridge code was imported or executed.
 
 ## Current decoder gate update
 
