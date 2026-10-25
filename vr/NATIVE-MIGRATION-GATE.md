@@ -30,3 +30,7 @@ This dependency is a blocker on this evidence path, not an assertion that the wh
 3. Trace only metadata identities across producer, SetResource, upload/copy/interop and consumer launch; retain missing identity links as blockers rather than inferring them.
 4. Implement a validator only after a concrete edge is observed; preserve independent captures and negative controls locally.
 5. Continue the full native pipeline, including temporal/reset and live-input image validation; do not call isolated replay completion.
+
+## Additional public implementation lead (25/10/2026)
+
+`maanHimself/OpenDLSS-NR` was reviewed as a possible alternative path. Its public README describes a 310.8.0 network reimplementation, author-claimed bit-exact parity, and a separate browser port; its demo docs specify Windows-only support and NVIDIA-specific Vulkan kernel extensions. Temporal reprojection/history/reset is in its Filament demo, while the command-line tool runs single frames without history. The project requires user-supplied model weights and disclaims NVIDIA affiliation/IP grants. This does not provide compatible weights or a demonstrated native Linux evaluator and does not resolve provenance/rights. No source, weights, fixtures or binaries were downloaded, built or run. Treat it as reference material, not a cleared dependency or validated migration path. Detailed bounded assessment is in `CAMPAIGN-HANDOVER.md`.
