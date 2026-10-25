@@ -91,7 +91,7 @@ unverified**. The existing launch's margin and canaries describe one tested fini
 
 `IMAD.SHL.U32` is interpreted as `d = a*b + c` with power-of-two `b`, per the
 published disassembler convention; `IMAD.WIDE` forms exact 64-bit addresses.
-The helper rejects test-vector indices above `2^30 - 1`; this is not a runtime/kernel index bound.
+The helper rejects test-vector indices above `2^30 - 1`; this is not a runtime/kernel index bound. Its CPU self-test separately asserts the *conditional* unsigned-32-bit formula envelope (`0x4000027fc`) and excess over the launch's 256 MiB output allocation. These are arithmetic checks under stipulated inputs, not evidence of reachable runtime addresses.
 
 ## Validation
 

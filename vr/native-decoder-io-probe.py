@@ -128,7 +128,9 @@ PROVENANCE = (("R10", 0x12b0, 0x21b0), ("R144", 0x20a0, 0x31b0),
 UNAUDITED_WIDE = ("HMMA", "IMMA", "LDSM", "TEX", "TLD", "TLD4", "TMA", "LDGSTS")
 OUTPUT_SLOTS = (0x0000, 0x0200, 0x0400, 0x0600, 0x2000, 0x2200, 0x2400, 0x2600)
 OUTPUT_SPAN = 0x27f0  # max-minus-min unit/slot address over the pinned store set.
-MAX_INDEX = (1 << 30) - 1  # IMAD.WIDE forms exact 64-bit addresses; index*4 stays < 2^32.
+MAX_INDEX = (1 << 30) - 1  # Helper/test-vector domain only; not a runtime index bound.
+U32_MAX = (1 << 32) - 1
+OUT0_TEST_ALLOCATION_BYTES = 256 * 1024 * 1024
 
 
 def output_address(index: int, unit: int, slot: int) -> int:
@@ -334,6 +336,13 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
             require(r[dst] == bases["0x198"] + weight_word_address(index) - 0x80000,
                     "decoded weight word base mismatch")
             arithmetic += 1
+    # Conditional arithmetic only: if every runtime index were an unsigned
+    # 32-bit bit-pattern and the displayed formula applied on every store path,
+    # this would be its exclusive byte endpoint. It is not a kernel bound.
+    conditional_u32_end = U32_MAX * 4 + 31 * 16 + 0x2600 + 16
+    require(conditional_u32_end == 0x4000027fc, "conditional u32 envelope mismatch")
+    require(conditional_u32_end - OUT0_TEST_ALLOCATION_BYTES == 16_911_443_964,
+            "conditional envelope/allocation comparison mismatch")
     # Independent per-index coverage oracles built without the layout formula.
     for index in (0, 1, 1000, MAX_INDEX):
         addresses = sorted(output_address(index, unit, slot) for unit in range(32)
@@ -381,6 +390,8 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
     require(re.fullmatch(LOAD_FORMS["word32"].format(base="R134"),
                          "LDG.E R10, [R134.64+0x80004]") is None,
             "wrong weight load form accepted")
+    # This is only the helper's narrower domain rejection; the U32 arithmetic
+    # envelope above is asserted independently and is not exercised by it.
     invalid = (lambda: output_address(-1, 0, 0), lambda: output_address(0, 32, 0),
                lambda: output_address(0, 0, 0x100), lambda: output_address(True, 0, 0),
                lambda: read_address(-1, 0), lambda: read_address(0, -1),
@@ -404,7 +415,9 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
                 literal_answers=len(known), store_sites=len(STORES), chains=len(CHAINS),
                 load_form_controls_rejected=2,
                 wrong_formula_controls_rejected=len(wrong), invalid_domains_rejected=rejected,
-                writer_model_controls=4, gpu_kernels_launched=0)
+                writer_model_controls=4, conditional_u32_envelope=conditional_u32_end,
+                conditional_excess_over_test_allocation=conditional_u32_end - OUT0_TEST_ALLOCATION_BYTES,
+                gpu_kernels_launched=0)
 
 
 def inspect(data: bytes, negative: bool) -> dict[str, Any]:
