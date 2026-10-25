@@ -82,9 +82,10 @@ against the current source.)
   intact (enforced).
 
 The responding 4,096 bytes are 1/32 of the extent. Their structure (512 units ×
-8 bytes) is the raw material for the permutation: mapping these output positions
-onto output channels, and sweeping impulses/codes at finer granularity, is the
-next stage.
+8 bytes) was the raw material for the subsequent permutation work. Mapping these
+positions onto output channels and finer impulse/code sweeps were the historical
+next stage; their bounded results and extrapolation limits are documented in
+the permutation and extension reports below.
 
 ## Controls
 
@@ -154,30 +155,46 @@ the matrix code's sign. A bounded, repeatable influence footprint is measurable
 through native Linux execution. The gate's coupling question is answered
 positively.
 
-Not established: which logical `(output channel, input channel)` pair each
-matrix byte serves (the permutation itself), the word-table semantics, the
-numeric upsample computation, magnitude linearity, learned-weight binding,
-exact vendor-instruction equivalence for the group selector, or any
-neural-rendering quality. **No learned weights were used; no neural-rendered
-image was produced.**
+Not established by this influence-sweep stage: the word-table semantics, the
+numeric upsample computation, magnitude linearity, or any neural-rendering
+quality. Subsequent stages establish a bounded structural permutation map
+(validated on 21 of 4×4096 input bytes and extrapolated by additivity; see
+[NATIVE-DECODER-EXTENSION.md](NATIVE-DECODER-EXTENSION.md)) and stored-record
+binding for tested single-product cases (see
+[NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md)); neither establishes full
+numerical decoding. Learned-weight binding
+is established separately for the tested single-product cases in
+[NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md), but multi-term
+accumulation, FP16-tail semantics and runtime graph position remain unresolved.
+The bounded positive-domain group-selector reconstruction is documented in
+[NATIVE-DECODER-SELECTOR.md](NATIVE-DECODER-SELECTOR.md); exact vendor-SASS
+equivalence is not established. **No learned weights were used in this
+influence-sweep stage; no neural-rendered image was produced.**
 
 ## Next stage
 
-1. Fine-grained influence sweeps: code matrix sub-partitions (slab/warp/lane
+1. ~~Fine-grained influence sweeps: code matrix sub-partitions (slab/warp/lane
    groups from the coefficient-read formula) and sweep impulse positions to
-   resolve `(o, i)` per physical byte.
+   resolve `(o, i)` per physical byte.~~ **Superseded:** a structural permutation
+   map was validated on 21 of 4×4096 input bytes and extrapolated over the
+   remainder by additivity; see
+   [NATIVE-DECODER-EXTENSION.md](NATIVE-DECODER-EXTENSION.md) for scope and
+   limitations. The stored-record single-product binding is documented in
+   [NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md). Multi-term accumulation
+   and FP16-tail behavior remain gated by
+   [NATIVE-DECODER-ACCUMULATION-PLAN.md](NATIVE-DECODER-ACCUMULATION-PLAN.md).
 2. ~~Decode the output addressing (`index*4 + unit*16 + slot`) far enough to
    name the influenced output channels.~~ **Done:** see
    [NATIVE-DECODER-NAMING.md](NATIVE-DECODER-NAMING.md) — the influenced cells
    name as rows `y ∈ {0, 4}` × all `x` × channel blocks `{0-7, 16-23}` under
    the contiguous-channel hypothesis, locked by
    `native-decoder-influence-names.py`.
-3. ~~Then map the stored decoder-weight candidate record through the recovered
-   permutation, and capture Proton reference evaluations for numerical
-   comparison.~~ **Partly done:** the stored record is bound through the
-   recovered permutation — see
+3. ~~Map the stored decoder-weight candidate record through the recovered
+   permutation.~~ **Done for the tested single-product cases:** see
    [NATIVE-DECODER-BINDING.md](NATIVE-DECODER-BINDING.md). Proton reference
-   evaluations remain the next stage.
+   evaluations remain unperformed and require a separately authorised,
+   safety-reviewed capture; they are not a substitute for completing the
+   native arithmetic and input-binding stages.
 
 The launcher retains the established containment (bubblewrap, no network, no
 home, pinned source snapshots, hash-verified DLL read as data, 300 s bound).
