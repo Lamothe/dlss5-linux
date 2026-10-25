@@ -98,11 +98,19 @@ evidence. Independent review and final evidence will be recorded after completio
 
 ## Remaining work
 
-Main/skip activation layouts, output/work-buffer addressing, suffix coefficient
-semantics, weight-record binding, dynamic arena associations and full decoder
-control flow remain unresolved. The next milestone is a fully bounded synthetic
-decoder numerical test, not a speculative launch with oversized buffers. This
-work closes a bounded selector question; it does not complete native inference.
+The selected positive-domain group-selector question is closed by this bounded
+owned-PTX translation test. Later stages document bounded main/skip and partial-
+sum layouts (`NATIVE-DECODER-LAYOUT.md`), output-store arithmetic (`NATIVE-DECODER-IO.md`),
+coefficient permutation and tested single-product record binding
+(`NATIVE-DECODER-PERMUTATION.md`, `NATIVE-DECODER-BINDING.md`). These are still
+conditional/static or bounded experiments: they do not establish exact vendor-
+SASS selector semantics, complete device-access coverage, runtime arena
+associations, suffix coefficient meaning, multi-term accumulation, complete
+control flow, or a native rendered image. A synthetic decoder numerical test
+remains gated by the complete output-address proof in
+`NATIVE-DECODER-STORE-ENVELOPE.md`, current authorization and safety preflight;
+it cannot substitute for authorised Feature 18 ABI/interop evidence and the
+raw-input-to-launch binding needed for full native inference.
 Nothing is committed or pushed.
 
 ### Final-source evidence and independent review
