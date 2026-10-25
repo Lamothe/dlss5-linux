@@ -24,7 +24,7 @@ Historical handovers still name the predecessor workspace/remote: for all contin
 
 Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
 
-The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified in `ffd808c`; subsequent read-only local evidence/artifact checks recorded in `a5a52f6` and `37c251a` found no new qualifying input. The bounded 26/10/2026 source recheck is recorded in `f4eca7a` and the campaign handover. This is a blocker record, not a completion claim.
+The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified in `ffd808c`; subsequent read-only local evidence/artifact checks recorded in `a5a52f6` and `37c251a` found no new qualifying input. The earlier bounded 26/10/2026 source-check checkpoint began at `f4eca7a`; the latest maintenance review began at `0e4c8c0`. See the campaign handover and migration gate for the current status and qualifications. This is a blocker record, not a completion claim.
 
 ## Layout, dependencies and checks
 

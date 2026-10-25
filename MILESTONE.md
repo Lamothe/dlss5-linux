@@ -1,6 +1,6 @@
 # DLSS5 Linux migration milestones
 
-Updated 25/10/2026. This document defines the Linux project, independently of the later VR integration project.
+Updated 26/10/2026. This document defines the Linux project, independently of the later VR integration project. Status and recorded evidence remain unchanged: L1 is in progress; L2 and L3 are not yet demonstrated. See `vr/NATIVE-MIGRATION-GATE.md` and `vr/CAMPAIGN-HANDOVER.md` for the latest evidence-gate review.
 
 ## L1 — Native execution contracts (in progress)
 
