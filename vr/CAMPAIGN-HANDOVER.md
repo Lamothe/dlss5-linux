@@ -1,6 +1,6 @@
 # DLSS5 native slot replay campaign handover
 
-Updated 25/10/2026 (Australia/Sydney). Checkout `3685e10` (`main`, `origin/main`, `origin/HEAD`) was verified aligned with a clean working tree before this handover edit. Latest evidence is the bounded official NVIDIA/DLSS `v310.9.16` tracked-source-tree check in `8fe54ac`; `3685e10` corrects the handover to identify that current evidence and label older commit lists historical. The tree check does not establish target ABI, authorisation or interop. The preceding decoder VMM candidate was explicitly left unqualified in `c723417`. Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. Historical notes below may name the predecessor workspace/remote; do not publish there.
+Updated 25/10/2026 (Australia/Sydney). Checkout `2d4cbb2` (`main`, `origin/main`, `origin/HEAD`) was verified aligned with a clean working tree after the decoder-address status correction. Latest evidence is the bounded official NVIDIA/DLSS `v310.9.16` tracked-source-tree check in `8fe54ac`; `3685e10` corrects the handover to identify that current evidence and label older commit lists historical. The tree check does not establish target ABI, authorisation or interop. The preceding decoder VMM candidate was explicitly left unqualified in `c723417`. Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`. Historical notes below may name the predecessor workspace/remote; do not publish there.
 
 ## Current source-provenance evidence and blocker
 
