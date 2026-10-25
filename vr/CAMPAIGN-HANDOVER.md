@@ -1,6 +1,6 @@
 # DLSS5 native Linux migration — current handover
 
-Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD for this maintenance update: `ac58577`; current verified HEAD is recorded in Git. `main`, `origin/main` and `origin/HEAD` were aligned and clean at that update. The evidence audit described below was performed at `1f03478`; `ffd808c` clarified and published the external-gate wording. This handover replaces older pointers; historical evidence remains in the linked reports.
+Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Verified pre-edit HEAD for the preceding provenance update: `ac58577`. Current verified HEAD is recorded in Git; at this maintenance check `main`, `origin/main` and `origin/HEAD` were aligned and clean. The evidence audit described below was performed at `1f03478`; `ffd808c` clarified and published the external-gate wording. This handover replaces older pointers; historical evidence remains in the linked reports.
 
 ## Goal and boundaries
 
@@ -34,7 +34,7 @@ The repository does contain local, ignored probe runs demonstrating the SM89 ups
 
 ## Latest maintenance update — 25/10/2026
 
-The provenance header was corrected in commit `ac58577`; no source, evidence, capture or GPU probe was changed. The audit remains based on `1f03478`, with wording clarified in `ffd808c`. No qualifying new local producer→consumer evidence or authorised ABI/capture materials were found during this maintenance pass. The worktree was verified clean and `main` aligned with `origin/main` at `ac58577` before this update.
+The provenance header was corrected in commit `ac58577`; no source, evidence, capture or GPU probe was changed. The audit remains based on `1f03478`, with wording clarified in `ffd808c`. No qualifying new local producer→consumer evidence or authorised ABI/capture materials were found during this maintenance pass. The worktree was verified clean and `main` aligned with `origin/main` at `a5a52f6` before this update.
 
 ## Prior checks and verification
 
