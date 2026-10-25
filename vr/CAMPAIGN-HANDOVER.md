@@ -1,6 +1,6 @@
 # DLSS5 native Linux migration — current handover
 
-Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Latest verified pre-edit HEAD for this update: `6786a40`; `main`, `origin/main` and `origin/HEAD` were aligned and clean. The earlier evidence audit was performed at `1f03478`; later maintenance and official-source checks are recorded in the sections below. This handover replaces older pointers; historical evidence remains in the linked reports.
+Updated 25/10/2026 (Australia/Sydney). Active repository `/home/michael/Projects/dlss5-linux`, remote `git@github.com:Lamothe/dlss5-linux.git`, branch `main`. Latest verified pre-edit HEAD for the foundational handover body was `6786a40`; current verified HEAD after bounded public-lead assessments is `89ed8d1`, with `main`, `origin/main` and `origin/HEAD` aligned and clean. Those public leads (OpenDLSS-NR, DLSSNR-AMD, DLSS5VKLayer and dlssnr-pytorch) do not resolve missing lawful weight provenance, producer→launch identity, target ABI, or native temporal/live-image evaluation. The earlier evidence audit was performed at `1f03478`; later maintenance and official-source checks are recorded in the sections below. This handover replaces older pointers; historical evidence remains in the linked reports.
 
 ## Goal and boundaries
 
