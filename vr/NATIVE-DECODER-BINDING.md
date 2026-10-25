@@ -208,9 +208,13 @@ compatibility makes the record a **bound candidate** for this operation; as in
 the FP8 stage, it does not independently prove the record's exact position in
 the Windows runtime's graph.
 
-Not established: multi-term accumulation semantics (only single products were
-tested), the 512 FP16 scales' semantics, magnitude linearity for non-`±1.0`
-inputs, the model's graph position, and **any native neural-rendered image**.
+Not established by this binding experiment: multi-term accumulation semantics
+(only single products were tested), the 512 FP16 scales' semantics, magnitude
+linearity for non-`±1.0` inputs, the model's graph position, and **any native
+neural-rendered image**. The group-selector reconstruction is now documented in
+[`NATIVE-DECODER-SELECTOR.md`](NATIVE-DECODER-SELECTOR.md): it is checked as an
+owned PTX arithmetic translation on a bounded positive domain, not established
+as exact vendor-SASS equivalence or a proof of every device access.
 Proprietary reuse/publication rights remain unresolved. Swap, driver
 persistence and memory erasure remain uncontrolled.
 
