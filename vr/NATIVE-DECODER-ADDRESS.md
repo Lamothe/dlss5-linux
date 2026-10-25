@@ -36,10 +36,13 @@ lane. A candidate byte-address expression relative to slot56 is:
 
 Here `partition=CTAID.Z` ranges 0–3, `warp=TID.Y` ranges 0–1, `lane` ranges
 0–31, slabs are 0,64,128,192 and vector offsets are 0,0x200,...,0xe00 and
-0x4000,0x4200,...,0x4e00. **Group=0/1 is an assumption**: the reciprocal-based
-CTA-X quotient calculation has not been independently emulated or validated.
-The coefficient-read result is conditional on that domain, not a complete proof
-of every reachable device read.
+0x4000,0x4200,...,0x4e00. The bounded positive-domain group-selector
+reconstruction is documented in
+[NATIVE-DECODER-SELECTOR.md](NATIVE-DECODER-SELECTOR.md): within its checked axis
+range, group is reconstructed as `CTAID.X / (axis1/4)`. This tests a PTX
+translation and does not establish exact vendor-SASS semantics or prove every
+device access. The coefficient-read result remains conditional, not a complete
+proof of every reachable device read.
 
 Within that conditional domain, all **32,768 16-byte reads** cover the first
 **524,288 bytes** exactly once, without gaps or aliases. A sorted contiguous-set
@@ -99,15 +102,19 @@ domains, register clobbers and wrong coverage/row-stride formulas.
 ## Verification and remaining work
 
 Final-source positive/negative evidence and the independent-review outcome are
-recorded below. Exploratory command section selection failed before GPU work,
+summarised below. Exploratory command section selection failed before GPU work,
 and early launcher runs failed due to duplicated disassembly ranges or a missing
 Python import; none is successful inference evidence.
 
-Remaining: prove group-selector arithmetic, resolve main/skip activation layouts,
-all output/scratch extents, suffix coefficient semantics, actual learned-weight
-binding and dynamic arena associations. Then build a guarded synthetic numerical
-decoder test, with independent references and skipped/wrong execution controls.
-Full native neural rendering is still unproven; no commit or push occurs here.
+The bounded positive-domain group-selector reconstruction is documented in
+[NATIVE-DECODER-SELECTOR.md](NATIVE-DECODER-SELECTOR.md). It tests a reconstructed
+PTX translation and does not establish exact vendor-SASS semantics. Remaining:
+resolve main/skip activation layouts, all output/scratch extents, suffix
+coefficient semantics, actual learned-weight binding and dynamic arena
+associations. Then build a guarded synthetic numerical decoder test with
+independent references and skipped/wrong execution controls. Full native neural
+rendering is still unproven. This static report does not establish a safe decoder
+run or authorise GPU execution.
 
 
 Independent review found two holes in the initial register-writer audit: paired
@@ -115,8 +122,8 @@ Independent review found two holes in the initial register-writer audit: paired
 Both were fixed and eight clobber controls now cover scalar, wide, predicate-first,
 64-bit and 128-bit writes. A subsequent check initially mistook predicate-only
 comparisons for data writers; these are now correctly distinguished. Those
-intermediate runs are not final-source evidence. Final repeat tests and follow-up
-review are recorded below after completion.
+intermediate runs are not final-source evidence. Final repeat tests and
+follow-up review are summarised below.
 
 
 ### Final-source evidence
@@ -142,7 +149,9 @@ statuses and identical repeat reports, and passed CPU tests, AST, shell syntax,
 new-file whitespace and existing Git diff checks. Process inspection found no
 surviving probe/disassembler; the NVIDIA driver query responded normally.
 
-Only this document and the two new address-probe/launcher files were created.
-Earlier PoC/native/scene files were not modified or reverted. Nothing committed
-or pushed. Next remains activation address layouts, group-selector proof and all
-buffer/weight associations before a guarded decoder computation.
+At the time this evidence was generated, only this document and the two new
+address-probe/launcher files were created; earlier PoC/native/scene files were
+not modified or reverted. This report was subsequently committed and pushed in
+`2d4cbb2`. Remaining work is the activation addressing/layouts, complete
+output/scratch bounds and actual buffer/weight associations before a guarded
+decoder computation.
