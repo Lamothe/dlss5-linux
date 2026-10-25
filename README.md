@@ -13,7 +13,7 @@ The earlier Proton-based desktop/VR demonstrations are reference experiments, **
 
 ## Current migration status — 25/10/2026
 
-At the `28b611c` handover refresh, `main` and `origin/main` were aligned and the working tree was clean. This change records additional bounded source-provenance context; it does not change the native evaluator blocker or authorise capture/GPU probes. The evaluator still requires authorised, version-matched NR ABI and interop evidence.
+The published source-provenance notes now include the `vk_gltf_renderer` v2026.11 release check: its notes do not announce a DLSS-NR SDK availability change, and its user guide still requires a compatible beta NGX SDK. This is bounded evidence about that public sample, not target Linux package availability or access. The native evaluator remains blocked on authorised, version-matched NR ABI and interop evidence; no capture or GPU probe is authorised by the current evidence.
 
 - Published reference baseline: 68 pre-decoder slot contracts (slots 24–91) out of the archival 156-launch inventory, through commit `33fa071`.
 - Slot 91 is qualified with paired captures, native replay and controls, and has passed independent review; its contract and summary are published in commit `33fa071`. Published contract coverage is 68/156. Raw captures, traces and replay run JSONs remain ignored local evidence and are not included in Git.
