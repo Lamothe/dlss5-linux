@@ -127,7 +127,7 @@ PROVENANCE = (("R10", 0x12b0, 0x21b0), ("R144", 0x20a0, 0x31b0),
 # Multi-register destinations without width markers; fail closed if present.
 UNAUDITED_WIDE = ("HMMA", "IMMA", "LDSM", "TEX", "TLD", "TLD4", "TMA", "LDGSTS")
 OUTPUT_SLOTS = (0x0000, 0x0200, 0x0400, 0x0600, 0x2000, 0x2200, 0x2400, 0x2600)
-OUTPUT_SPAN = 0x27f0  # max-minus-min unit/slot address over the pinned store set.
+OUTPUT_START_OFFSET_DELTA = 0x27f0  # max-minus-min start offset over the pinned store set.
 MAX_INDEX = (1 << 30) - 1  # Helper/test-vector domain only; not a runtime index bound.
 U32_MAX = (1 << 32) - 1
 OUT0_TEST_ALLOCATION_BYTES = 256 * 1024 * 1024
@@ -355,8 +355,8 @@ def self_test(code: dict[int, str] | None = None) -> dict[str, Any]:
         for slot, values in by_slot.items():
             require(sorted(values) == list(range(index * 4 + slot, index * 4 + slot + 512, 16)),
                     "output slot block gap/alias")
-        require(output_address(index, 31, 0x2600) - output_address(index, 0, 0) == OUTPUT_SPAN,
-                "output per-index span mismatch")
+        require(output_address(index, 31, 0x2600) - output_address(index, 0, 0) == OUTPUT_START_OFFSET_DELTA,
+                "output per-index start-offset delta mismatch")
         coverage += 3
     known = ((output_address(0, 0, 0), 0), (output_address(0, 31, 0x2600), 0x27f0),
              (output_address(1000, 3, 0x200), 0x11d0), (read_address(3, 2), 44),
@@ -449,7 +449,7 @@ def inspect(data: bytes, negative: bool) -> dict[str, Any]:
                 output_pointer="argument slot 16 (c[0x0][0x170]) + index*4 + unit*16 + slot",
                 output_unit="SR_LANEID (pinned S2R)", output_bytes_per_store=16,
                 output_stores_per_index_per_unit=len(OUTPUT_SLOTS),
-                output_store_slots=list(OUTPUT_SLOTS), output_per_index_start_offset_delta=OUTPUT_SPAN,
+                output_store_slots=list(OUTPUT_SLOTS), output_per_index_start_offset_delta=OUTPUT_START_OFFSET_DELTA,
                 read_pointer="stage1 index*4 then + unit*16; 16-byte reads pinned at four sites",
                 read_slots="argument slot 8 (c[0x0][0x168]) skip, slot 48 (c[0x0][0x190]) partial",
                 read_unit="R119/R129 16-byte step registers; origins unmodelled",
