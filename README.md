@@ -16,7 +16,7 @@ The earlier Proton-based desktop/VR demonstrations are reference experiments, **
 - Published reference baseline: 68 pre-decoder slot contracts (slots 24–91) out of the archival 156-launch inventory, through commit `33fa071`.
 - Slot 91 is qualified with paired captures, native replay and controls, and has passed independent review; its contract and summary are published in commit `33fa071`. Published contract coverage is 68/156. Raw captures, traces and replay run JSONs remain ignored local evidence and are not included in Git.
 - These counts describe the pre-decoder replay campaign, not percentage completion of the entire migration. Decoder and temporal investigations have their own bounded evidence.
-- The documented input-plane layout is now explicitly mapped and validated against two local reference captures, but this does not establish DLSS preprocessing or model bindings. A complete native input-to-output pipeline and native neural-rendered image are **not yet established**. VR/Genesis integration is out of scope for the current campaign.
+- The documented input-plane layout and capture-manifest integrity are validated against two local reference captures; see [NATIVE-INPUT-LAYOUT.md](vr/NATIVE-INPUT-LAYOUT.md). This does not establish DLSS preprocessing or model bindings. A complete native input-to-output pipeline and native neural-rendered image are **not yet established**. VR/Genesis integration is out of scope for the current campaign.
 
 Historical handovers still name the predecessor workspace/remote: for all continuing migration work, use this workspace and its `dlss5-linux` origin instead. Do not follow their old publishing destination.
 
@@ -34,7 +34,7 @@ CPU-only migration regression checks (no GPU/headset or proprietary payload requ
 PYTHONDONTWRITEBYTECODE=1 python3 vr/native-slot-replay-probe.py self-test
 PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-report.py self-test
 PYTHONDONTWRITEBYTECODE=1 python3 vr/ladder-names.py self-test
-PYTHONDONTWRITEBYTECODE=1 python3 vr/tests/native-input-layout-test.py  # reference plane schema and row packing
+PYTHONDONTWRITEBYTECODE=1 python3 vr/tests/native-input-layout-test.py  # reference plane integrity and row packing
 PYTHONDONTWRITEBYTECODE=1 python3 vr/native-input-layout.py vr/logs/reference/run-a  # local size/layout/manifest validation (optional)
 ```
 
