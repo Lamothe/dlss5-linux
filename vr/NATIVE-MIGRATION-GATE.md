@@ -42,3 +42,7 @@ This dependency is a blocker on this evidence path, not an assertion that the wh
 ## Native-game layer does not imply native evaluator — DLSS5VKLayer (25/10/2026)
 
 `bmitch87/DLSS5VKLayer` advertises interception of native Linux Vulkan games, but its README states that frames are forwarded to a Windows NGX helper running under Wine/Proton. The model DLL is user-imported; it is not included. This remains a Windows-hosted inference bridge and does not meet the strict native evaluator requirement. No source/assets were fetched or executed. See `CAMPAIGN-HANDOVER.md` for bounded details.
+
+## Standalone PyTorch reference does not close temporal/live-input gates (25/10/2026)
+
+`mauri870/dlssnr-pytorch` documents Python/PyTorch single-frame network inference and comparisons to NVIDIA; its documented setup suggests Linux feasibility but does not expressly establish Linux support/testing. Those comparisons explicitly have no temporal history. It requires user-supplied weights extracted from `nvngx_dlssnr.dll`; that requirement does not establish extraction/use rights. It provides no live game-input acquisition or demonstrated temporal/reset behavior, and its README says the CUDA build has not been tried on NVIDIA hardware. Treat as a research reference only, not migration acceptance or a cleared weight path. The README was reviewed; no implementation code, weights or runtime assets were fetched or run. Details are in `CAMPAIGN-HANDOVER.md`.
