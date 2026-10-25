@@ -83,7 +83,9 @@ they appear in any audited window.
 
 Per index and unit, one 16-byte store lands at each of the eight slots; per
 index the 256 unit/slot addresses are distinct and each 32-unit slot block
-covers 512 contiguous bytes; the per-index write span is exactly `0x27f0`.
+covers 512 contiguous bytes; the greatest store-start offset from the first
+slot's base is exactly `0x27f0` (the corresponding stipulated byte extent,
+including the final 16-byte store, is `0x2800`).
 Per execution of the pinned store group that is `2 indices × 8 slots × 32 units
 × 16 B = 8192 B`; **per-CTA totals depend on unmodelled warp and loop counts**.
 The **maximum output index and therefore the output buffer extent remain
@@ -91,7 +93,14 @@ unverified**. The existing launch's margin and canaries describe one tested fini
 
 `IMAD.SHL.U32` is interpreted as `d = a*b + c` with power-of-two `b`, per the
 published disassembler convention; `IMAD.WIDE` forms exact 64-bit addresses.
-The helper rejects test-vector indices above `2^30 - 1`; this is not a runtime/kernel index bound. Its CPU self-test separately asserts the *conditional* unsigned-32-bit formula envelope (`0x4000027fc`) and excess over the launch's 256 MiB output allocation. These are arithmetic checks under stipulated inputs, not evidence of reachable runtime addresses.
+The documented formulas and checks cover only stipulated non-negative
+synthetic inputs; they do not establish general operand signedness, runtime
+register origins, or reachable address semantics across CFG paths. The helper
+rejects test-vector indices above `2^30 - 1`; this is not a runtime/kernel index
+bound. Its CPU self-test separately asserts the *conditional* unsigned-32-bit
+formula envelope (`0x4000027fc`) and excess over the launch's 256 MiB output
+allocation. These are arithmetic checks under stipulated inputs, not evidence
+of reachable runtime addresses.
 
 ## Validation
 
@@ -107,7 +116,7 @@ The helper rejects test-vector indices above `2^30 - 1`; this is not a runtime/k
   checked free of intervening writers; the fifth read chain (`0x31b0 → 0x3370`)
   is validated arithmetically only, with no pinned consumer.
 - 12 per-index coverage oracles (no unit/slot alias, contiguous slot blocks,
-  exact `0x27f0` span) at four indices, plus six literal address answers.
+  exact `0x27f0` difference between minimum and maximum store-start offsets (the stipulated byte extent including the final 16-byte store is `0x2800`) at four indices, plus six literal address answers.
 - The full-kernel constant-bank census (three regions, exact counts) and four
   register provenance windows.
 - Four wrong-formula controls fail **numerically** (wrong index multiplier,
@@ -171,5 +180,4 @@ defect and six control-strength issues; round two confirmed the two-stage model
 internally consistent and found the comparison miscount, evidence misattribution
 and an atomic-return fail-open, all corrected above and re-verified.
 
-Next: bound the output index domain (loop/coordinate origins of `R8/R9/R23a/R2`).
-The guarded launch predicted here is done; see `NATIVE-DECODER-LAUNCH.md`. It validates launch/protocol behaviour and the observed changed-byte extent for that tested configuration only. It does not bound the maximum effective output address or prove a generally safe allocation size; the loop/coordinate origins and complete store-path bounds remain unverified (see `NATIVE-DECODER-STORE-ENVELOPE.md`). Remaining: weight-binding semantics and numerical reference. The output-bound question is still open.
+The guarded launch predicted here is done; see `NATIVE-DECODER-LAUNCH.md`. It validates launch/protocol behaviour; changed bytes were observed within `[0,131072)` at 8 MiB scan-chunk granularity, consistent with the nominal region but not a byte-complete extent measurement. It does not bound the maximum effective output address or prove a generally safe allocation size. The later audit in `NATIVE-DECODER-STORE-ENVELOPE.md` establishes that the complete store-path bound remains unproven: pointer carries, CFG liveness, runtime loop/coordinate limits, operand signedness and exact host launch ranges are unresolved. Do not use the observed changed-byte envelope or helper `MAX_INDEX` as an allocation bound, and do not launch the decoder until that proof is independently reviewed. Weight-record binding is addressed for tested single-product cases in `NATIVE-DECODER-BINDING.md`; unresolved learned-record questions include the 512-element FP16 tail's semantics, multi-term accumulation and vendor numerical reference.

@@ -449,7 +449,7 @@ def inspect(data: bytes, negative: bool) -> dict[str, Any]:
                 output_pointer="argument slot 16 (c[0x0][0x170]) + index*4 + unit*16 + slot",
                 output_unit="SR_LANEID (pinned S2R)", output_bytes_per_store=16,
                 output_stores_per_index_per_unit=len(OUTPUT_SLOTS),
-                output_store_slots=list(OUTPUT_SLOTS), output_per_index_span=OUTPUT_SPAN,
+                output_store_slots=list(OUTPUT_SLOTS), output_per_index_start_offset_delta=OUTPUT_SPAN,
                 read_pointer="stage1 index*4 then + unit*16; 16-byte reads pinned at four sites",
                 read_slots="argument slot 8 (c[0x0][0x168]) skip, slot 48 (c[0x0][0x190]) partial",
                 read_unit="R119/R129 16-byte step registers; origins unmodelled",
