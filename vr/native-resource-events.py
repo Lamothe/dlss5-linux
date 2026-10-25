@@ -85,7 +85,6 @@ def validate(document: Any) -> list[str]:
             errors.append(f"event-{index}-invalid-subresource")
         if any(error.startswith(f"event-{index}-") for error in errors):
             continue
-        record_id = event.get("record_id")
         if kind == "resource_create":
             rid = event["resource_id"]
             if not isinstance(rid, str) or not rid or rid in seen["resource_id"]:
@@ -170,10 +169,12 @@ def self_test() -> int:
     bad = json.loads(json.dumps(good)); bad["events"][0]["record_id"] = ["rec-1"]; cases.append((bad, "event-0-unknown-fields"))
     bad = json.loads(json.dumps(good)); bad["events"].pop(); cases.append((bad, "launch-binding-missing"))
     bad = json.loads(json.dumps(good)); bad["events"].insert(6, json.loads(json.dumps(bad["events"][5]))); cases.append((bad, "event-6-launch-duplicate"))
+    bad = json.loads(json.dumps(good)); bad["events"].append({"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"}); cases.append((bad, "event-7-mapping-id-invalid-or-duplicate"))
     bad = json.loads(json.dumps(good)); bad["events"].append(json.loads(json.dumps(bad["events"][6]))); cases.append((bad, "event-7-binding-duplicate"))
     multi_mapping = json.loads(json.dumps(good))
     multi_mapping["events"][4]["mapping_id"] = "m2"
-    multi_mapping["events"].insert(5, {"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"})
+    multi_mapping["events"][4]["object_id"] = "o1"
+    multi_mapping["events"].insert(5, {"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o1", "mapping_type": "opaque"})
     multi_mapping["events"].append({"type": "launch_binding", "slot": 0, "parameter_capture_id": "b1", "mapping_id": "m2"})
     assert validate(multi_mapping) == []
     for case, expected in cases:
