@@ -61,7 +61,7 @@ def validate(document: Any) -> list[str]:
     # sketch from becoming a sink for captured payloads or address-like values.
     seen: dict[str, set[str]] = {name: set() for name in ("resource_id", "mapping_id")}
     launches: set[tuple[int, str]] = set()
-    bindings: set[tuple[int, str]] = set()
+    bindings: set[tuple[int, str, str]] = set()
     for index, event in enumerate(events):
         if not isinstance(event, Mapping):
             errors.append(f"event-{index}-invalid")
@@ -111,15 +111,22 @@ def validate(document: Any) -> list[str]:
             if type(slot) is not int or slot < 0 or slot > 10000 or not isinstance(event["kernel"], str) or not event["kernel"] or len(event["kernel"]) > 96 or not all(c.isalnum() or c in "_.:-" for c in event["kernel"]) or not isinstance(capture, str) or not capture:
                 errors.append(f"event-{index}-launch-invalid")
             else:
-                launches.add((slot, capture))
+                key = (slot, capture)
+                if key in launches:
+                    errors.append(f"event-{index}-launch-duplicate")
+                else:
+                    launches.add(key)
         elif kind == "launch_binding":
             slot, capture, mapping = event["slot"], event["parameter_capture_id"], event["mapping_id"]
             if type(slot) is not int or slot < 0 or slot > 10000 or not isinstance(capture, str) or not capture:
                 errors.append(f"event-{index}-binding-invalid")
                 continue
-            key = (slot, capture)
-            bindings.add(key)
-            if key not in launches:
+            launch_key = (slot, capture)
+            binding_key = (slot, capture, mapping)
+            if binding_key in bindings:
+                errors.append(f"event-{index}-binding-duplicate")
+            bindings.add(binding_key)
+            if launch_key not in launches:
                 errors.append(f"event-{index}-launch-unseen")
             if not isinstance(mapping, str) or mapping not in seen["mapping_id"]:
                 errors.append(f"event-{index}-mapping-unseen")
@@ -162,6 +169,9 @@ def self_test() -> int:
     bad = json.loads(json.dumps(good)); bad["events"][0]["resource_id"] = "deadbeef12345678"; cases.append((bad, "event-0-invalid-id"))
     bad = json.loads(json.dumps(good)); bad["events"][0]["record_id"] = ["rec-1"]; cases.append((bad, "event-0-unknown-fields"))
     bad = json.loads(json.dumps(good)); bad["events"].pop(); cases.append((bad, "launch-binding-missing"))
+    bad = json.loads(json.dumps(good)); bad["events"].insert(6, json.loads(json.dumps(bad["events"][5]))); cases.append((bad, "event-6-launch-duplicate"))
+    bad = json.loads(json.dumps(good)); bad["events"].append(json.loads(json.dumps(bad["events"][6]))); cases.append((bad, "event-7-binding-duplicate"))
+    multi_mapping = json.loads(json.dumps(good)); multi_mapping["events"][4]["mapping_id"] = "m2"; multi_mapping["events"].insert(5, {"type": "interop_map", "mapping_id": "m1", "resource_id": "r-texture", "object_id": "o2", "mapping_type": "opaque"}); multi_mapping["events"].append({"type": "launch_binding", "slot": 0, "parameter_capture_id": "b1", "mapping_id": "m2"}); assert validate(multi_mapping) == []
     for case, expected in cases:
         found = validate(case)
         assert expected in found, (expected, found)
