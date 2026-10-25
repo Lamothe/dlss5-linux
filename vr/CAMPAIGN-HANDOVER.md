@@ -16,7 +16,7 @@ Build and validate a native Linux evaluator from live inputs through preprocessi
 
 ## Current external dependency gate
 
-A current status note in `NATIVE-MIGRATION-GATE.md` records why the producer→consumer path cannot safely advance from available materials: there is no concrete input-resource-to-launch identity edge, no supplied version-matched NR ABI/integration material plus capture authorisation, and the separate decoder experiment still lacks store/CFG/address bounds and approval. The evidence audit underlying that note was performed at `1f03478`; its wording was subsequently clarified and published at `ffd808c`. No GPU/capture work was run for the status update. The overall migration remains incomplete. Reassess only if authorised, version-matched target materials arrive or genuinely new local producer→consumer evidence becomes available; do not repeat schema/static-anchor work or invent bindings.
+A current status note in `NATIVE-MIGRATION-GATE.md` records why the producer→consumer path cannot safely advance from available materials: there is no concrete input-resource-to-launch identity edge, no supplied version-matched NR ABI/integration material plus capture authorisation, and the separate decoder experiment still lacks store/CFG/address bounds and approval. Official Streamline 2.14.0 notes identify `sl.dlss_nr`, but distinguish Vulkan Reflex support from NR; the current programming guide specifies a Windows requirement and supplies no evidence of a native Linux/Vulkan NR ABI. No GPU/capture work was run for this source check. The overall migration remains incomplete. Reassess only if authorised, version-matched target materials arrive or genuinely new local producer→consumer evidence becomes available; do not repeat schema/static-anchor work or invent bindings.
 
 ## Static graph and decoder evidence
 
@@ -34,9 +34,9 @@ The repository does contain local, ignored probe runs demonstrating the SM89 ups
 
 ## Latest maintenance update — 25/10/2026
 
-The latest checked branch was `main` at `37c251a`, clean and aligned with `origin/main`. Local run listings and the tracked-file inventory did not reveal newer producer→consumer evidence or version-matched NR ABI materials; no probes, archives, captures or GPU work were performed. Review of the existing decoder IO/store-envelope notes reconfirmed that their formula bounds are conditional, not a proven reachable kernel address bound; no safe allocation or authorised output experiment follows from them. No code or evidence changed in this pass.
+The latest checked branch was `main` at `a10318e`, clean and aligned with `origin/main`. A bounded read of the official Streamline changelog and programming guide found no documented native Linux/Vulkan NR ABI: changelog 2.14.0 lists `sl.dlss_nr`, while its Vulkan entry concerns Reflex; the current guide states a Windows requirement. This is not proof that no separately distributed or restricted target package exists. No archive, capture, or GPU work was performed. The local evidence inventory and existing decoder IO/store-envelope notes still expose no new producer→consumer identity evidence or proven reachable output-address bound. No code or proprietary evidence changed in this pass.
 
-Earlier provenance: the header was corrected in `ac58577`; audit state from `1f03478` was clarified in `ffd808c`; local evidence/artifact check was recorded in `a5a52f6`. These are documentation checkpoints, not native inference progress.
+Earlier provenance: the header was corrected in `ac58577`; audit state from `1f03478` was clarified in `ffd808c`; local evidence/artifact checks were recorded in `a5a52f6` and `37c251a`. These are documentation checkpoints, not native inference progress.
 
 ## Prior checks and verification
 
