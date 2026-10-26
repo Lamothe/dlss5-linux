@@ -167,8 +167,9 @@ is claimed; the `_Float16` oracle's overflow behaviour was probed before use.
 - No vendor correspondence. The arithmetic matches the pinned MIT reference semantics
   as documented; it is not evidence about NVIDIA's implementation.
 - No temporal behaviour: the skip is consumed as-is; history/reset is a later stage.
-- No output conversion: the post-block's `compose` (residual projection, intensity
-  blend and clamp) is the later output-conversion stage.
+- No output conversion of its own: the post-block's `compose` (residual projection,
+  intensity blend and clamp) is the separate output-conversion stage
+  ([NATIVE-COMPOSE.md](NATIVE-COMPOSE.md)).
 - The reference's learned gains come from trained weights; here all gains are original
   synthetic values.
 
