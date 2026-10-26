@@ -175,7 +175,9 @@ is claimed; the `_Float16` oracle's overflow behaviour was probed before use.
 
 ## Next stages
 
-1. Output conversion (`compose`: projected residual added with weight 1/4, clamp, the
-   Intensity blend and the bounded luminance-ratio extrapolation).
-2. The learned-weight execution graph (Swin body) with original synthetic weights.
+1. Output conversion — done: `compose` ([NATIVE-COMPOSE.md](NATIVE-COMPOSE.md)).
+2. The learned-weight execution graph (Swin body) with original synthetic weights —
+   its scalar primitives are done
+   ([NATIVE-SWIN-PRIMITIVES.md](NATIVE-SWIN-PRIMITIVES.md)); the windowed attention,
+   e4m3 linears and window partitioning remain.
 3. Temporal history/reset, then live-input/image native evaluation per the assignment.

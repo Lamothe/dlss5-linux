@@ -184,6 +184,7 @@ reports the tail of the linker error). Coverage includes:
   as documented; it is not evidence about NVIDIA's implementation.
 - No cross-platform bit-exactness for the amplification's pow (platform libm), and no
   agreement is claimed with any particular torch backend's float32 reduction orders.
-- No temporal behaviour and no network body: history/reset and the Swin
-  body/decoder stages remain later stages. This completes only the output-conversion
-  tail of the post-block.
+- No temporal behaviour and no network body: history/reset and the Swin body/decoder
+  stages remain later stages (the body's scalar primitives are now
+  [NATIVE-SWIN-PRIMITIVES.md](NATIVE-SWIN-PRIMITIVES.md)). This completes only the
+  output-conversion tail of the post-block.
