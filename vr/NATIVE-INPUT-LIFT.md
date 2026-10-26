@@ -216,8 +216,11 @@ link failure — observed: `cannot find /usr/lib64/libubsan.so.1.0.0`). Coverage
 
 ## Next stages
 
-1. 2×2 f16 pooling (`pool2x2`: column pairs added in float32 and narrowed to f16, the two
-   row sums added in f16, the quarter exact) and the e4m3 rounding boundary.
-2. Remaining pre/post-block elementwise arithmetic, then the learned-weight execution
-   graph with original synthetic weights, temporal history/reset and output conversion,
-   continuing toward live-input image evaluation per the assignment.
+Completed since this slice: (1) the 2×2 f16 pooling (`pool2x2`) and the e4m3 rounding
+boundary ([NATIVE-PRE-POST.md](NATIVE-PRE-POST.md)); (2) the remaining pre/post-block
+elementwise arithmetic — the post-block blend and f16 mix
+([NATIVE-BLEND.md](NATIVE-BLEND.md)).
+
+Remaining: output conversion (`compose`), then the learned-weight execution graph with
+original synthetic weights, temporal history/reset and live-input image evaluation per
+the assignment.
