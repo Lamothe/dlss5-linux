@@ -48,6 +48,7 @@ bash vr/test-native-compose.sh  # typed CPU output-conversion slice (projection 
 bash vr/test-native-swin-primitives.sh  # typed CPU Swin body scalar primitives slice
 bash vr/test-native-swin-windows.sh  # typed CPU Swin window-partition slice
 bash vr/test-native-swin-linear.sh  # typed CPU Swin e4m3 linears slice
+bash vr/test-native-swin-mlp.sh  # typed CPU Swin MLP assembly slice (store, mid projection, residual scale)
 ```
 
 Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.
