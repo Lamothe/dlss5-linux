@@ -207,6 +207,35 @@ inline Status validate_finite_matrix(const MatrixView& m) {
     return Status::kOk;
 }
 
+// The head-scale row's magnitude bound: `_norm_scale` is at most ~127.02 (the
+// kNormFloor clamp), so `|_norm_scale * head_scale| <= 127.02 * 65504 < 8.4e6`
+// keeps the per-head scale product finite for every accepted row. Larger finite
+// values are rejected at validation instead of overflowing that product to an
+// infinity whose zero-dimension products would be NaN and would then fail the
+// e4m3 operand checks mid-write.
+inline constexpr float kMaxHeadScale = 65504.0f;  // the binary16 maximum magnitude
+
+// A one-row head-scale matrix: finite float32 within the magnitude bound above
+// (the reference's `head_scale` is float32; the magnitude bound is this
+// implementation's accepted-domain restriction, not an arithmetic change).
+inline Status validate_head_scale(const MatrixView& m) {
+    const Status status = validate_finite_matrix(m);
+    if (status != Status::kOk) {
+        return status;
+    }
+    for (int r = 0; r < m.rows; ++r) {
+        const float* row = m.data + static_cast<std::size_t>(r)
+            * static_cast<std::size_t>(m.row_stride);
+        for (int c = 0; c < m.cols; ++c) {
+            const float magnitude = row[c] < 0.0f ? -row[c] : row[c];
+            if (magnitude > kMaxHeadScale) {
+                return Status::kInvalidValues;
+            }
+        }
+    }
+    return Status::kOk;
+}
+
 // A one-row matrix of finite, exactly binary16-representable values (the raw bias
 // table entries, the attn_scale row): the reference stores both as f16.
 inline Status validate_f16_matrix(const MatrixView& m) {
@@ -672,7 +701,9 @@ inline Status swin_softmax(const AttentionTensorView& logits,
 // slices, token-major: row = window * 64 + token, head g at columns [g * 32,
 // (g + 1) * 32)) -> out_q/out_k/out_v [rows, heads * 32] e4m3-grid values, with the
 // swin_normalise_head_row arithmetic per (row, head). `head_scale` is [1, heads]
-// finite float32 (as stored). Validation (dimensions, strides, value classes,
+// finite float32 within the `kMaxHeadScale` magnitude bound (see
+// `validate_head_scale`), which keeps the scale product finite so the outputs
+// stay on the e4m3 grid. Validation (dimensions, strides, value classes,
 // output capacities) completes before the first write; on any error all three
 // outputs are untouched.
 inline Status swin_normalise_qkv(const MatrixView& query, const MatrixView& key,
@@ -700,7 +731,7 @@ inline Status swin_normalise_qkv(const MatrixView& query, const MatrixView& key,
         }
     }
     {
-        const Status status = validate_finite_matrix(head_scale);
+        const Status status = validate_head_scale(head_scale);
         if (status != Status::kOk) {
             return status;
         }
@@ -954,7 +985,7 @@ inline Status swin_attention(const MatrixView& quantised, const MatrixView& qkv,
         return Status::kInvalidDimensions;
     }
     {
-        const Status status = validate_finite_matrix(head_scale);
+        const Status status = validate_head_scale(head_scale);
         if (status != Status::kOk) {
             return status;
         }

@@ -1474,6 +1474,21 @@ static void check_negative_normalise(void) {
             &oq, out_cap, &ok, out_cap, &ov, out_cap) == Status::kInvalidValues);
         head_scale[0] = 1.0f;
     }
+    // The head-scale magnitude bound: finite values beyond kMaxHeadScale are
+    // rejected (they would overflow the norm*head scale product to infinity).
+    head_scale[0] = 1e38f;
+    CHECK(swin_normalise_qkv(query_v, key_v, value_v, head_scale_v, kHeads,
+        &oq, out_cap, &ok, out_cap, &ov, out_cap) == Status::kInvalidValues);
+    head_scale[0] = -70000.0f;
+    CHECK(swin_normalise_qkv(query_v, key_v, value_v, head_scale_v, kHeads,
+        &oq, out_cap, &ok, out_cap, &ov, out_cap) == Status::kInvalidValues);
+    head_scale[0] = -dlss5_nr::kMaxHeadScale;  // the boundary stays accepted
+    CHECK(swin_normalise_qkv(query_v, key_v, value_v, head_scale_v, kHeads,
+        &oq, out_cap, &ok, out_cap, &ov, out_cap) == Status::kOk);
+    fill_sentinel(out_q, out_cap);
+    fill_sentinel(out_k, out_cap);
+    fill_sentinel(out_v, out_cap);
+    head_scale[0] = 1.0f;
     // Pairing class: exactly one head_scale row.
     CHECK(swin_normalise_qkv(query_v, key_v, value_v,
         make_view(head_scale, 2, kHeads, kHeads), kHeads, &oq, out_cap, &ok,
@@ -1738,6 +1753,14 @@ static void check_negative_attention(void) {
     out_proj[0] = 0.5f;
     // Non-finite and non-f16 value classes on the auxiliary operands.
     head_scale[0] = (float)INFINITY;
+    CHECK(swin_attention(quantised_v, qkv_v, head_scale_v, exp_bias_v, skip_v,
+        attn_scale_v, out_proj_v, &out_v, out_cap, scratch, scratch_cap)
+        == Status::kInvalidValues);
+    head_scale[0] = 1e38f;  // finite but beyond the kMaxHeadScale bound
+    CHECK(swin_attention(quantised_v, qkv_v, head_scale_v, exp_bias_v, skip_v,
+        attn_scale_v, out_proj_v, &out_v, out_cap, scratch, scratch_cap)
+        == Status::kInvalidValues);
+    head_scale[0] = -70000.0f;
     CHECK(swin_attention(quantised_v, qkv_v, head_scale_v, exp_bias_v, skip_v,
         attn_scale_v, out_proj_v, &out_v, out_cap, scratch, scratch_cap)
         == Status::kInvalidValues);

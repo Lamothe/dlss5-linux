@@ -159,7 +159,9 @@ binary16-grid values, while the exponent-ramp bias table (`exp_bias`) is
 `[heads, 4096]` finite float32; logits and the raw residual `skip` are arbitrary
 finite float32;
 `attn_scale` is one row of finite, exactly binary16-representable values (the
-reference's f16-exact `attn_scale`); `head_scale` is one row of finite float32.
+reference's f16-exact `attn_scale`); `head_scale` is one row of finite float32
+within the `kMaxHeadScale` = 65504 magnitude bound (see the disclosed limitation
+below).
 Token rows are `window * 64 + token`; the per-head dimension slice is
 `[h * 32, (h + 1) * 32)`.
 
@@ -254,7 +256,8 @@ per window: the e4m3 QKV projection into `scratch`, the per-head normalisation, 
 logits, softmax and context per window, and the residual output line through the
 MLP slice's `swin_mlp_tail` (`skip * attn_scale + _linear(context, out_proj)`, the
 residual-scale multiply and add two separate float32 roundings). Every parameter —
-dimensions, pairings, operand grids, strides and both capacities — is validated
+dimensions, pairings, operand grids and value classes (including the head-scale
+magnitude bound), strides and both capacities — is validated
 before the first write: on any error `out` and `scratch` are both untouched. The
 scratch layout is `rows * 3C + 4 * rows * C + 2 * heads * 4096` floats (the
 projection out, the normalised q, k, v and the context, and one window's logits
@@ -287,11 +290,21 @@ below).
   softmax row (denominator ≥ 2^-8); it is retained for reference exactness, and
   the tests pin its non-binding bound (`2^-8 > SUM_FLOOR`) rather than executing
   the clamp branch.
+- `head_scale` accepts finite float32 within the magnitude bound `kMaxHeadScale`
+  = 65504 (`validate_head_scale`), an accepted-domain restriction, not an
+  arithmetic change. The reference's `head_scale` is float32, but
+  `_norm_scale(query) * head_scale` with `_norm_scale` up to ~127.02 (the
+  `kNormFloor` clamp) overflows to infinity for larger finite rows, and a zero
+  query dimension then forms `0 * inf = NaN` — `q8` maps NaN to the canonical
+  e4m3 NaN and `swin_logits`' operand checks reject it **after** the scratch
+  writes, falsifying the write contract. Bounding the row keeps the scale
+  product below `8.4e6` so every intermediate stays finite (large products
+  saturate on the e4m3 grid) and the contract holds.
 
 ## Test evidence (26/10/2026)
 
 `vr/tests/native-swin-attention-test.cpp` with runner
-`vr/test-native-swin-attention.sh`: **305 967 checks** in the strict `-O2` build
+`vr/test-native-swin-attention.sh`: **305 972 checks** in the strict `-O2` build
 and again at `-O0` (both `-ffp-contract=off`). Every known answer is a hand-derived
 dyadic rational (the exact decompositions are written next to each case). The
 corpus covers:
@@ -319,9 +332,11 @@ corpus covers:
   padded strides;
 - sentinel-checked untouched outputs (and untouched scratch in the assembly) on
   every validation rejection class — including the non-finite value classes on
-  every scanned operand, the output-rows pairing classes of both bias entries and
-  the single-head-scale-row pairing — determinism and zero-allocation accounting
-  (all nine entries × 64 iterations).
+  every scanned operand, the head-scale magnitude-bound class (finite values
+  beyond `kMaxHeadScale` rejected at validation, the boundary itself accepted
+  through `swin_normalise_qkv`), the output-rows pairing classes of both bias
+  entries and the single-head-scale-row pairing — determinism and
+  zero-allocation accounting (all nine entries × 64 iterations).
 
 Development review history: an independent read-only review of the delivered slice
 (26/10/2026) re-derived the arithmetic against the pinned source and found no
