@@ -29,7 +29,7 @@ demo runs out of the box. Expected console output (timings vary by machine;
 this CPU baseline was recorded on the development host):
 
 ```
-dlss5 native demo: 64x72 frame, plan 76 rows (small), padded extent 320x320
+dlss5 native demo: 64x72 frame, plan 76 rows (small), padded extent 320x320, 1 thread(s)
 preset: seeded (seed 20261028) - synthetic weights: the visual transformation is arbitrary; this proves the pipeline runs, not DLSS quality
 frame 0: frames-since-reset=0 history=no   37476.47 ms  mean= 94.09  arena=48531972 floats  float-delta=n/a
 frame 1: frames-since-reset=1 history=yes  37269.25 ms  mean= 94.10  arena=48531972 floats  float-delta=
@@ -89,6 +89,10 @@ The generated images are git-ignored (the root `.gitignore`'s catch-all and
 --seed N           preset seed (default: 20261028)
 --frames N         frames to evaluate (default: 4)
 --reset-at K       temporal reset before frame K (default: 2; -1 = never)
+--threads N        parallel threads (default 1 = the serial reference;
+                   0 = hardware concurrency) — bit-identical output at any
+                   thread count; 8 threads measured 2.22x on the dev host
+--profile          print the per-kind wall-time breakdown of the run
 ```
 
 ### Weight presets
