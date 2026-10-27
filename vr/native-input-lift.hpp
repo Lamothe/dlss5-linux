@@ -362,17 +362,25 @@ inline Status validate(const FrameView& frame) {
 //   0..2   three f16 noise fields at (x, y, seed),
 //   3      the constant feature 1.0,
 //   4..6   the centred colour (R, G, B),
-//   7..9   the centred colour again (the reference's no-history stand-in where the
-//          previous frame's colour goes in temporal mode; current-colour duplication is
-//          a single-frame stub, NOT a temporal implementation),
+//   7..9   the centred history colour: the previous frame's colour in temporal
+//          mode (the carrier view of native-history.hpp), or the centred colour
+//          again as the reference's no-history stand-in (the single-frame stub),
 //   10..14 five conditioning features (style, tone, structure, skin, other),
 //   15     a zero pad.
 // Allocation-free: the caller provides lifted (>= 32 * rows * cols floats). Validation
 // completes before any output write, so on any error the output buffer is untouched.
-inline Status input_lift(const FrameView& frame, const Controls& controls,
+inline Status input_lift(const FrameView& frame, const FrameView& history,
+                         const Controls& controls,
                          const float* lift, std::size_t lift_count,
                          float* lifted, std::size_t lifted_count) {
     Status status = validate(frame);
+    if (status != Status::kOk) {
+        return status;
+    }
+    if (history.rows != frame.rows || history.cols != frame.cols) {
+        return Status::kInvalidDimensions;
+    }
+    status = validate(history);
     if (status != Status::kOk) {
         return status;
     }
@@ -413,9 +421,18 @@ inline Status input_lift(const FrameView& frame, const Controls& controls,
             if (status != Status::kOk) {
                 return status;
             }
+            float history_colour[3] = {};
+            const float* history_rgb = history.rgb
+                + static_cast<std::size_t>(y)
+                    * static_cast<std::size_t>(history.row_stride)
+                + 3 * static_cast<std::ptrdiff_t>(x);
+            status = centred_colour(history_rgb, history_colour);
+            if (status != Status::kOk) {
+                return status;
+            }
             for (int channel = 0; channel < 3; ++channel) {
                 features[4 + channel] = colour[channel];
-                features[7 + channel] = colour[channel];  // no-history current-colour copy
+                features[7 + channel] = history_colour[channel];
             }
             for (int i = 0; i < kConditioningFeatures; ++i) {
                 features[10 + i] = condition[i];
@@ -432,6 +449,15 @@ inline Status input_lift(const FrameView& frame, const Controls& controls,
         }
     }
     return Status::kOk;
+}
+
+// The single-frame stub: the current frame stands in for the history colour
+// (the reference's no-history path). Same behaviour as before this overload.
+inline Status input_lift(const FrameView& frame, const Controls& controls,
+                         const float* lift, std::size_t lift_count,
+                         float* lifted, std::size_t lifted_count) {
+    return input_lift(frame, frame, controls, lift, lift_count, lifted,
+                      lifted_count);
 }
 
 }  // namespace dlss5_nr

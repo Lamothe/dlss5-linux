@@ -131,6 +131,9 @@ struct EvalContext {
     std::size_t scratch_capacity = 0;
     Controls controls;
     double intensity = 1.0;
+    // The temporal history colour for the pre block's lift (slots 7..9);
+    // null keeps the documented single-frame stub (current-colour copy).
+    const FrameView* history = nullptr;
 };
 
 // ---- vocabulary ---------------------------------------------------------------------------------
@@ -912,8 +915,10 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
         row_abort(ctx, spec);
         return status;
     }
-    status = input_lift(FrameView{frame, image.rows, image.cols,
-                                  static_cast<std::ptrdiff_t>(3) * image.cols},
+    const FrameView frame_view{frame, image.rows, image.cols,
+                               static_cast<std::ptrdiff_t>(3) * image.cols};
+    status = input_lift(frame_view,
+                        ctx.history != nullptr ? *ctx.history : frame_view,
                         ctx.controls, lift,
                         static_cast<std::size_t>(kStoredLiftValues), lifted,
                         map);

@@ -54,7 +54,10 @@ namespace dlss5_nr {
 
 // The per-feature history carrier and frame counter around one network run.
 // `map` is the interleaved FP16-grid colour history (`rows * cols` pixels of
-// three floats), the form the input lift's temporal history feed takes.
+// three floats), the form the input lift's temporal history feed takes. The
+// lift requires [0,1] colour at the plan's padded extent (rows = the height
+// axis, per native-graph-plan.hpp); commit values outside [0,1] are legal
+// here (the FP16 texture contract) but will be rejected when fed to the lift.
 struct TemporalCarrier {
     float* map;
     std::size_t map_capacity;  // capacity of `map` in float elements (>= 3*rows*cols)
