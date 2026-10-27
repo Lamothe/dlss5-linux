@@ -186,3 +186,22 @@ The four regressions (eval/split-swin/vit/network) were re-run against the fixed
 tree; see NATIVE-RECOVERY-ASSIGNMENT.md's latest continuation for the recorded
 results and the remaining bounded items (the eval_pre_block non-null-history
 addition).
+
+## Runnable native Linux demo (28/10/2026)
+
+The complete pipeline now runs as a zero-asset CLI demo (`vr/demo-native.cpp`
++ `vr/native-demo-support.hpp` + `vr/tests/native-demo-test.cpp` +
+`vr/test-native-demo.sh` + `README-demo.md` + `vr/NATIVE-DEMO.md`): built-in
+checkerboard/gradient or P6 PPM input, the full 76-row 'small' plan through
+`image_evaluation` with deterministic synthetic weight presets (zero/seeded,
+keyed per record), before/after/contact PPM artefacts, a temporal sequence
+with a mid-stream reset (frames-since-reset printed), per-frame CPU timings
+and the arena high-water mark (the CPU baseline for the GPU stage). 351
+known-answer checks at -O2/-O0 + a bounded demo smoke. An independent review
+raised 14 findings, all fixed — the significant one: the demo store's
+single-buffer-per-kind clobbered the consumers' concurrently-live record
+pointers (per-key slots now); plus the temporal_init axis order, the
+FP16-store helper's write-before-reject, an unchecked CLI argument and the
+missing MIT notice file. Honest scope: synthetic weights make the visual
+transformation arbitrary — the demo proves the pipeline runs on Linux, not
+DLSS quality and not vendor parity.
