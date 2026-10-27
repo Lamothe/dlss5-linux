@@ -657,6 +657,206 @@ int main(void) {
         CHECK_STATUS(eval_layer(&ctx, spec, call, out2), Status::kNullPointer);
     }
 
+    // ---- the split attention QKV site: exact-quantisation equivalence -------
+    // Both paths carry the same projection: the e4m3 "qkv" record is all
+    // ones; the int4 site is q all ones with block 1 and aq (gain 1, zero 8),
+    // so codes = clamp(rint(v + 8)) - 8 = v for the integer inputs and the
+    // int4 dot equals the e4m3 matmul exactly (both exact sums). Inputs are
+    // kept small so every token's code sum stays well inside the binary16
+    // norm chain. Padded window tokens project identically too: the e4m3
+    // path projects zero, and the int4 zero-input projection is
+    // quantise(0) -> codes 0 -> dot 0 -> affine 0.
+    {
+        static float scratch[1 << 21];
+        static std::uint8_t qkv_codes[1536 * 512];
+        static std::int8_t q[1536 * 512];
+        static float scale[1536];
+        static float constant[1536] = {};
+        static float aq[512 * 2];
+        for (int i = 0; i < 1536 * 512; ++i) {
+            qkv_codes[i] = e4m3_bits(1.0f);
+            q[i] = 1;
+        }
+        for (int r = 0; r < 1536; ++r) {
+            scale[r] = 1.0f;
+        }
+        for (int k = 0; k < 512; ++k) {
+            aq[2 * k] = 1.0f;
+            aq[2 * k + 1] = 8.0f;
+        }
+        static float bias_table[16 * 4096] = {};
+        static float gain[16];
+        for (int h = 0; h < 16; ++h) {
+            gain[h] = 1.0f;
+        }
+        static Int4Site site;
+        site.matrix = Int4MatrixView{q, scale, constant, aq, 1536, 512, 1,
+                                     false};
+        site.perm = nullptr;
+        site.perm_count = 0;
+        const Record records[3] = {
+            {7, 2, "qkv", 1536, 512, 0, -2, qkv_codes, nullptr},
+            {7, 2, "attn_pos_bias", 0, 0, 16 * 4096, -3, nullptr, bias_table},
+            {7, 2, "tail", 0, 0, 16, -4, nullptr, gain},
+        };
+        static Store store;
+        store.records = records;
+        store.record_count = 3;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.int4 = bind_int4;
+        g_int4_site = &site;
+        g_int4_name = "attn_qkv";
+        g_int4_block = 7;
+        g_int4_layer = 2;
+        EvalContext ctx;
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        static float x_data[512 * 2 * 2] = {};
+        // Token 0's channels 0 and 4 carry 1 (code sum 2); token 1's channel
+        // 0 carries 2 (sum 2 as well but a different spread); the rest 0.
+        x_data[0 * 4 + 0] = 1.0f;
+        x_data[4 * 4 + 0] = 1.0f;
+        x_data[0 * 4 + 1] = 2.0f;
+        FeatureBatchView x = make_view(x_data, 512, 2, 2);
+        LayerSpec spec = row(0, 7, 2, LayerKind::kSplitQKVAttn, 512, 512,
+                             2, 2, 512, 16);
+        LayerCall call;
+        call.x = &x;
+
+        // The arena rewinds on eval_reset, so outputs from successive runs
+        // alias its main block: snapshot each run before the next.
+        static float copy_mixed[512 * 4];
+        static float copy_e4m3[512 * 4];
+        static float copy_div_int4[512 * 4];
+        static float copy_div_e4m3[512 * 4];
+        static float copy_2[512 * 4];
+        LayerValue mixed_out;
+        const unsigned long long alloc_before = g_allocations.load();
+        CHECK_STATUS(eval_layer(&ctx, spec, call, mixed_out), Status::kOk);
+        CHECK(g_allocations.load() == alloc_before);
+        std::memcpy(copy_mixed, mixed_out.main.data, sizeof(copy_mixed));
+        // The mixed path never fetches "qkv" (record-consumption pin): the
+        // request log must hold no "qkv" entry yet.
+        for (int i = 0; i < store.requests; ++i) {
+            CHECK(std::strcmp(store.log[i].name, "qkv") != 0);
+        }
+
+        // The e4m3 path (site null) must agree bit for bit.
+        g_int4_site = nullptr;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue e4m3_out;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, e4m3_out), Status::kOk);
+        std::memcpy(copy_e4m3, e4m3_out.main.data, sizeof(copy_e4m3));
+        CHECK(std::memcmp(copy_mixed, copy_e4m3, sizeof(copy_mixed)) == 0);
+
+        // The quantisation divergence: 2.5 gives int4 code 2 (rint(10.5) is
+        // ties-even to 10) but an e4m3 product contribution of 2.5, so the
+        // two paths must disagree on the same input.
+        x_data[0] = 2.5f;
+        g_int4_site = &site;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue div_int4_out;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, div_int4_out), Status::kOk);
+        std::memcpy(copy_div_int4, div_int4_out.main.data,
+                    sizeof(copy_div_int4));
+        g_int4_site = nullptr;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue div_e4m3_out;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, div_e4m3_out), Status::kOk);
+        std::memcpy(copy_div_e4m3, div_e4m3_out.main.data,
+                    sizeof(copy_div_e4m3));
+        CHECK(std::memcmp(copy_div_int4, copy_div_e4m3,
+                          sizeof(copy_div_int4)) != 0);
+        CHECK(std::memcmp(copy_div_int4, copy_mixed,
+                          sizeof(copy_div_int4)) != 0);
+        x_data[0] = 1.0f;
+
+        // Determinism.
+        g_int4_site = &site;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue out2;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2), Status::kOk);
+        std::memcpy(copy_2, out2.main.data, sizeof(copy_2));
+        CHECK(std::memcmp(copy_mixed, copy_2, sizeof(copy_mixed)) == 0);
+
+        // The equivalence also holds for a shifted-window row (the padded
+        // slots take the same zero-input projection on both paths).
+        LayerSpec shifted = spec;
+        shifted.shift_x = -1;
+        shifted.shift_y = -1;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue shifted_mixed;
+        CHECK_STATUS(eval_layer(&ctx, shifted, call, shifted_mixed),
+                     Status::kOk);
+        std::memcpy(copy_2, shifted_mixed.main.data, sizeof(copy_2));
+        g_int4_site = nullptr;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        LayerValue shifted_e4m3;
+        CHECK_STATUS(eval_layer(&ctx, shifted, call, shifted_e4m3),
+                     Status::kOk);
+        CHECK(std::memcmp(copy_2, shifted_e4m3.main.data,
+                          sizeof(copy_2)) == 0);
+        g_int4_site = &site;
+
+        // Record rejections: half-form, permutation-style and wrong rows.
+        site.matrix.half = true;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.matrix.half = false;
+        static int perm[4] = {1, 0, 3, 2};
+        site.perm = perm;
+        site.perm_count = 4;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.perm = nullptr;
+        site.perm_count = 0;
+        site.matrix.rows = 100;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.matrix.rows = 1536;
+    }
+
+    // ---- the kernel's padded-product branch is taken -------------------------
+    // Directly through split_qkv_attn: with all-zero products, a non-zero
+    // padded_product must change the output (the padded slots carry value
+    // through the attention), while the e4m3-style explicit zero projection
+    // gives the baseline. No literal is pinned here — the pinned's exact
+    // padded projection is the documented seam divergence — only the
+    // discrimination.
+    {
+        static float bias[16 * 4096] = {};
+        static float gain[16];
+        for (int h = 0; h < 16; ++h) {
+            gain[h] = 1.0f;
+        }
+        static float in_map[512] = {};
+        static float products[1 * 1536] = {};
+        static float padded_zero[1536] = {};
+        static float padded_one[1536];
+        for (int r = 0; r < 1536; ++r) {
+            padded_one[r] = 1.0f;
+        }
+        static float out_a[512];
+        static float out_b[512];
+        SplitQkvWeight w_zero{E4m3Matrix{nullptr, 1536, 512}, bias, gain,
+                              products, padded_zero};
+        CHECK_STATUS(split_qkv_attn(in_map, 1, 1, 0, 0, w_zero, out_a),
+                     Status::kOk);
+        SplitQkvWeight w_one{E4m3Matrix{nullptr, 1536, 512}, bias, gain,
+                             products, padded_one};
+        CHECK_STATUS(split_qkv_attn(in_map, 1, 1, 0, 0, w_one, out_b),
+                     Status::kOk);
+        CHECK(std::memcmp(out_a, out_b, sizeof(out_a)) != 0);
+        // The products form without a padded row is a null rejection.
+        SplitQkvWeight w_missing{E4m3Matrix{nullptr, 1536, 512}, bias, gain,
+                                 products, nullptr};
+        CHECK_STATUS(split_qkv_attn(in_map, 1, 1, 0, 0, w_missing, out_a),
+                     Status::kNullPointer);
+    }
+
     std::printf("native-eval-int4: %lld checks passed\n", g_checks);
     return 0;
 }

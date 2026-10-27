@@ -512,6 +512,17 @@ struct SplitQkvWeight {
     E4m3Matrix qkv;
     const float* bias = nullptr;
     const float* gain = nullptr;
+    // The int4 miring (the pinned `attention_matrix`): when `qkv_products`
+    // is set the per-token projections come from [rows * cols, kSplitQkvOut]
+    // (the site's quantised-accumulated output, rows in the h * 96 + v * 32
+    // + d order above) instead of the e4m3 matmul, and padded zero-valued
+    // tokens project from `padded_product` ([kSplitQkvOut]) — the pinned
+    // projects padded tokens through the matrix, so for the int4 form that
+    // is the zero-input projection through the matrix — generally not zero
+    // (it is zero when the quantiser's zero point gives codes(0) = 0 and the
+    // row constant is 0).
+    const float* qkv_products = nullptr;
+    const float* padded_product = nullptr;
 };
 
 // SplitQKVAttn: window attention over 8x8 pixel windows of a grid shifted by
@@ -523,8 +534,10 @@ struct SplitQkvWeight {
 inline Status split_qkv_attn(const float* in, int rows, int cols,
                              int shift_x, int shift_y,
                              const SplitQkvWeight& w, float* out) {
-    if (in == nullptr || out == nullptr || w.qkv.bits == nullptr
-        || w.bias == nullptr || w.gain == nullptr) {
+    if (in == nullptr || out == nullptr || w.bias == nullptr
+        || w.gain == nullptr
+        || (w.qkv.bits == nullptr && w.qkv_products == nullptr)
+        || (w.qkv_products != nullptr && w.padded_product == nullptr)) {
         return Status::kNullPointer;
     }
     if (rows < 1 || rows > kSplitMaxExtent || cols < 1 || cols > kSplitMaxExtent) {
@@ -533,7 +546,8 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
     if ((shift_x != 0 && shift_x != -1) || (shift_y != 0 && shift_y != -1)) {
         return Status::kInvalidControls;
     }
-    if (w.qkv.rows != kSplitQkvOut || w.qkv.cols != kSplitChannels) {
+    if (w.qkv_products == nullptr
+        && (w.qkv.rows != kSplitQkvOut || w.qkv.cols != kSplitChannels)) {
         return Status::kInvalidDimensions;
     }
     const long long tokens = static_cast<long long>(rows) * cols;
@@ -552,11 +566,8 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
             for (int head = 0; head < kSplitHeads; ++head) {
                 // QKV projection of this window's 64 tokens for this head's
                 // 96 output rows (the shared key-ascending float32 product);
-                // padded tokens project from zero.
-                const E4m3Matrix head_rows{
-                    w.qkv.bits + static_cast<std::size_t>(head) * 3 * kSplitHeadDim
-                        * kSplitChannels,
-                    3 * kSplitHeadDim, kSplitChannels};
+                // padded tokens project from zero on the e4m3 path and from
+                // the zero-input projection on the products path.
                 for (int i = 0; i < kSplitTokensPerWindow; ++i) {
                     const int pr = wr * kSplitWindow + (i / 32) * kSplitTile
                         + (i / 4) % kSplitTile;
@@ -569,7 +580,32 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
                                   * kSplitChannels
                         : nullptr;
                     float projected[3 * kSplitHeadDim];
-                    if (token != nullptr) {
+                    if (w.qkv_products != nullptr) {
+                        // The int4 site's precomputed projections (already in
+                        // the matrix-row order); the same binary16 round as
+                        // the e4m3 path's post-matmul round.
+                        const std::size_t token_index = token != nullptr
+                            ? static_cast<std::size_t>(pr - top) * cols
+                                  + static_cast<std::size_t>(pc - left)
+                            : 0;
+                        const float* src = token != nullptr
+                            ? w.qkv_products
+                                  + token_index * kSplitQkvOut
+                            : w.padded_product;
+                        const float* head_src = src
+                            + static_cast<std::size_t>(head) * 3
+                                  * kSplitHeadDim;
+                        for (int n = 0; n < 3 * kSplitHeadDim; ++n) {
+                            projected[n] = f16(head_src[n]);
+                        }
+                    } else if (token != nullptr) {
+                        // Built only here: w.qkv.bits may be null when the
+                        // products branch is active (no null-base arithmetic).
+                        const E4m3Matrix head_rows{
+                            w.qkv.bits
+                                + static_cast<std::size_t>(head) * 3
+                                      * kSplitHeadDim * kSplitChannels,
+                            3 * kSplitHeadDim, kSplitChannels};
                         const Status status = split_matmul(token, 1, kSplitChannels,
                                                            head_rows, projected);
                         if (status != Status::kOk) {

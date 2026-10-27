@@ -53,8 +53,16 @@
 //   VitQKV: the e4m3 "q"/"k"/"v" + f32 "header" temperatures, OR the int4
 //     site ("vit_qkv" through the `int4` callback; one [3C, C] matrix, no
 //     permutation, non-half) with the shared "header" — the site's presence
-//     selects the mixed path and never fetches q/k/v. The kSplitQKVAttn
-//     attention site remains e4m3-only in this deliverable.
+//     selects the mixed path and never fetches q/k/v.
+//   SplitQKVAttn: the e4m3 "qkv" + "attn_pos_bias" + f32 "tail", OR the int4
+//     site ("attn_qkv" through the `int4` callback; one [1536, 512] matrix,
+//     no permutation, non-half) with the shared bias/gain records — the
+//     site's presence selects the mixed path and never fetches "qkv". Both
+//     mixed sites quantise the map the run hands them; in a full chain that
+//     map is the producer's e4m3 STORE, where the pinned stashes the
+//     producer's f16 value for the quantiser (int4.side) — a seam-wide
+//     divergence from the pinned's side-channel plumbing, documented here
+//     and in NATIVE-INT4.md rather than hidden.
 //   SplitFfwd: the ffwd callback, which 0 = expand_in [512, 512], 1 =
 //   expand_hidden [2048, 64], 2 = contract [512, 256] (raw e4m3 codes).
 //   SplitFfwdProj/SplitProj/SplitProjPool: e4m3 "weight" [c_out, c_in] +
@@ -135,6 +143,8 @@ struct EvalWeights {
     // site's decoded record ("vit_ffn", "vit_qkv"), or null to run the site
     // in e4m3 — the pinned's table-presence gating. The ViT feed-forward's
     // e4m3 tail arrives through `e4m3` as "tail".
+    // Site names: "vit_ffn", "vit_qkv", "attn_qkv" (see the record contract
+    // above); unknown names return null and the row runs e4m3.
     const Int4Site* (*int4)(void* context, int block, int layer,
                             const char* name) = nullptr;
 };
@@ -1379,11 +1389,34 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
         || x.cols != spec.out_h) {
         return Status::kInvalidDimensions;
     }
-    const std::uint8_t* qkv_codes = nullptr;
     const float* bias_raw = nullptr;
     const float* gain = nullptr;
-    Status status = fetch_e4m3(ctx.weights, spec.block, spec.layer, "qkv",
-                               kSplitQkvOut, kSplitChannels, qkv_codes);
+    Status status = Status::kOk;
+    // The int4 site's record presence selects the mixed path (the pinned's
+    // table-presence gating); it never fetches the e4m3 "qkv".
+    const Int4Site* site = nullptr;
+    if (ctx.weights->int4 != nullptr) {
+        site = ctx.weights->int4(ctx.weights->context, spec.block, spec.layer,
+                                 "attn_qkv");
+    }
+    if (site != nullptr) {
+        // The pinned attention_matrix is [1536, 512] block 16 non-half with
+        // no permutation; a mis-delivered record rejects rather than
+        // silently evaluating with the wrong quantiser.
+        if (site->matrix.rows != kSplitQkvOut
+            || site->matrix.cols != kSplitChannels
+            || site->matrix.block < 1
+            || site->matrix.block > kSplitChannels
+            || kSplitChannels % site->matrix.block != 0
+            || site->perm != nullptr || site->matrix.half) {
+            return Status::kInvalidValues;
+        }
+    }
+    const std::uint8_t* qkv_codes = nullptr;
+    if (site == nullptr) {
+        status = fetch_e4m3(ctx.weights, spec.block, spec.layer, "qkv",
+                            kSplitQkvOut, kSplitChannels, qkv_codes);
+    }
     if (status != Status::kOk) {
         return status;
     }
@@ -1401,16 +1434,26 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
         * static_cast<std::size_t>(x.cols);
     const std::size_t map = tokens * kSplitChannels;
     RowBlocks blocks;
-    status = row_begin(ctx, spec, map, 0,
-                       2 * map
-                           + static_cast<std::size_t>(kSplitHeads) * kBiasTable,
-                       blocks);
+    const std::size_t qkv_map = tokens
+        * static_cast<std::size_t>(kSplitQkvOut);
+    const std::size_t work = 2 * map
+        + static_cast<std::size_t>(kSplitHeads) * kBiasTable
+        + (site != nullptr ? map + qkv_map + kSplitQkvOut : 0);
+    status = row_begin(ctx, spec, map, 0, work, blocks);
     if (status != Status::kOk) {
         return status;
     }
     float* in_tokens = blocks.work;
     float* out_tokens = in_tokens + map;
     float* bias = out_tokens + map;
+    float* codes = nullptr;
+    float* products = nullptr;
+    float* padded = nullptr;
+    if (site != nullptr) {
+        codes = bias + static_cast<std::size_t>(kSplitHeads) * kBiasTable;
+        products = codes + map;
+        padded = products + qkv_map;
+    }
     status = eval_planar_to_tokens(x, in_tokens, map);
     if (status == Status::kOk) {
         // The record holds the accumulator-fragment order; the kernel takes
@@ -1421,9 +1464,33 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
                                      static_cast<std::size_t>(kSplitHeads)
                                          * kBiasTable);
     }
+    if (status == Status::kOk && site != nullptr) {
+        // The mixed projection: the map quantised and accumulated into the
+        // site's [tokens, kSplitQkvOut] products, plus the zero-input
+        // projection the padded tokens take. Note the seam-wide divergence
+        // (record contract above): the run's map is the producer's e4m3
+        // store, where the pinned quantises the producer's f16 value.
+        status = int4_quantise(site->matrix, in_tokens,
+                               static_cast<int>(tokens), codes);
+        if (status == Status::kOk) {
+            status = int4_accumulate(site->matrix, codes,
+                                     static_cast<int>(tokens), products);
+        }
+        if (status == Status::kOk) {
+            // The zero-input projection for the padded tokens; the zero
+            // row's codes borrow out_tokens (written later by the kernel).
+            float zero_row[kSplitChannels] = {};
+            status = int4_quantise(site->matrix, zero_row, 1, out_tokens);
+            if (status == Status::kOk) {
+                status = int4_accumulate(site->matrix, out_tokens, 1, padded);
+            }
+        }
+    }
     if (status == Status::kOk) {
         const SplitQkvWeight weight{E4m3Matrix{qkv_codes, kSplitQkvOut,
-                                               kSplitChannels}, bias, gain};
+                                               kSplitChannels}, bias, gain,
+                                    site != nullptr ? products : nullptr,
+                                    site != nullptr ? padded : nullptr};
         status = split_qkv_attn(in_tokens, x.rows, x.cols, spec.shift_x,
                                 spec.shift_y, weight, out_tokens);
     }

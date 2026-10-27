@@ -75,11 +75,25 @@ byte-identically, verified by its unchanged 404-check suite). The site
 rejects half-form and permutation-style records (the pinned `vit_matrix` is
 block 16 non-half) rather than silently evaluating with the wrong quantiser;
 its presence gates out the e4m3 "q"/"k"/"v" fetches entirely. The record
-contract's `header` temperatures are shared by both paths. Out of scope:
-the `kVitFfnExpand` site (the pinned's side-stream expansion copy is a
-device-side quantised cache — an open integration boundary), the
-`kSplitQKVAttn` attention site (the pinned `attention_matrix`), and the
-SwinSite hard-swish/fold changes.
+contract's `header` temperatures are shared by both paths. The split attention QKV site ("attn_qkv") is bound the same way: the pinned
+`attention_matrix` (`[1536, 512]`, block 16) replaces the e4m3 "qkv" matmul
+through a products form of `split_qkv_attn` (the kernel's per-token
+projection reads the precomputed `[rows*cols, 1536]` products with the same
+binary16 round as the e4m3 path's post-matmul round; its padding slots take
+the zero-input projection — the pinned projects the zero-valued padded
+tokens through the matrix, so that projection is generally not zero (it is
+zero when the quantiser's zero point gives codes(0) = 0 and the row constant
+is 0 — the equivalence test's configuration). The kernel's e4m3 path is
+untouched (its 34,267-check suite passes unchanged).
+
+Known seam-wide divergence, documented rather than hidden: both mixed sites
+quantise the map the RUN hands them, which in a full chain is the producer's
+e4m3 store; the pinned stashes the producer's binary16 value for exactly
+this quantiser (`int4.side`: "the attention's QKV quantises this
+projection's f16 value"), so the codes differ whenever f16(x) and its e4m3
+store diverge. Delivering the side channel is the same open integration
+boundary as the `kVitFfnExpand` expansion cache. Out of scope: the
+`kVitFfnExpand` site and the SwinSite hard-swish/fold changes.
 
 ## Reference and provenance
 
@@ -118,7 +132,7 @@ mochizuki0323, whose licence text accompanies that project.
 
 `vr/tests/native-int4-test.cpp` (83 checks at -O2 and again at -O0 via
 `vr/test-native-int4.sh`) pins the path with hand-derived answers:
-`vr/tests/native-eval-int4-test.cpp` (429 checks at both levels via
+`vr/tests/native-eval-int4-test.cpp` (458 checks at both levels via
 `vr/test-native-eval-int4.sh`) pins the miring: the hand-derived two-token
 mixed contraction ([1, -22, 3, -32] through the permuted gather, the quantiser
 ties-to-even at 4.5, the dots, the f64 affines, the tail products and the
@@ -130,7 +144,23 @@ zero-allocation accounting — including the hand-derived two-head QKV case
 (the delta input's all-ones Hadamard block, the codes 1/0, the products at
 rows 0/64, `sqrt_head = f16(sqrt(32)) = 5.65625` and the e4m3 store of that
 at 5.5, head 1's all-zero products through the floored inverse) and the
-half-form/permuted-record rejections. A second independent review verified
+half-form/permuted-record rejections — and the attention site's
+exact-quantisation equivalence (the e4m3 "qkv" all-ones matmul vs the int4
+all-ones matrix with block 1 and zero point 8 over integer inputs must be
+bit-identical, including the padded slots and a shifted-window row), the
+quantisation-divergence discriminator (input 2.5 gives code 2 by ties-even
+but an e4m3 contribution of 2.5, so the paths disagree), the
+record-consumption pin (no "qkv" fetch on the mixed path) and a direct
+kernel case pinning the padded-product branch's discrimination. That
+review caught two real test bugs the discriminators exposed (arena aliasing
+across eval_reset; input products that saturated the binary16 norm chain)
+and one real UB (a null-base `head_rows` construction on the products
+branch), all fixed. A third review verified the products branch's row
+order, token-index arithmetic and round placement, the scratch arithmetic
+exactly, and the equivalence derivation — its six findings (the f16-stash
+divergence now documented above; the null-base UB; the padded-comment
+overclaim; five stale comments; the bounded coverage additions; the pointer
+hygiene) all fixed and reverified. A second earlier review verified
 the `vit_qkv` refactor's byte-equivalence line-by-line (row indexing,
 accumulation order, the moved binary16 round, the in-place aliasing safety),
 the scratch arithmetic and the gate ordering, and re-derived the QKV case —
