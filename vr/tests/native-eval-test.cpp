@@ -568,6 +568,70 @@ int main(void) {
         CHECK(saw_request(big_store, "mlp_expand", 128, 32, -2));
     }
     {
+        // The pre block's non-null history (the disclosed gap): the pinned's
+        // single-frame contract copies the CURRENT colour into the second
+        // colour's slots (7..9) — a history equal to the frame must be
+        // indistinguishable from no history at all, and a distinct history
+        // must change the output (the lift's slots 7..9 feed the body). The
+        // body weights must be non-degenerate for the signal to propagate,
+        // so this case runs its own pattern-filled store (e4m3 code 20 = 0.046875 — code 56 saturates the
+        // body's activations to the e4m3 ceiling and hides the difference).
+        static Store pattern_store;
+        pattern_store.serve_any = true;
+        for (std::size_t i = 0; i < sizeof(pattern_store.zero_codes); ++i) {
+            pattern_store.zero_codes[i] = 20;   // e4m3 0.046875: no saturation
+        }
+        for (std::size_t i = 0;
+             i < sizeof(pattern_store.zero_values)
+                 / sizeof(pattern_store.zero_values[0]); ++i) {
+            pattern_store.zero_values[i] = 1.0f;
+        }
+        static EvalContext pattern_ctx;
+        static EvalWeights pattern_weights;
+        bind_store(pattern_weights, pattern_store);
+        pattern_ctx.weights = &pattern_weights;
+        static float pattern_scratch[1 << 22];
+        pattern_ctx.scratch = pattern_scratch;
+        pattern_ctx.scratch_capacity =
+            sizeof(pattern_scratch) / sizeof(pattern_scratch[0]);
+        CHECK_STATUS(eval_reset(pattern_ctx), Status::kOk);
+        LayerSpec spec = row(0, 0, 0, LayerKind::kPreBlock, 3, 32, 2, 2, 32, 1);
+        LayerCall call;
+        call.image = &image;
+        LayerValue out;
+        CHECK_STATUS(eval_layer(&pattern_ctx, spec, call, out), Status::kOk);
+        static float no_history[32 * 2 * 2];
+        std::memcpy(no_history, out.main.data, sizeof(no_history));
+        static float same_rgb[48];
+        static float distinct_rgb[48];
+        // The eval's interleaved frame mirrors call.image (3 x 4 x 4).
+        for (int c = 0; c < 3; ++c) {
+            for (int p = 0; p < 16; ++p) {
+                same_rgb[p * 3 + c] = image.data[c * 16 + p];
+                distinct_rgb[p * 3 + c] = image.data[c * 16 + p] + 0.25f;
+            }
+        }
+        static FrameView same{same_rgb, 4, 4, 12};
+        pattern_ctx.history = &same;
+        CHECK_STATUS(eval_reset(pattern_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&pattern_ctx, spec, call, out), Status::kOk);
+        CHECK(std::memcmp(no_history, out.main.data, sizeof(no_history)) == 0);
+        static FrameView distinct{distinct_rgb, 4, 4, 12};
+        pattern_ctx.history = &distinct;
+        CHECK_STATUS(eval_reset(pattern_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&pattern_ctx, spec, call, out), Status::kOk);
+        std::printf("probe nh %g %g | wh %g %g\n", no_history[0], no_history[1], out.main.data[0], out.main.data[1]);
+        CHECK(std::memcmp(no_history, out.main.data, sizeof(no_history)) != 0);
+        // Determinism with the history bound.
+        static float with_history[32 * 2 * 2];
+        std::memcpy(with_history, out.main.data, sizeof(with_history));
+        CHECK_STATUS(eval_reset(pattern_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&pattern_ctx, spec, call, out), Status::kOk);
+        CHECK(std::memcmp(with_history, out.main.data,
+                          sizeof(with_history)) == 0);
+        pattern_ctx.history = nullptr;
+    }
+    {
         // SplitFfwd: the decoded feed-forward matrices from the boundary.
         CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
         big_store.requests = 0;
