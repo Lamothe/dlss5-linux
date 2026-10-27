@@ -12,7 +12,7 @@ SRC="$ROOT/vr/tests/native-vit-test.cpp"
 temp="$(mktemp -d)"
 trap 'rm -rf "$temp"' EXIT
 # -ffp-contract=off pins the documented arithmetic semantics for every stage build.
-COMMON=(-std=c++20 -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr")
+COMMON=(-std=c++20 -pthread -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr")
 
 "${CXX}" "${COMMON[@]}" -O2 "$SRC" -o "$temp/test-o2"
 "$temp/test-o2"

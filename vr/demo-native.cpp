@@ -24,6 +24,7 @@
 #include "native-graph-plan.hpp"
 #include "native-history.hpp"
 #include "native-io.hpp"
+#include "native-parallel.hpp"
 
 namespace {
 
@@ -42,6 +43,7 @@ struct Options {
     int frames = 4;
     int reset_at = 2;  // -1 = never; otherwise reset BEFORE this frame index
     bool profile = false;
+    int threads = 1;  // the serial reference; 0 = hardware concurrency
 };
 
 void usage() {
@@ -54,7 +56,9 @@ void usage() {
         "  --seed N           preset seed (default: 20261028)\n"
         "  --frames N         frames to evaluate (default: 4)\n"
         "  --reset-at K       temporal reset before frame K (default: 2; -1 = never)\n"
-        "  --profile          print the per-kind wall-time breakdown of the run\n",
+        "  --profile          print the per-kind wall-time breakdown of the run\n"
+        "  --threads N        parallel threads (default 1 = the serial\n"
+        "                     reference; 0 = hardware concurrency)\n",
         kFrameW, kFrameH);
 }
 
@@ -219,6 +223,12 @@ int main(int argc, char** argv) {
             }
         } else if (std::strcmp(a, "--profile") == 0) {
             opt.profile = true;
+        } else if (std::strcmp(a, "--threads") == 0) {
+            const char* v = need();
+            if (v == nullptr || !parse_int(v, opt.threads) || opt.threads < 0) {
+                usage();
+                return 2;
+            }
         } else if (std::strcmp(a, "--help") == 0) {
             usage();
             return 0;
@@ -362,10 +372,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    dlss5_nr::set_parallel_threads(opt.threads);
     std::printf(
         "dlss5 native demo: %dx%d frame, plan %d rows (small), "
-        "padded extent %dx%d\n",
-        kFrameW, kFrameH, count, padding.width, padding.height);
+        "padded extent %dx%d, %d thread(s)\n",
+        kFrameW, kFrameH, count, padding.width, padding.height,
+        dlss5_nr::parallel_threads());
     std::printf(
         "preset: %s (seed %u) - synthetic weights: the visual transformation "
         "is arbitrary; this proves the pipeline runs, not DLSS quality\n",

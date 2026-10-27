@@ -254,7 +254,9 @@ inline Status split_ffwd(const float* in, int rows, int cols,
         || w.contract.cols != kSplitGroupHidden) {
         return Status::kInvalidDimensions;
     }
-    for (long long t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): each token's stack-locals and
+    // key-ordered accumulations are thread-invariant; exact parity.
+    parallel_for(0LL, tokens, [&](long long t) {
         const float* row = in + t * kSplitChannels;
         float* dst = out + t * kSplitChannels;
         float reduced[kSplitChannels];
@@ -288,7 +290,7 @@ inline Status split_ffwd(const float* in, int rows, int cols,
                 dst[g * kSplitGroupIn + j] = split_store(acc);
             }
         }
-    }
+    });
     return Status::kOk;
 }
 
@@ -324,7 +326,9 @@ inline Status split_projection_value(const float* x, const float* residual,
     if (w.weight.rows != c_out || w.weight.cols != c_in) {
         return Status::kInvalidDimensions;
     }
-    for (long long t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): every element keeps its
+    // key-ordered accumulation exactly; bit-identical at any thread count.
+    parallel_for(0LL, tokens, [&](long long t) {
         const float* row = x + t * c_in;
         const float* skip = residual == nullptr ? nullptr : residual + t * c_out;
         float* dst = value + t * c_out;
@@ -339,7 +343,7 @@ inline Status split_projection_value(const float* x, const float* residual,
             }
             dst[j] = f16(acc);
         }
-    }
+    });
     return Status::kOk;
 }
 

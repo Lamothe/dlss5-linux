@@ -11,7 +11,7 @@ trap 'rm -rf "$temp"' EXIT
 # -ffp-contract=off is part of the documented arithmetic semantics: the 16-term lift sum
 # must be a plain left-to-right float32 accumulation with one final f16 rounding, never
 # FMA-contracted.
-COMMON=(-std=c++20 -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr")
+COMMON=(-std=c++20 -pthread -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr")
 
 "${CXX}" "${COMMON[@]}" -O2 "$SRC" -o "$temp/test-o2"
 "$temp/test-o2"

@@ -27,6 +27,7 @@
 #define VR_NATIVE_VIT_HPP
 
 #include "native-blend.hpp"      // f16 helpers (via native-input-lift) + Status
+#include "native-parallel.hpp"
 #include "native-pre-post.hpp"   // e4m3 rounding
 
 #include <cmath>
@@ -78,7 +79,10 @@ inline Status matmul_e4m3(const float* in, int tokens, int c_in,
         || weight.rows > kVitMaxChannels) {
         return Status::kInvalidDimensions;
     }
-    for (int t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): each token's output rows keep
+    // the single-threaded key-ordered accumulation exactly, so any thread
+    // count is bit-identical to the serial reference.
+    parallel_for(0, tokens, [&](int t) {
         const float* row = in + static_cast<std::size_t>(t) * c_in;
         float* dst = out + static_cast<std::size_t>(t) * weight.rows;
         for (int n = 0; n < weight.rows; ++n) {
@@ -89,7 +93,7 @@ inline Status matmul_e4m3(const float* in, int tokens, int c_in,
             }
             dst[n] = acc;
         }
-    }
+    });
     return Status::kOk;
 }
 
@@ -236,12 +240,14 @@ inline Status vit_qkv(const float* in, int tokens, int channels,
         || v_weight.rows != channels || v_weight.cols != channels) {
         return Status::kInvalidDimensions;
     }
-    for (int t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): every projection keeps its
+    // key-ordered accumulation exactly; bit-identical at any thread count.
+    parallel_for(0, tokens, [&](int t) {
         const float* row = in + static_cast<std::size_t>(t) * channels;
         float* dst = out + static_cast<std::size_t>(t) * 3 * channels;
-        // The raw projections land in `out` first; the shared post chain
-        // (vit_qkv_post) rounds and normalises them in place. Projected
-        // values are float16 (the reference rounds the matmul output).
+        // The raw float32 projections land in `out` first; the shared post
+        // chain (vit_qkv_post) applies the reference's float16 round and the
+        // per-head normalisation in place.
         for (int r = 0; r < 3 * channels; ++r) {
             const std::uint8_t* w = (r < channels ? q_weight.bits
                      : r < 2 * channels ? k_weight.bits : v_weight.bits)
@@ -252,7 +258,7 @@ inline Status vit_qkv(const float* in, int tokens, int channels,
             }
             dst[r] = acc;
         }
-    }
+    });
     return vit_qkv_post(out, tokens, channels, temperature, out);
 }
 
@@ -367,7 +373,9 @@ inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
         || c_out > kVitMaxChannels) {
         return Status::kInvalidDimensions;
     }
-    for (int t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): every element keeps its
+    // key-ordered accumulation exactly; bit-identical at any thread count.
+    parallel_for(0, tokens, [&](int t) {
         const float* row = in + static_cast<std::size_t>(t) * c_in;
         float* dst = out + static_cast<std::size_t>(t) * c_out;
         for (int n = 0; n < c_out; ++n) {
@@ -382,7 +390,7 @@ inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
             }
             dst[n] = e4m3(vit_f16(hidden));
         }
-    }
+    });
     return Status::kOk;
 }
 
@@ -402,7 +410,8 @@ inline Status vit_residual_linear(const float* in, const float* skip, int tokens
         || c_out > kVitMaxChannels) {
         return Status::kInvalidDimensions;
     }
-    for (int t = 0; t < tokens; ++t) {
+    // Token-parallel (native-parallel.hpp): as above, exact parity.
+    parallel_for(0, tokens, [&](int t) {
         const float* row = in + static_cast<std::size_t>(t) * c_in;
         const float* skip_row = skip + static_cast<std::size_t>(t) * c_out;
         float* dst = out + static_cast<std::size_t>(t) * c_out;
@@ -420,7 +429,7 @@ inline Status vit_residual_linear(const float* in, const float* skip, int tokens
             }
             dst[n] = e4m3(value);
         }
-    }
+    });
     return Status::kOk;
 }
 

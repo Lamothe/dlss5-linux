@@ -17,6 +17,7 @@
 #ifndef DLSS5_NR_NATIVE_SWIN_LINEAR_HPP
 #define DLSS5_NR_NATIVE_SWIN_LINEAR_HPP
 
+#include "native-parallel.hpp"
 #include "native-pre-post.hpp"
 #include "native-int4.hpp"
 #include "native-swin-primitives.hpp"
@@ -139,7 +140,10 @@ inline Status swin_linear(const MatrixView& x, const MatrixView& weight,
             return status;
         }
     }
-    for (int r = 0; r < x.rows; ++r) {
+    // Row-parallel (native-parallel.hpp): every output element keeps the
+    // single-threaded key-ordered accumulation exactly, so any thread count
+    // is bit-identical to the serial reference.
+    parallel_for(0, x.rows, [&](int r) {
         const float* x_row = x.data + static_cast<std::size_t>(r)
             * static_cast<std::size_t>(x.row_stride);
         float* out_row = out->data + static_cast<std::size_t>(r)
@@ -153,7 +157,7 @@ inline Status swin_linear(const MatrixView& x, const MatrixView& weight,
             }
             out_row[n] = sum;
         }
-    }
+    });
     return Status::kOk;
 }
 

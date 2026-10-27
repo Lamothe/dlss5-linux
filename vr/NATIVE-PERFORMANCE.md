@@ -49,3 +49,36 @@ Consequence for the optimisation order: (P2) thread the projection matmul
 first (output-row parallel with fixed inner accumulation order = bit-identical
 parity), (P3) then SIMD/vectorisation where P2 leaves headroom, (P4+) then
 GPU compute per family with measured parity and speedup.
+
+## P2 — deterministic CPU threading (28/10/2026)
+
+`vr/native-parallel.hpp`: opt-in process thread count (default 1 = the serial
+reference) and a spawn-and-join `parallel_for` with an inline fallback on
+spawn failure. Threaded sites split the independent outer index (tokens or
+rows) while every element keeps its single-threaded key-ordered accumulation,
+so results are **bit-identical at every thread count** — proven by memcmp
+parity tests at 1/2/3/4/8/16 threads (2,479 checks at -O2/-O0) and by
+byte-identical demo artefacts. Sites: `matmul_e4m3`, `vit_ffn_expand`,
+`vit_residual_linear`, `vit_qkv`'s raw projection, `swin_linear`,
+`split_projection_value` and `split_ffwd`. Serial remainder (documented):
+`split_ffwd_proj`/`split_qkv_attn`'s status-returning inner calls and the
+small per-element families.
+
+Measured (same run conditions as P1, `seeded` preset, 64x72 frame, one
+frame; 7800X3D = 8 cores / 16 threads; SMT adds contention here):
+
+| Threads | ms/frame | speedup |
+|---|---|---|
+| 1 (reference) | 36,268 | 1.00x |
+| 8 | 16,306 | **2.22x** |
+| 16 | 16,909 | 2.15x |
+
+Output bit-parity verified (cmp of the artefacts). The scaling is capped by
+memory bandwidth: the projection rows stream ~100 MiB of e4m3 weight records
+per frame, so the matmuls are bandwidth-bound well before 8 cores saturate
+compute. This is the honest CPU result; the GPU stage (VRAM bandwidth) is
+where the larger win lives.
+
+The demo exposes this as `--threads N` (default 1 = the reference; 0 =
+hardware concurrency) and `--profile` (the per-kind breakdown at the dispatch
+seam).

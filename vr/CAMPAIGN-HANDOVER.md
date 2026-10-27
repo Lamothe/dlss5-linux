@@ -205,3 +205,20 @@ FP16-store helper's write-before-reject, an unchecked CLI argument and the
 missing MIT notice file. Honest scope: synthetic weights make the visual
 transformation arbitrary — the demo proves the pipeline runs on Linux, not
 DLSS quality and not vendor parity.
+
+## Performance phase P1-P2: profile + deterministic CPU threading (28/10/2026)
+
+P1 (`ce5bc1f`): the per-kind profile at the dispatch seam (`demo-native
+--profile`) — the three ViT projection rows are 61.3% of the frame and the
+projection-matmul class ~72%; attention kernels are cheap. P2: deterministic
+CPU threading (`vr/native-parallel.hpp`, 2,479 checks at -O2/-O0 incl.
+memcmp bit-parity at 1/2/3/4/8/16 threads): 36.3 s -> 16.3 s at 8 threads =
+**2.22x** with byte-identical artefacts (16 threads = 2.15x; SMT adds
+contention; the matmuls are memory-bandwidth-bound). Independent review
+raised 7 findings, all fixed (spawn-failure no-throw handling, the missing
+runner, 4 untested parallel sites + the long long path, -pthread in runners,
+a false sentinel claim, the demo default and a comment). Serial remainder
+documented: split_ffwd_proj/split_qkv_attn's status-returning inner calls.
+Next: P3 (SIMD where P2 leaves headroom) then the Vulkan GPU stage per
+family with parity + per-kernel timing (VRAM bandwidth is the expected
+larger win).
