@@ -41,6 +41,10 @@ struct SwinBlockParams {
     MatrixView exp_bias;
     MatrixView attn_scale;
     MatrixView out_proj;
+    // The int4 mixed network's per-site overlay (the pinned SwinSite); null
+    // keeps the e4m3 dataflow. The callers keep the overlay (and its pointed
+    // matrices) alive for the call.
+    const SwinSiteOverlay* site = nullptr;
 };
 
 // ---- pre-validation helpers ------------------------------------------------------------------------
@@ -409,7 +413,8 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
                                            &mlp_scratch_view,
                                            static_cast<std::size_t>(
                                                kWindowTokens)
-                                               * params.expand.rows);
+                                               * params.expand.rows,
+                                           params.site);
             if (status != Status::kOk) {
                 return status;
             }
@@ -443,7 +448,10 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
                                                  params.attn_scale,
                                                  params.out_proj, &out_window,
                                                  window_floats, attn_scratch,
-                                                 attn_needed);
+                                                 attn_needed,
+                                                 params.site != nullptr
+                                                     ? params.site->int4_qkv
+                                                     : nullptr);
             if (status != Status::kOk) {
                 return status;
             }

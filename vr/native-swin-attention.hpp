@@ -918,10 +918,10 @@ inline Status swin_context(const AttentionTensorView& probabilities,
     return Status::kOk;
 }
 
-// ---- the `_attention` assembly (non-int4 path) -------------------------------------------------------
+// ---- the `_attention` assembly (the e4m3 path, or the int4 QKV site's projection) -------------------------------------------------------
 // out [rows, C] = skip * attn_scale + out_proj . attention(qkv(quantised)) with
 // C = heads * kHeadDim and rows = windows * kWindowTokens, mirroring the
-// reference's `_attention` minus its int4 mixed-network branch (out of scope):
+// reference's `_attention` with the int4 QKV site threaded as the projection override:
 // the qkv projection `swin_linear(quantised, qkv)` (raw float32 accumulator),
 // `_normalise_qkv`, the logits einsum, `_softmax`, the context einsum through
 // `store`, and the residual line reusing the mlp slice's tail arithmetic
@@ -941,7 +941,8 @@ inline Status swin_attention(const MatrixView& quantised, const MatrixView& qkv,
                              const MatrixView& skip, const MatrixView& attn_scale,
                              const MatrixView& out_proj,
                              MutableMatrixView* out, std::size_t out_capacity,
-                             float* scratch, std::size_t scratch_capacity) {
+                             float* scratch, std::size_t scratch_capacity,
+                             const Int4MatrixView* int4_qkv = nullptr) {
     if (quantised.data == nullptr || qkv.data == nullptr || head_scale.data == nullptr
         || exp_bias.data == nullptr || skip.data == nullptr
         || attn_scale.data == nullptr || out_proj.data == nullptr || scratch == nullptr) {
@@ -1048,8 +1049,11 @@ inline Status swin_attention(const MatrixView& quantised, const MatrixView& qkv,
     qkv_mat.cols = qkv.rows;  // the projection writes 3 * C outputs per token
     qkv_mat.row_stride = qkv.rows;
     {
-        const Status status = swin_linear(quantised, qkv, &qkv_mat,
-                                          qkv_span);
+        // The int4 site's QKV matrix replaces the e4m3 projection (the
+        // pinned SwinSite's qkv); the accumulator is the same raw float32.
+        const Status status = int4_qkv != nullptr
+            ? swin_linear_int4(quantised, *int4_qkv, &qkv_mat)
+            : swin_linear(quantised, qkv, &qkv_mat, qkv_span);
         if (status != Status::kOk) {
             return status;
         }

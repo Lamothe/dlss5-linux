@@ -231,6 +231,16 @@ static const char* g_int4_name = nullptr;
 static int g_int4_block = -1;
 static int g_int4_layer = -1;
 
+static const SwinSiteRecord* g_swin_site = nullptr;
+
+static const SwinSiteRecord* bind_swin(void* context, int block, int layer) {
+    (void)context;
+    if (block == 3 && layer == 0 && g_swin_site != nullptr) {
+        return g_swin_site;
+    }
+    return nullptr;
+}
+
 static const Int4Site* bind_int4(void* context, int block, int layer,
                                  const char* name) {
     (void)context;
@@ -855,6 +865,157 @@ int main(void) {
                                  products, nullptr};
         CHECK_STATUS(split_qkv_attn(in_map, 1, 1, 0, 0, w_missing, out_a),
                      Status::kNullPointer);
+    }
+
+    // ---- the SwinSite overlay: the swin_hidden seam --------------------------
+    // int4 expand matrix [2, 2]: q = [[2, -1], [1, 3]], scale 1, constant 0,
+    // block 1 half-form with aq (gain 1, zero 8) -> codes = v exactly for
+    // integer v. x row [1, 2] -> codes [1, 2] -> dots [0, 7] -> products
+    // [0, 7]. With hs = {0.187367, 0.500139}: hard_swish(0) = 0 and
+    // hard_swish(7) = 7 * clamp(f32(7 * 0.187367 + 0.500139), 0, 1) = 7 * 1
+    // = 7 -> stores [e4m3(0), e4m3(7)] = [0, 7].
+    {
+        static std::int8_t q[2 * 2] = {2, -1, 1, 3};
+        static float scale[2] = {1.0f, 1.0f};
+        static float constant[2] = {};
+        static float aq[2 * 2] = {1.0f, 8.0f, 1.0f, 8.0f};
+        Int4MatrixView matrix{q, scale, constant, aq, 2, 2, 1, true};
+        static float x_values[1 * 2] = {1.0f, 2.0f};
+        static float out_values[1 * 2];
+        MatrixView x{x_values, 1, 2, 2};
+        MutableMatrixView out{out_values, 1, 2, 2};
+        static float hs[2] = {0.187367f, 0.500139f};
+        SwinSiteOverlay overlay;
+        overlay.hs = hs;
+        overlay.int4_expand = &matrix;
+        static float expand_e4m3[2 * 2] = {};
+        MatrixView expand{expand_e4m3, 2, 2, 2};
+        CHECK_STATUS(swin_hidden(x, expand, &out, 2, &overlay), Status::kOk);
+        CHECK(out_values[0] == 0.0f);
+        CHECK(out_values[1] == 7.0f);
+
+        // Without the overlay the e4m3 expand (all zeros) gives [0, 0] under
+        // the plain activation: the overlay's matrix and activation both
+        // discriminate.
+        CHECK_STATUS(swin_hidden(x, expand, &out, 2, nullptr), Status::kOk);
+        CHECK(out_values[0] == 0.0f);
+        CHECK(out_values[1] == 0.0f);
+
+        // The half-form requirement is not imposed at this seam (the site is
+        // half-form in the pinned, but the operand path accepts either);
+        // a wrong-shaped matrix rejects before any write.
+        static float sentinel[2] = {-777.0f, -777.0f};
+        MutableMatrixView bad{sentinel, 1, 2, 2};
+        matrix.rows = 3;
+        CHECK_STATUS(swin_hidden(x, expand, &bad, 2, &overlay),
+                     Status::kInvalidDimensions);
+        CHECK(sentinel[0] == -777.0f && sentinel[1] == -777.0f);
+        matrix.rows = 2;
+
+        // Determinism and zero allocation of the int4 seam.
+        const unsigned long long alloc_before = g_allocations.load();
+        CHECK_STATUS(swin_hidden(x, expand, &out, 2, &overlay), Status::kOk);
+        CHECK(g_allocations.load() == alloc_before);
+        CHECK(out_values[0] == 0.0f && out_values[1] == 7.0f);
+    }
+
+    // ---- the SwinSite gate at the eval level ---------------------------------
+    // A kSwin1H row (heads 1) with a full site record must behave exactly
+    // as without one (the pinned's heads > 1 gating excludes ex/qkv; fold 0
+    // keeps the plain activation). The swin records come from the generative
+    // store; no literal is pinned at this level (the block body is the swin
+    // suites' domain) — the gating is pinned at the builder level below.
+    {
+        static float scratch[1 << 21];
+        static std::int8_t ex_q[4] = {};
+        static float ex_scale[4] = {};
+        static float ex_constant[4] = {};
+        static float ex_aq[4] = {};
+        static std::int8_t qkv_q[4] = {};
+        static float qkv_scale[4] = {};
+        static float qkv_constant[4] = {};
+        static float qkv_aq[4] = {};
+        static SwinSiteRecord site;
+        site.fold = 1.0f;
+        site.ex = Int4MatrixView{ex_q, ex_scale, ex_constant, ex_aq, 2, 2, 1,
+                                true};
+        site.qkv = Int4MatrixView{qkv_q, qkv_scale, qkv_constant, qkv_aq, 2,
+                                  2, 1, true};
+        site.has_ex = true;
+        site.has_qkv = true;
+        g_swin_site = &site;
+        static Store store;
+        store.serve_any = true;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.swin = bind_swin;
+        EvalContext ctx;
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        static float x_data[32 * 4 * 4];
+        for (int i = 0; i < 32 * 4 * 4; ++i) {
+            x_data[i] = static_cast<float>((i % 7) - 3);
+        }
+        FeatureBatchView x = make_view(x_data, 32, 4, 4);
+
+        // heads 1: the site (fold 0) must be indistinguishable from none.
+        site.fold = 0.0f;
+        LayerSpec one = row(0, 3, 0, LayerKind::kSwin1H, 32, 32, 4, 4, 32,
+                            1);
+        LayerCall call;
+        call.x = &x;
+        LayerValue with_site;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, one, call, with_site), Status::kOk);
+        static float copy_site[64 * 4 * 4];
+        std::memcpy(copy_site, with_site.main.data, sizeof(copy_site));
+        g_swin_site = nullptr;
+        LayerValue without_site;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, one, call, without_site), Status::kOk);
+        CHECK(std::memcmp(copy_site, without_site.main.data,
+                          sizeof(copy_site)) == 0);
+
+        // The gating itself is pinned at the builder level: fold drives the
+        // hard-swish pair (narrow for C = 32, wide otherwise), and the
+        // matrices are set only for heads > 1 with both present.
+        g_swin_site = &site;
+        {
+            SwinSiteOverlay o;
+            eval_detail::build_swin_overlay(&weights, 3, 0, 32, 1, o);
+            CHECK(o.hs == nullptr && o.int4_expand == nullptr
+                  && o.int4_qkv == nullptr);   // fold 0
+
+            site.fold = 1.0f;
+            eval_detail::build_swin_overlay(&weights, 3, 0, 32, 1, o);
+            CHECK(o.hs == eval_detail::kHardSwish32);   // narrow
+            CHECK(o.int4_expand == nullptr);            // heads 1
+
+            SwinSiteOverlay o2;
+            eval_detail::build_swin_overlay(&weights, 3, 0, 64, 2, o2);
+            CHECK(o2.hs == eval_detail::kHardSwishWide);  // wide
+            CHECK(o2.int4_expand == &site.ex);
+            CHECK(o2.int4_qkv == &site.qkv);
+
+            site.has_qkv = false;
+            SwinSiteOverlay o3;
+            eval_detail::build_swin_overlay(&weights, 3, 0, 64, 2, o3);
+            CHECK(o3.int4_expand == nullptr);   // both or neither
+            CHECK(o3.int4_qkv == nullptr);
+            site.has_qkv = true;
+
+            site.fold = 0.0f;
+            SwinSiteOverlay o4;
+            eval_detail::build_swin_overlay(&weights, 3, 0, 64, 2, o4);
+            CHECK(o4.hs == nullptr);            // fold drives hs only
+            CHECK(o4.int4_expand == &site.ex);  // the matrices stand alone
+
+            SwinSiteOverlay o5;
+            eval_detail::build_swin_overlay(nullptr, 3, 0, 64, 2, o5);
+            CHECK(o5.hs == nullptr && o5.int4_expand == nullptr);
+        }
+        g_swin_site = nullptr;
     }
 
     std::printf("native-eval-int4: %lld checks passed\n", g_checks);

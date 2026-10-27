@@ -86,7 +86,21 @@ zero when the quantiser's zero point gives codes(0) = 0 and the row constant
 is 0 — the equivalence test's configuration). The kernel's e4m3 path is
 untouched (its 34,267-check suite passes unchanged).
 
-Known seam-wide divergence, documented rather than hidden: both mixed sites
+The SwinSite (the pinned `SwinSite`) is bound at the swin kernel seams: the
+hard-swish activation swap (`x * clamp(f32(f64(x·A) + B), 0, 1)` with the
+pinned's per-channel-count (A, B) table) replaces the linear-unit activation
+in `swin_hidden` when the site record's fold is non-zero (the pinned's
+`hs` gating), and the site's block-1 binary16 `ex`/`qkv` matrices replace
+the e4m3 expand and QKV projections through the same quantise+accumulate
+operand path (`swin_linear_int4`, per-row). The pinned's gating is
+reproduced in `build_swin_overlay`: `hs` set iff `fold != 0` (narrow for
+C = 32, wide otherwise); the matrices only for `heads > 1` with both
+records present (the pinned builds both or neither). The fold constant
+itself is the host record's value (the fold chain's evaluation is
+`swin_fold_constant`, a host record-preparation tool; the weight folding
+stays the host's boundary). The pre/post rows (heads 1) take the
+activation swap but never the matrices. Known seam-wide divergence,
+documented rather than hidden: both mixed sites
 quantise the map the RUN hands them, which in a full chain is the producer's
 e4m3 store; the pinned stashes the producer's binary16 value for exactly
 this quantiser (`int4.side`: "the attention's QKV quantises this
@@ -132,7 +146,7 @@ mochizuki0323, whose licence text accompanies that project.
 
 `vr/tests/native-int4-test.cpp` (83 checks at -O2 and again at -O0 via
 `vr/test-native-int4.sh`) pins the path with hand-derived answers:
-`vr/tests/native-eval-int4-test.cpp` (458 checks at both levels via
+`vr/tests/native-eval-int4-test.cpp` (485 checks at both levels via
 `vr/test-native-eval-int4.sh`) pins the miring: the hand-derived two-token
 mixed contraction ([1, -22, 3, -32] through the permuted gather, the quantiser
 ties-to-even at 4.5, the dots, the f64 affines, the tail products and the

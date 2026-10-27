@@ -129,6 +129,20 @@ namespace dlss5_nr {
 // header contract above for the exact count/shape semantics. All callbacks
 // are pure lookups: the binding probes wildcard record lengths with
 // exact-count requests.
+// The SwinSite record (the pinned int4.py SwinSite): the folded scale and
+// the optional int4 matrices of one Swin block's MLP expansion ("mlp_expand"
+// [4C, C]) and QKV ("qkv" [3C, C]) — both block 1 binary16 form. The pinned
+// builds both or neither (both aq tables required) and only for heads > 1;
+// the run enforces the same. `fold` drives the hard-swish activation swap
+// exactly as the pinned (hs set iff fold != 0).
+struct SwinSiteRecord {
+    float fold = 0.0f;
+    Int4MatrixView ex;
+    Int4MatrixView qkv;
+    bool has_ex = false;
+    bool has_qkv = false;
+};
+
 struct EvalWeights {
     void* context = nullptr;
     const std::uint8_t* (*e4m3)(void* context, int block, int layer,
@@ -144,7 +158,10 @@ struct EvalWeights {
     // in e4m3 — the pinned's table-presence gating. The ViT feed-forward's
     // e4m3 tail arrives through `e4m3` as "tail".
     // Site names: "vit_ffn", "vit_qkv", "attn_qkv" (see the record contract
-    // above); unknown names return null and the row runs e4m3.
+    // above); unknown names return null and the row runs e4m3. `swin`
+    // returns the per-block SwinSiteRecord (or null = the e4m3 dataflow).
+    const SwinSiteRecord* (*swin)(void* context, int block, int layer)
+        = nullptr;
     const Int4Site* (*int4)(void* context, int block, int layer,
                             const char* name) = nullptr;
 };
@@ -176,6 +193,34 @@ inline constexpr int kEvalStateWords = 4 + 4 * kEvalMaxBlocks;
 // ---- the arena ----------------------------------------------------------------------------------
 
 namespace eval_detail {
+
+// The pinned's hard-swish (A, B) by the block's channel count
+// (HARD_SWISH = {32: (0.187367, 0.500139)}; the others take the wide pair).
+inline constexpr float kHardSwish32[2] = {0.187367f, 0.500139f};
+inline constexpr float kHardSwishWide[2] = {0.182412f, 0.500465f};
+
+// The int4 SwinSite overlay (the pinned's gating): the hard-swish swap when
+// the record's fold is non-zero, and the ex/qkv matrices only for heads > 1
+// with both present (the pinned builds both or neither).
+inline void build_swin_overlay(const EvalWeights* weights, int block,
+                               int layer, int channels, int heads,
+                               SwinSiteOverlay& overlay) {
+    overlay = SwinSiteOverlay{};
+    if (weights == nullptr || weights->swin == nullptr) {
+        return;
+    }
+    const SwinSiteRecord* site = weights->swin(weights->context, block, layer);
+    if (site == nullptr) {
+        return;
+    }
+    if (site->fold != 0.0f) {
+        overlay.hs = channels == 32 ? kHardSwish32 : kHardSwishWide;
+    }
+    if (heads > 1 && site->has_ex && site->has_qkv) {
+        overlay.int4_expand = &site->ex;
+        overlay.int4_qkv = &site->qkv;
+    }
+}
 
 inline constexpr std::uint32_t kStateMagic = 0x45564c31u;
 inline constexpr std::uint32_t kTransientOwner = 0xffffffffu;  // a call's working block
@@ -920,11 +965,15 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
     float* frame = acc + map;
     float* decoded = frame + frame_count;
     float* block_scratch = decoded + swin_decoded_floats(channels, heads, fetch);
+    SwinSiteOverlay overlay;
+    build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,
+                       overlay);
     MatrixView mid_storage;
     SwinBlockParams params;
     status = swin_decode(fetch, channels, heads, decoded,
                          swin_decoded_floats(channels, heads, fetch),
                          mid_storage, params);
+    params.site = &overlay;
     if (status != Status::kOk) {
         row_abort(ctx, spec);
         return status;
@@ -1023,6 +1072,10 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
     if (status != Status::kOk) {
         return status;
     }
+    // The int4 SwinSite overlay; it outlives every call below.
+    SwinSiteOverlay overlay;
+    build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, heads,
+                       overlay);
     int shift_rows = 0;
     int shift_cols = 0;
     swin_shifts(spec, shift_rows, shift_cols);
@@ -1066,6 +1119,7 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
             + static_cast<std::size_t>(2 * channels) * channels;
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
+        params.site = &overlay;
         if (status != Status::kOk) {
             row_abort(ctx, spec);
             return status;
@@ -1157,6 +1211,7 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         float* up_scratch = gain_dst + static_cast<std::size_t>(channels);
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
+        params.site = &overlay;
         if (status != Status::kOk) {
             row_abort(ctx, spec);
             return status;
@@ -1206,6 +1261,7 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
     }
     status = swin_decode(fetch, channels, heads, blocks.work, decoded_count,
                          mid_storage, params);
+    params.site = &overlay;
     if (status != Status::kOk) {
         row_abort(ctx, spec);
         return status;
@@ -2204,11 +2260,15 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     float* staged = frame + frame_count;
     float* decoded = staged + frame_count;
     float* block_scratch = decoded + swin_decoded_floats(channels, heads, fetch);
+    SwinSiteOverlay overlay;
+    build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,
+                       overlay);
     MatrixView mid_storage;
     SwinBlockParams params;
     status = swin_decode(fetch, channels, heads, decoded,
                          swin_decoded_floats(channels, heads, fetch),
                          mid_storage, params);
+    params.site = &overlay;
     if (status != Status::kOk) {
         row_abort(ctx, spec);
         return status;

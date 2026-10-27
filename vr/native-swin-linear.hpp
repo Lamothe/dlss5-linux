@@ -18,6 +18,7 @@
 #define DLSS5_NR_NATIVE_SWIN_LINEAR_HPP
 
 #include "native-pre-post.hpp"
+#include "native-int4.hpp"
 #include "native-swin-primitives.hpp"
 
 namespace dlss5_nr {
@@ -162,17 +163,88 @@ inline Status swin_linear(const MatrixView& x, const MatrixView& weight,
 // rounded to the e4m3 grid. out [rows, 4C] receives those e4m3 values as float32.
 // Same validation and untouched-output contract as swin_linear; `out` must be
 // rows x expand.rows.
+// The int4 mixed network's per-site overlay (the pinned SwinSite): the
+// hard-swish activation parameters (A, B) when the activation changes, and
+// the int4 replacement matrices for the expand and QKV projections. A null
+// overlay (or a null member) keeps the e4m3 dataflow unchanged.
+struct SwinSiteOverlay {
+    const float* hs = nullptr;                 // [2] (A, B) or null
+    const Int4MatrixView* int4_expand = nullptr;
+    const Int4MatrixView* int4_qkv = nullptr;
+};
+
+// The int4 expand form of the hidden projection: every x row quantised and
+// accumulated through the site matrix into `out` (the same key-ascending
+// product contract as the e4m3 matmul's float32 accumulator).
+inline Status swin_linear_int4(const MatrixView& x,
+                               const Int4MatrixView& matrix,
+                               MutableMatrixView* out) {
+    if (x.data == nullptr || matrix.q == nullptr || matrix.scale == nullptr
+        || matrix.constant == nullptr || matrix.aq == nullptr
+        || out == nullptr || out->data == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (matrix.rows != out->cols || matrix.cols != x.cols
+        || x.rows != out->rows) {
+        return Status::kInvalidDimensions;
+    }
+    if (matrix.block < 1 || matrix.block > matrix.cols
+        || matrix.cols % matrix.block != 0
+        || matrix.cols > kMaxLinearDim) {
+        return Status::kInvalidValues;
+    }
+    float codes[kMaxLinearDim];
+    for (int r = 0; r < x.rows; ++r) {
+        const float* x_row = x.data + static_cast<std::size_t>(r)
+            * static_cast<std::size_t>(x.row_stride);
+        float* out_row = out->data + static_cast<std::size_t>(r)
+            * static_cast<std::size_t>(out->row_stride);
+        Status status = int4_quantise(matrix, x_row, 1, codes);
+        if (status != Status::kOk) {
+            return status;
+        }
+        status = int4_accumulate(matrix, codes, 1, out_row);
+        if (status != Status::kOk) {
+            return status;
+        }
+    }
+    return Status::kOk;
+}
+
 inline Status swin_hidden(const MatrixView& x, const MatrixView& expand,
-                          MutableMatrixView* out, std::size_t out_capacity) {
-    const Status status = swin_linear(x, expand, out, out_capacity);
+                          MutableMatrixView* out, std::size_t out_capacity,
+                          const SwinSiteOverlay* overlay = nullptr) {
+    Status status = Status::kOk;
+    const Int4MatrixView* int4_expand = overlay != nullptr
+        ? overlay->int4_expand : nullptr;
+    if (int4_expand != nullptr) {
+        if (out == nullptr || out->data == nullptr) {
+            return Status::kNullPointer;
+        }
+        if (x.rows < 1 || x.cols < 1
+            || x.row_stride < x.cols || x.row_stride > kMaxLinearDim) {
+            return Status::kInvalidDimensions;
+        }
+        const Status out_status = validate_linear_output(out, expand.rows,
+                                                         out_capacity);
+        if (out_status != Status::kOk) {
+            return out_status;
+        }
+        status = swin_linear_int4(x, *int4_expand, out);
+    } else {
+        status = swin_linear(x, expand, out, out_capacity);
+    }
     if (status != Status::kOk) {
         return status;
     }
+    const float* hs = overlay != nullptr ? overlay->hs : nullptr;
     for (int r = 0; r < out->rows; ++r) {
         float* out_row = out->data + static_cast<std::size_t>(r)
             * static_cast<std::size_t>(out->row_stride);
         for (int n = 0; n < expand.rows; ++n) {
-            out_row[n] = e4m3(swin_activation(out_row[n]));
+            out_row[n] = e4m3(hs != nullptr
+                                  ? hard_swish_value(out_row[n], hs[0], hs[1])
+                                  : swin_activation(out_row[n]));
         }
     }
     return Status::kOk;

@@ -336,6 +336,16 @@ inline Status int4_mixed_contraction(const Int4MatrixView& matrix,
 // exact; the sum is exact whenever the gate does not saturate, so after the
 // clamp this equals the single-rounding fma form. A/B come from the pinned
 // tables: (0.187367, 0.500139) at C=32, (0.182412, 0.500465) wide.
+// The scalar form with explicit parameters (the pinned `hard_swish`):
+// ``x * clamp(fma(x, A, B), 0, 1)`` — the product and sum of the fma rounded
+// once (binary64 then binary32), as the pinned's double->float round.
+inline float hard_swish_value(float x, float a, float b) {
+    float gate = static_cast<float>(static_cast<double>(x) * a
+                                    + static_cast<double>(b));
+    gate = gate < 0.0f ? 0.0f : (gate > 1.0f ? 1.0f : gate);
+    return x * gate;
+}
+
 inline Status hard_swish(const float* in, int count, int channels,
                          float* out) {
     if (in == nullptr || out == nullptr) {
@@ -348,11 +358,7 @@ inline Status hard_swish(const float* in, int count, int channels,
     const float a = narrow ? 0.187367f : 0.182412f;
     const float b = narrow ? 0.500139f : 0.500465f;
     for (int i = 0; i < count; ++i) {
-        const float x = in[i];
-        float gate = static_cast<float>(static_cast<double>(x) * a
-                                        + static_cast<double>(b));
-        gate = gate < 0.0f ? 0.0f : (gate > 1.0f ? 1.0f : gate);
-        out[i] = x * gate;
+        out[i] = hard_swish_value(in[i], a, b);
     }
     return Status::kOk;
 }
