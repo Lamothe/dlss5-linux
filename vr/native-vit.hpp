@@ -171,6 +171,54 @@ inline float inverse_norm_head(const float* head_values) {
 // e4m3 [channels][channels] for q, k and v; `temperature` is one float32
 // value per head (rounded to float16 at use). Output [tokens][3*channels]:
 // [q | k | v], every value rounded float32 -> float16 -> e4m3.
+// (The reference's int4 hooks are wired in native-eval.hpp; only this post
+// chain is shared with them.)
+// The QKV post chain shared by the e4m3 and int4 projection paths: the
+// per-head binary16 projection round, the inverse norm, the temperature and
+// the e4m3 stores. `products` is [tokens, 3 * channels] raw projections (the
+// q block, k block, v block per token; head-major rows within each block)
+// and may alias `out`.
+inline Status vit_qkv_post(const float* products, int tokens, int channels,
+                           const float* temperature, float* out) {
+    if (products == nullptr || temperature == nullptr || out == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (tokens <= 0 || channels <= 0 || channels % kVitHeadDim != 0
+        || tokens > kVitMaxTokens || channels > kVitMaxChannels) {
+        return Status::kInvalidDimensions;
+    }
+    const int heads = channels / kVitHeadDim;
+    const float sqrt_head = vit_f16(std::sqrt(static_cast<double>(kVitHeadDim)));
+    for (int t = 0; t < tokens; ++t) {
+        const float* prod = products + static_cast<std::size_t>(t) * 3
+            * channels;
+        float* dst = out + static_cast<std::size_t>(t) * 3 * channels;
+        float projected_q[kVitHeadDim];
+        float projected_k[kVitHeadDim];
+        float projected_v[kVitHeadDim];
+        for (int h = 0; h < heads; ++h) {
+            const int base = h * kVitHeadDim;
+            for (int d = 0; d < kVitHeadDim; ++d) {
+                projected_q[d] = vit_f16(prod[base + d]);
+                projected_k[d] = vit_f16(prod[channels + base + d]);
+                projected_v[d] = vit_f16(prod[2 * channels + base + d]);
+            }
+            const float inv_q = inverse_norm_head(projected_q);
+            const float inv_k = inverse_norm_head(projected_k);
+            const float temp = vit_f16(temperature[h]);
+            for (int d = 0; d < kVitHeadDim; ++d) {
+                const float q = vit_f16(vit_f16(vit_f16(projected_q[d] * sqrt_head)
+                                                * inv_q) * temp);
+                const float k = vit_f16(vit_f16(projected_k[d] * inv_k));
+                dst[base + d] = e4m3(q);
+                dst[channels + base + d] = e4m3(k);
+                dst[2 * channels + base + d] = e4m3(projected_v[d]);
+            }
+        }
+    }
+    return Status::kOk;
+}
+
 inline Status vit_qkv(const float* in, int tokens, int channels,
                       const E4m3Matrix& q_weight, const E4m3Matrix& k_weight,
                       const E4m3Matrix& v_weight, const float* temperature,
@@ -188,51 +236,24 @@ inline Status vit_qkv(const float* in, int tokens, int channels,
         || v_weight.rows != channels || v_weight.cols != channels) {
         return Status::kInvalidDimensions;
     }
-    const int heads = channels / kVitHeadDim;
-    const float sqrt_head = vit_f16(std::sqrt(static_cast<double>(kVitHeadDim)));
     for (int t = 0; t < tokens; ++t) {
         const float* row = in + static_cast<std::size_t>(t) * channels;
         float* dst = out + static_cast<std::size_t>(t) * 3 * channels;
-        // Projected values are float16 (the reference rounds the matmul output).
-        float projected_q[kVitHeadDim];
-        float projected_k[kVitHeadDim];
-        float projected_v[kVitHeadDim];
-        for (int h = 0; h < heads; ++h) {
-            const int base = h * kVitHeadDim;
-            for (int d = 0; d < kVitHeadDim; ++d) {
-                const std::uint8_t* wq = q_weight.bits
-                    + static_cast<std::size_t>(base + d) * channels;
-                const std::uint8_t* wk = k_weight.bits
-                    + static_cast<std::size_t>(base + d) * channels;
-                const std::uint8_t* wv = v_weight.bits
-                    + static_cast<std::size_t>(base + d) * channels;
-                float acc_q = 0.0f;
-                float acc_k = 0.0f;
-                float acc_v = 0.0f;
-                for (int k = 0; k < channels; ++k) {
-                    const float x = row[k];
-                    acc_q += x * e4m3_from_bits(wq[k]);
-                    acc_k += x * e4m3_from_bits(wk[k]);
-                    acc_v += x * e4m3_from_bits(wv[k]);
-                }
-                projected_q[d] = vit_f16(acc_q);
-                projected_k[d] = vit_f16(acc_k);
-                projected_v[d] = vit_f16(acc_v);
+        // The raw projections land in `out` first; the shared post chain
+        // (vit_qkv_post) rounds and normalises them in place. Projected
+        // values are float16 (the reference rounds the matmul output).
+        for (int r = 0; r < 3 * channels; ++r) {
+            const std::uint8_t* w = (r < channels ? q_weight.bits
+                     : r < 2 * channels ? k_weight.bits : v_weight.bits)
+                + static_cast<std::size_t>(r % channels) * channels;
+            float acc = 0.0f;
+            for (int k = 0; k < channels; ++k) {
+                acc += row[k] * e4m3_from_bits(w[k]);
             }
-            const float inv_q = inverse_norm_head(projected_q);
-            const float inv_k = inverse_norm_head(projected_k);
-            const float temp = vit_f16(temperature[h]);
-            for (int d = 0; d < kVitHeadDim; ++d) {
-                const float q = vit_f16(vit_f16(vit_f16(projected_q[d] * sqrt_head)
-                                                * inv_q) * temp);
-                const float k = vit_f16(vit_f16(projected_k[d] * inv_k));
-                dst[base + d] = e4m3(q);
-                dst[channels + base + d] = e4m3(k);
-                dst[2 * channels + base + d] = e4m3(projected_v[d]);
-            }
+            dst[r] = acc;
         }
     }
-    return Status::kOk;
+    return vit_qkv_post(out, tokens, channels, temperature, out);
 }
 
 // ---- attention ------------------------------------------------------------------------------------

@@ -50,6 +50,11 @@
 //     record and "skip_weight" — the site's presence selects the mixed path
 //     (the pinned's table-presence gating); the mixed path never fetches
 //     "weight". kVitProjection never takes the site.
+//   VitQKV: the e4m3 "q"/"k"/"v" + f32 "header" temperatures, OR the int4
+//     site ("vit_qkv" through the `int4` callback; one [3C, C] matrix, no
+//     permutation, non-half) with the shared "header" — the site's presence
+//     selects the mixed path and never fetches q/k/v. The kSplitQKVAttn
+//     attention site remains e4m3-only in this deliverable.
 //   SplitFfwd: the ffwd callback, which 0 = expand_in [512, 512], 1 =
 //   expand_hidden [2048, 64], 2 = contract [512, 256] (raw e4m3 codes).
 //   SplitFfwdProj/SplitProj/SplitProjPool: e4m3 "weight" [c_out, c_in] +
@@ -1721,6 +1726,62 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
     return status;
 }
 
+// The ViT QKV's mixed projection (the pinned `vit_matrix`): one int4 matrix
+// [3 * channels, channels] through the quantiser + accumulator, then
+// vit_qkv_post — the same post chain as the e4m3 path. The host's records:
+// the "vit_qkv" site and the f32 "header" temperatures (shared with the e4m3
+// path).
+inline Status eval_vit_qkv_int4(EvalContext& ctx, const LayerSpec& spec,
+                                const FeatureBatchView& x,
+                                const Int4Site& site, int channels,
+                                std::size_t tokens, RowBlocks& blocks) {
+    // The pinned vit_matrix is block 16 non-half with no permutation: a
+    // mis-delivered half-form or FFN-style record rejects rather than
+    // silently evaluating with the wrong quantiser.
+    if (site.matrix.rows != 3 * channels || site.matrix.cols != channels
+        || site.matrix.block < 1 || site.matrix.block > channels
+        || channels % site.matrix.block != 0 || site.perm != nullptr
+        || site.matrix.half) {
+        return Status::kInvalidValues;
+    }
+    const float* temperature = nullptr;
+    Status status = fetch_f32(ctx.weights, spec.block, spec.layer, "header",
+                              channels / kVitHeadDim, temperature);
+    if (status != Status::kOk) {
+        return status;
+    }
+    const std::size_t in_count = tokens
+        * static_cast<std::size_t>(channels);
+    const std::size_t out_count = tokens * 3u
+        * static_cast<std::size_t>(channels);
+    status = row_begin(ctx, spec, out_count, 0,
+                       in_count + in_count + out_count, blocks);
+    if (status != Status::kOk) {
+        return status;
+    }
+    float* in_tokens = blocks.work;
+    float* codes = in_tokens + in_count;
+    float* out_tokens = codes + in_count;
+    status = eval_planar_to_tokens(x, in_tokens, in_count);
+    if (status == Status::kOk) {
+        status = int4_quantise(site.matrix, in_tokens,
+                               static_cast<int>(tokens), codes);
+    }
+    if (status == Status::kOk) {
+        status = int4_accumulate(site.matrix, codes,
+                                 static_cast<int>(tokens), out_tokens);
+    }
+    if (status == Status::kOk) {
+        status = vit_qkv_post(out_tokens, static_cast<int>(tokens), channels,
+                              temperature, out_tokens);
+    }
+    if (status == Status::kOk) {
+        status = eval_tokens_to_planar(out_tokens, out_count, 3 * channels,
+                                       x.rows, x.cols, blocks.main, out_count);
+    }
+    return status;
+}
+
 inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                        const LayerCall& call, LayerValue& out) {
     if (call.x == nullptr || call.x->data == nullptr) {
@@ -1842,6 +1903,18 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             const int channels = spec.channels;
             if (x.channels != channels || channels % kVitHeadDim != 0) {
                 return Status::kInvalidDimensions;
+            }
+            // The int4 site's record presence selects the mixed path (the
+            // pinned's table-presence gating); it never fetches "q"/"k"/"v".
+            const Int4Site* qkv_site = nullptr;
+            if (ctx.weights->int4 != nullptr) {
+                qkv_site = ctx.weights->int4(ctx.weights->context, spec.block,
+                                             spec.layer, "vit_qkv");
+            }
+            if (qkv_site != nullptr) {
+                status = eval_vit_qkv_int4(ctx, spec, x, *qkv_site, channels,
+                                           tokens, blocks);
+                break;
             }
             const std::uint8_t* q_codes = nullptr;
             const std::uint8_t* k_codes = nullptr;

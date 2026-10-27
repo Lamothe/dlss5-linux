@@ -66,9 +66,19 @@ added to the int4 affine in one float32 operation (the pinned's
 `vit_residual_linear` (`e4m3(vit_f16(product + vit_f16(gain) * skip))`).
 The permutation check is a range check plus a sum/xor heuristic — strong but
 not a proof of completeness (memory safety holds regardless: every gather
-index is range-checked). Out of this slice: the `kVitFfnExpand` site (the
-pinned's side-stream expansion copy is a device-side quantised cache — an
-open integration boundary), the QKV sites ("vit_qkv"/"attention"), and the
+index is range-checked). The ViT QKV site ("vit_qkv") follows the same pattern: one `[3C, C]` matrix
+(the pinned `vit_matrix`) through the quantiser + accumulator, then the
+post chain now shared with the e4m3 path (`vit_qkv_post` in
+`native-vit.hpp`: the per-head binary16 projection round, the inverse norm,
+the temperature and the e4m3 stores — `vit_qkv` was refactored to use it
+byte-identically, verified by its unchanged 404-check suite). The site
+rejects half-form and permutation-style records (the pinned `vit_matrix` is
+block 16 non-half) rather than silently evaluating with the wrong quantiser;
+its presence gates out the e4m3 "q"/"k"/"v" fetches entirely. The record
+contract's `header` temperatures are shared by both paths. Out of scope:
+the `kVitFfnExpand` site (the pinned's side-stream expansion copy is a
+device-side quantised cache — an open integration boundary), the
+`kSplitQKVAttn` attention site (the pinned `attention_matrix`), and the
 SwinSite hard-swish/fold changes.
 
 ## Reference and provenance
@@ -108,7 +118,7 @@ mochizuki0323, whose licence text accompanies that project.
 
 `vr/tests/native-int4-test.cpp` (83 checks at -O2 and again at -O0 via
 `vr/test-native-int4.sh`) pins the path with hand-derived answers:
-`vr/tests/native-eval-int4-test.cpp` (36 checks at both levels via
+`vr/tests/native-eval-int4-test.cpp` (429 checks at both levels via
 `vr/test-native-eval-int4.sh`) pins the miring: the hand-derived two-token
 mixed contraction ([1, -22, 3, -32] through the permuted gather, the quantiser
 ties-to-even at 4.5, the dots, the f64 affines, the tail products and the
@@ -116,9 +126,19 @@ e4m3 residual stores), the gain hop with a non-zero skip ([3, -20, 5, -30]),
 the tail's solver-table NaN decode, the record-presence gating (null site =
 the e4m3 path; a `kVitProjection` row offered a site still runs e4m3), the
 site-validation rejections with sentinel-untouched outputs, determinism and
-zero-allocation accounting. Independent review re-derived the mixed answers
-independently (confirming them and the residual equivalence line-by-line)
-and raised seven findings, all fixed and reverified: the tail NaN-code
+zero-allocation accounting — including the hand-derived two-head QKV case
+(the delta input's all-ones Hadamard block, the codes 1/0, the products at
+rows 0/64, `sqrt_head = f16(sqrt(32)) = 5.65625` and the e4m3 store of that
+at 5.5, head 1's all-zero products through the floored inverse) and the
+half-form/permuted-record rejections. A second independent review verified
+the `vit_qkv` refactor's byte-equivalence line-by-line (row indexing,
+accumulation order, the moved binary16 round, the in-place aliasing safety),
+the scratch arithmetic and the gate ordering, and re-derived the QKV case —
+its findings (a wrong sqrt_head literal in the derivation comment, the
+record-contract gap for the QKV site, the silent half-form acceptance, the
+header-fetch-before-validation ordering and a header-comment drift) all
+fixed and reverified. The first review raised seven findings, all fixed and
+reverified: the tail NaN-code
 decode divergence from the pinned solver table, the affine+tail association
 (now the pinned's single f32 add), the perm-check comment overclaim (now
 documented as a memory-safe heuristic), the missing zero-allocation checks,

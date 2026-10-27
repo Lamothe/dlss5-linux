@@ -554,6 +554,109 @@ int main(void) {
         CHECK(out.main.data[1 * 2 + 0] == 4.0f);
     }
 
+    // ---- the mixed ViT QKV: hand-derived two-head case ----------------------
+    // channels = 64 (two heads of 32), block 16, aq (gain 1 -> 1/4 after the
+    // block factor, zero 8); q [192, 64] has q[0][0] = 1 and q[64][0] = 1 (the
+    // k block's first row), everything else 0; scale 1, constant 0; header
+    // (temperature) [1, 1]. Input [4, 0 * 63] per token.
+    //   block 0 = [4, 0 * 15] -> fwht all 4 -> codes 1 (rint(4 * 0.25 + 8)
+    //   = 9 - 8); the zero blocks give codes 0. Products: rows 0 and 64 =
+    //   1, the rest 0. Post chain head 0: pq = [1, 0 * 31], pk = [1, 0 * 31],
+    //   pv all 0; inv = 1, temp = 1, sqrt_head = f16(sqrt(32)) = 5.5 ->
+    //   q[0] = e4m3(5.5) = 5.5, k[0] = e4m3(1) = 1, v 0. Head 1's products
+    //   are all zero -> all outputs 0.
+    {
+        static float scratch[1 << 20];
+        static std::int8_t q[192 * 64] = {};
+        q[0 * 64 + 0] = 1;
+        q[64 * 64 + 0] = 1;
+        static float scale[192];
+        static float constant[192] = {};
+        static float aq[64 * 2];
+        for (int k = 0; k < 64; ++k) {
+            scale[k] = 1.0f;
+            scale[191 - k] = 1.0f;
+            aq[2 * k] = 1.0f;
+            aq[2 * k + 1] = 8.0f;
+        }
+        for (int k = 0; k < 192; ++k) {
+            scale[k] = 1.0f;
+        }
+        static int perm[4] = {1, 0, 3, 2};
+        static Int4Site site;
+        site.matrix = Int4MatrixView{q, scale, constant, aq, 192, 64, 16,
+                                     false};
+        site.perm = nullptr;
+        site.perm_count = 0;
+        static float header[2] = {1.0f, 1.0f};
+        const Record records[1] = {
+            {7, 1, "header", 0, 0, 2, -4, nullptr, header},
+        };
+        static Store store;
+        store.records = records;
+        store.record_count = 1;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.int4 = bind_int4;
+        g_int4_site = &site;
+        g_int4_name = "vit_qkv";
+        g_int4_block = 7;
+        g_int4_layer = 1;
+        EvalContext ctx;
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        static float x_data[64 * 2] = {};
+        x_data[0] = 4.0f;
+        x_data[1] = 4.0f;
+        FeatureBatchView x = make_view(x_data, 64, 2, 1);
+        LayerSpec spec = row(0, 7, 1, LayerKind::kVitQKV, 64, 192, 2, 1,
+                             64, 1);
+        LayerCall call;
+        call.x = &x;
+        LayerValue out;
+        const unsigned long long alloc_before = g_allocations.load();
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(g_allocations.load() == alloc_before);
+        // Row 0 (q) = 5.5, row 64 (k) = 1, everything else 0, per token.
+        for (int t = 0; t < 2; ++t) {
+            for (int r = 0; r < 192; ++r) {
+                const float want = r == 0 ? 5.5f : (r == 64 ? 1.0f : 0.0f);
+                CHECK(out.main.data[r * 2 + t] == want);
+            }
+        }
+        // The record-consumption pin: the run succeeded although the store
+        // holds no "q"/"k"/"v" records at all — the mixed path never fetched
+        // them (the e4m3 path would have rejected).
+        LayerValue out2;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2), Status::kOk);
+        CHECK(std::memcmp(out.main.data, out2.main.data,
+                          2 * 192 * sizeof(float)) == 0);
+
+        // Rejections: a wrong-shaped site and an FFN-style site (with a
+        // permutation) offered to the QKV name.
+        site.matrix.rows = 100;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.matrix.rows = 192;
+        site.perm = perm;
+        site.perm_count = 4;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.perm = nullptr;
+        site.perm_count = 0;
+        // A half-form record (the Swin sites' shape) rejects here too.
+        site.matrix.half = true;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2),
+                     Status::kInvalidValues);
+        site.matrix.half = false;
+        // A null site falls through to the e4m3 path (which rejects here for
+        // the absent "q" record — the eval suite covers the populated path).
+        g_int4_site = nullptr;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out2), Status::kNullPointer);
+    }
+
     std::printf("native-eval-int4: %lld checks passed\n", g_checks);
     return 0;
 }
