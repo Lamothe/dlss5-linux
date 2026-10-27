@@ -12,17 +12,31 @@ SRC="$ROOT/vr/tests/native-block-test.cpp"
 temp="$(mktemp -d)"
 trap 'rm -rf "$temp"' EXIT
 # -ffp-contract=off pins the documented arithmetic semantics for every stage build.
-run_build() {
-    local name="$1"; shift
-    "$CXX" "$@" -std=c++20 -Wall -Wextra -Werror -ffp-contract=off \
-        -I"$ROOT" "$SRC" -o "$temp/$name"
-    "$temp/$name"
-}
-run_build O2 -O2
-run_build O0 -O0
-if run_build asan -O1 -fsanitize=address,undefined -fno-omit-frame-pointer 2>"$temp/asan-build.log"; then
-    run_build asan -O1 -fsanitize=address,undefined -fno-omit-frame-pointer >/dev/null
-else
+COMMON=(-std=c++20 -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr")
+
+"${CXX}" "${COMMON[@]}" -O2 "$SRC" -o "$temp/test-o2"
+"$temp/test-o2"
+"${CXX}" "${COMMON[@]}" -O0 "$SRC" -o "$temp/test-o0"
+"$temp/test-o0"
+
+sanitised=0
+for flags in "-fsanitize=address,undefined" "-fsanitize=undefined"; do
+    if "${CXX}" "${COMMON[@]}" -O1 -g -fno-omit-frame-pointer $flags \
+            "$SRC" -o "$temp/test-sanitised" 2>"$temp/sanitised-build.log"; then
+        "$temp/test-sanitised"
+        sanitised=1
+        break
+    fi
+    # Only a missing sanitizer runtime is a skippable environment gap; any other build
+    # failure (compile error, -Werror diagnostic) is a real failure of the test build.
+    # Match GNU ld's full-path and -l forms plus lld's wording for the missing runtime.
+    if ! grep -Eq "cannot find .*lib(asan|ubsan)|cannot find -l(asan|ubsan)|unable to find library -l(asan|ubsan)|libasan_preinit\.o" "$temp/sanitised-build.log"; then
+        echo "error: sanitised build failed for a reason other than a missing sanitizer runtime:" >&2
+        cat "$temp/sanitised-build.log" >&2
+        exit 1
+    fi
+done
+if [[ "$sanitised" -eq 0 ]]; then
     echo "note: sanitised build skipped; the toolchain cannot link a sanitizer runtime:" >&2
-    sed -n '1,4p' "$temp/asan-build.log" >&2
+    tail -n 2 "$temp/sanitised-build.log" >&2
 fi

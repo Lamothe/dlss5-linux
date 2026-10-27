@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# CPU-only typed native network graph-plan regression (the layer table,
-# extent walk, frame padding and skip wiring of the "ht" and "small"
-# networks, with hand-derived known answers, whole-plan contract sweeps,
-# sentinel rejection classes and zero-allocation accounting).
+# CPU-only typed native network graph plan regression (layer table, extent
+# walk, padding, grid/shift, skip wiring), with hand-derived known answers,
+# rejection classes and zero-allocation accounting.
 # Strict builds plus a sanitised build when the toolchain can link a sanitizer
 # runtime. No GPU, headset, proprietary payload or Python required.
 set -euo pipefail
