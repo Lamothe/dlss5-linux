@@ -1018,6 +1018,274 @@ int main(void) {
         g_swin_site = nullptr;
     }
 
+    // ---- the expand side-stream + the stash producers/consumers -------------
+    // The expand's mixed path: ex [2, 2] q = [[2, -1], [1, 3]] block 1
+    // aq (1, 8) -> codes = v exactly; stream stash [1, 2] = [1, 2] ->
+    // permuted dots [0, 7]; perm [1, 0] scatters them: preactivation
+    // [7, 0]. ffn_activation(7) = 7 * (−0.055908203125·4·4 +
+    // 0.447265625·4 + 0.89453125) = 7 * 1.7890625 = 12.5234375 (clamped at
+    // 4); ffn_activation(0) = 0. Stores [e4m3(f16(12.5234375)), 0] =
+    // [13, 0]; the hidden stash keeps [12.5234375, 0] UNROUNDED (the
+    // pinned's contract input).
+    {
+        static std::int8_t ex_q[2 * 2] = {2, -1, 1, 3};
+        static float ex_scale[2] = {1.0f, 1.0f};
+        static float ex_constant[2] = {};
+        static float ex_aq[2 * 2] = {1.0f, 8.0f, 1.0f, 8.0f};
+        static int perm[2] = {1, 0};
+        static Int4Site site;
+        site.matrix = Int4MatrixView{nullptr, nullptr, nullptr, nullptr, 0,
+                                     0, 1, true};
+        site.perm = perm;
+        site.perm_count = 2;
+        site.ex = Int4MatrixView{ex_q, ex_scale, ex_constant, ex_aq, 2, 2,
+                                1, false};   // the pinned's ViT ex is non-half
+        site.has_ex = true;
+        static float stream[1 * 2] = {1.0f, 2.0f};
+        static float x_data[2 * 1 * 1] = {};
+        static float hidden_stash[1 * 2];
+        FeatureBatchView x = make_view(x_data, 2, 1, 1);
+        LayerSpec spec = row(0, 5, 0, LayerKind::kVitFfnExpand, 2, 2, 1, 1,
+                             2, 0);
+        LayerCall call;
+        call.x = &x;
+        call.stash.stream = stream;
+        LayerValue out;
+        out.stash.hidden = hidden_stash;
+        static float scratch[1 << 16];
+        static Store store;
+        store.serve_any = true;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.int4 = bind_int4;
+        g_int4_site = &site;
+        g_int4_name = "vit_ffn";
+        g_int4_block = 5;
+        g_int4_layer = 0;
+        EvalContext ctx;
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        const unsigned long long alloc_before = g_allocations.load();
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(g_allocations.load() == alloc_before);
+        CHECK(out.main.data[0] == 13.0f);   // e4m3 step 1.0 at [8, 16)
+        CHECK(out.main.data[1] == 0.0f);
+        CHECK(hidden_stash[0] == 12.5234375f);
+        CHECK(hidden_stash[1] == 0.0f);
+        // Determinism.
+        static float copy[2];
+        std::memcpy(copy, out.main.data, sizeof(copy));
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(std::memcmp(copy, out.main.data, sizeof(copy)) == 0);
+        // Without the stream stash the row falls back to the e4m3 matmul
+        // over the layer input (all zeros here) -> the outputs differ.
+        call.stash.stream = nullptr;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(out.main.data[0] == 0.0f && out.main.data[1] == 0.0f);
+        call.stash.stream = stream;
+        // A corrupt permutation rejects before any write.
+        static float sentinel[2] = {-777.0f, -777.0f};
+        LayerValue bad;
+        bad.stash.hidden = sentinel;
+        static int bad_perm[2] = {5, 0};
+        site.perm = bad_perm;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, bad),
+                     Status::kInvalidValues);
+        CHECK(sentinel[0] == -777.0f && sentinel[1] == -777.0f);
+        site.perm = perm;
+        g_int4_site = nullptr;
+    }
+
+    // ---- the contract row writes the c stash ---------------------------------
+    // The pinned `value = f16(product + gain * skip)` is the stash; the
+    // store is its e4m3. A hand-derived case: product [3] + gain 1 * skip
+    // [0.25] -> f16(3.25) = 3.25 stashed, e4m3(3.25) = 3.25 stored (both
+    // fixed points — a 3.3 case below pins the split).
+    {
+        static std::int8_t q[2 * 2] = {};
+        static float scale[2] = {};
+        static float constant[2] = {};
+        static float aq[2 * 2] = {};
+        static int perm[3] = {2, 0, 1};
+        static Int4Site site;
+        site.matrix = Int4MatrixView{q, scale, constant, aq, 2, 2, 1, true};
+        site.perm = perm;
+        site.perm_count = 3;
+        static float gain_record[2] = {1.0f, 1.0f};
+        static std::uint8_t tail_codes[2] = {0, 0};
+        const Record records[2] = {
+            {5, 1, "skip_weight", 0, 0, 2, -3, nullptr, gain_record},
+            {5, 1, "tail", 2, 1, 0, -2, tail_codes, nullptr},
+        };
+        static Store store;
+        store.records = records;
+        store.record_count = 2;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.int4 = bind_int4;
+        g_int4_site = &site;
+        g_int4_name = "vit_ffn";
+        g_int4_block = 5;
+        g_int4_layer = 1;
+        EvalContext ctx;
+        static float scratch[1 << 16];
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        static float x_data[3 * 1 * 1] = {3.0f, -3.3f, 0.0f};
+        static float skip_data[2 * 1 * 1] = {0.25f, 0.0f};
+        static float stash_c[2];
+        FeatureBatchView x = make_view(x_data, 3, 1, 1);
+        FeatureBatchView skip = make_view(skip_data, 2, 1, 1);
+        LayerSpec spec = row(0, 5, 1, LayerKind::kVitFfnContract, 3, 2, 1,
+                             1, 3, 0);
+        LayerCall call;
+        call.x = &x;
+        call.aux = &skip;
+        LayerValue out;
+        out.stash.c = stash_c;
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        // The int4 channels (k4 = 2 of c_in = 3, gathered through perm)
+        // give a zero product (q = 0, scale = 0, constant = 0) and the
+        // single tail channel's code is 0, so product = 0 for both outputs:
+        // value = f16(0 + 1 * 0.25) = 0.25 and f16(0 + 0) = 0.
+        CHECK(stash_c[0] == 0.25f);
+        CHECK(stash_c[1] == 0.0f);
+        CHECK(out.main.data[0] == 0.25f);
+        CHECK(out.main.data[1] == 0.0f);
+        // The 3.3 token's e4m3 split: the product is 0 there too, so pin the
+        // split directly through the residual helper instead.
+        static float product[1] = {3.3f};
+        static float skip_row[1] = {0.0f};
+        static float gain_row[1] = {1.0f};
+        static float out_row[1];
+        static float stash_row[1];
+        CHECK_STATUS(eval_detail::vit_residual_mixed(product, skip_row, 1, 1, gain_row,
+                                        out_row, stash_row), Status::kOk);
+        CHECK(stash_row[0] == f16(3.3f));
+        CHECK(out_row[0] == e4m3(f16(3.3f)));
+        CHECK(stash_row[0] != out_row[0]);   // the stash keeps the f16 hop
+        g_int4_site = nullptr;
+    }
+
+    // ---- the side-channel writers and the QKV read ---------------------------
+    // The QKV's quantiser reads the ("c", block) stash: a stash differing
+    // from the stored map must change the projection (the codes differ).
+    {
+        static std::int8_t q[384 * 128] = {};
+        static float scale[384] = {};
+        static float constant[384] = {};
+        static float aq[128 * 2] = {};
+        for (int k = 0; k < 128; ++k) {
+            q[256 * 128 + k] = 1;   // value row 0: the discriminating row
+            aq[2 * k] = 1.0f;
+            aq[2 * k + 1] = 8.0f;        // codes = v exactly
+        }
+        scale[256] = 1.0f;               // value row 0 carries the sum
+        static Int4Site site;
+        site.matrix = Int4MatrixView{q, scale, constant, aq, 384, 128, 1,
+                                     false};   // the pinned's vit QKV is non-half
+        site.perm = nullptr;
+        site.perm_count = 0;
+        static float header[4] = {};
+        const Record records[1] = {
+            {7, 2, "header", 0, 0, 4, -4, nullptr, header},
+        };
+        static Store store;
+        store.records = records;
+        store.record_count = 1;
+        EvalWeights weights;
+        bind_store(weights, store);
+        weights.int4 = bind_int4;
+        g_int4_site = &site;
+        g_int4_name = "vit_qkv";
+        g_int4_block = 7;
+        g_int4_layer = 2;
+        EvalContext ctx;
+        static float scratch[1 << 18];
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        static float x_data[128 * 1 * 1] = {};
+        x_data[0] = 1.0f;
+        static float stash_c[128] = {};
+        stash_c[1] = 2.0f;
+        FeatureBatchView x = make_view(x_data, 128, 1, 1);
+        LayerSpec spec = row(0, 7, 2, LayerKind::kVitQKV, 128, 128, 1, 1,
+                            128, 0);
+        LayerCall call;
+        call.x = &x;
+        call.stash.c = stash_c;
+        LayerValue out;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        static float with_stash[384];
+        std::memcpy(with_stash, out.main.data, sizeof(with_stash));
+        call.stash.c = nullptr;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(std::memcmp(with_stash, out.main.data, sizeof(with_stash)) != 0);
+        g_int4_site = nullptr;
+    }
+    // The projection row writes the ("stream", block + 1) stash when the
+    // next block has an expansion, and the split projection writes the
+    // ("attn", block) stash: sentinel-versus-written checks (the exact
+    // values are the kernels' products, pinned in the family suites).
+    {
+        static std::uint8_t codes[2 * 2] = {};
+        static float gain[2] = {1.0f, 1.0f};
+        const Record records[2] = {
+            {6, 4, "weight", 2, 2, 0, -2, codes, nullptr},
+            {6, 4, "skip_weight", 0, 0, 2, -3, nullptr, gain},
+        };
+        static Store store;
+        store.records = records;
+        store.record_count = 2;
+        EvalWeights weights;
+        bind_store(weights, store);
+        // The next-block probe (contract_stash_dest) needs the int4
+        // callback reporting block 7's expansion.
+        static std::int8_t q[2] = {};
+        static float scale[2] = {};
+        static float constant[2] = {};
+        static float aq[2] = {};
+        static Int4Site ex_site;
+        ex_site.matrix = Int4MatrixView{q, scale, constant, aq, 2, 2, 1,
+                                        true};
+        ex_site.has_ex = true;
+        weights.int4 = bind_int4;
+        g_int4_site = &ex_site;
+        g_int4_name = "vit_ffn";
+        g_int4_block = 7;
+        g_int4_layer = 0;
+        EvalContext ctx;
+        static float scratch[1 << 18];
+        ctx.weights = &weights;
+        ctx.scratch = scratch;
+        ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
+        static float x_data[2 * 1 * 1] = {1.0f, 1.0f};
+        static float skip_data[2 * 1 * 1] = {1.0f, 1.0f};
+        static float stream_out[2];
+        FeatureBatchView x = make_view(x_data, 2, 1, 1);
+        FeatureBatchView skip = make_view(skip_data, 2, 1, 1);
+        LayerSpec spec = row(0, 6, 4, LayerKind::kVitProjection, 2, 2, 1,
+                            1, 2, 0);
+        LayerCall call;
+        call.x = &x;
+        call.aux = &skip;
+        LayerValue out;
+        out.stash.stream = stream_out;
+        CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
+        CHECK(stream_out[0] != -777.0f);
+        g_int4_site = nullptr;
+    }
+
     std::printf("native-eval-int4: %lld checks passed\n", g_checks);
     return 0;
 }

@@ -70,10 +70,38 @@ namespace dlss5_nr {
 // tensor (the unchanged block input), so it aliases the previous row's main;
 // every other aside is a distinct tensor. Single-output layers leave `aside`
 // untouched and `has_aside` false.
+// The binary16-side stash (the pinned `int4.side`): named producer->consumer
+// copies of a tensor at its pre-store precision, cleared per frame (the
+// pinned `side.clear()`). The keys are the pinned's: "hidden" (the vit ffn
+// expand's UNROUNDED activation -> its contraction's int4 channels), "c" (a
+// vit ffn contract's binary16 value -> this block's QKV), "stream" (that
+// same value -> the NEXT block's expansion), "attn" (the split projection's
+// value -> its attention's QKV). Every buffer holds [rows * cols, channels]
+// token-major floats; the writers' exact contents are in the producers'
+// contracts below.
+struct StashView {
+    const float* hidden = nullptr;
+    const float* c = nullptr;
+    const float* stream = nullptr;
+    const float* attn = nullptr;
+};
+
+// The caller-owned stash output buffers (the same keys); a row writes only
+// its own key(s) per its kind's contract. Null buffers keep no stash (the
+// consumer falls back to the run's stored map — the documented seam
+// divergence from the pinned's side channel).
+struct StashBuffers {
+    float* hidden = nullptr;
+    float* c = nullptr;
+    float* stream = nullptr;
+    float* attn = nullptr;
+};
+
 struct LayerValue {
     FeatureBatchView main;
     FeatureBatchView aside;
     bool has_aside = false;
+    StashBuffers stash;
 };
 
 // ---- the call contract (what one layer reads) ----------------------------------------------------
@@ -87,6 +115,7 @@ struct LayerCall {
     const FeatureBatchView* x = nullptr;
     const FeatureBatchView* aux = nullptr;
     const FeatureBatchView* image = nullptr;
+    StashView stash;
 };
 
 // One layer's kernel entry. Writes `out` per the kind's contract (see
@@ -167,6 +196,9 @@ struct NetworkRun {
     LayerFn layer = nullptr;
     ReleaseFn release = nullptr;
     void* context = nullptr;
+    // The caller-owned side-channel buffers (one per key, sized for the
+    // largest [rows * cols, channels] map; see StashBuffers).
+    StashBuffers stash;
 };
 
 // Run the `count` plan rows in order. Upfront validation (nulls, row indices,
@@ -236,6 +268,13 @@ inline Status network_run(const LayerSpec* specs, int count,
         const int source = run.skip_sources[i];
         const LayerValue* skip = source >= 0 ? &run.outputs[source] : nullptr;
         LayerCall call;
+        // The binary16 side channel: every row may read the caller's
+        // per-key stash buffers (the pinned's `int4.side` dict; each key's
+        // write is consumed before the next write in the plan order).
+        call.stash.hidden = run.stash.hidden;
+        call.stash.c = run.stash.c;
+        call.stash.stream = run.stash.stream;
+        call.stash.attn = run.stash.attn;
         switch (spec.kind) {
             case LayerKind::kPreBlock:
                 call.image = run.image;
@@ -305,6 +344,7 @@ inline Status network_run(const LayerSpec* specs, int count,
         }
         LayerValue& out = run.outputs[i];
         out = LayerValue();
+        out.stash = run.stash;
         const Status status = run.layer(run.context, spec, call, out);
         if (status != Status::kOk) {
             return status;

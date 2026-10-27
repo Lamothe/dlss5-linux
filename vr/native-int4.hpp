@@ -81,6 +81,11 @@ struct Int4Site {
     Int4MatrixView matrix;
     const int* perm = nullptr;
     int perm_count = 0;
+    // The vit FFN's expansion matrix (the pinned `VitFfn.expand`, block 16
+    // with the same permutation), present when the tables have it; the
+    // expansion reads the ("stream", block) side stash through it.
+    Int4MatrixView ex;
+    bool has_ex = false;
 };
 
 // The bounds keep every index and accumulation in range: cols <= 2^14 makes

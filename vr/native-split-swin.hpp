@@ -347,7 +347,7 @@ inline Status split_projection_value(const float* x, const float* residual,
 // is the block input. `x` is the feed-forward output, `block_input` the
 // unchanged layer input the feed-forward returned alongside it.
 inline Status split_ffwd_proj(const float* x, const float* block_input, int rows,
-                              int cols, const SplitProjectionWeight& w, float* out) {
+                              int cols, const SplitProjectionWeight& w, float* out, float* side_out = nullptr) {
     if (block_input == nullptr || out == nullptr) {
         return Status::kNullPointer;
     }
@@ -372,6 +372,11 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
         }
         float* dst = out + t * c_out;
         for (int j = 0; j < c_out; ++j) {
+            if (side_out != nullptr) {
+                // The pinned `int4.side[("attn", block)] = value`: the
+                // projection's value at its pre-store precision.
+                side_out[t * c_out + j] = value[j];
+            }
             dst[j] = e4m3(value[j]);
         }
     }

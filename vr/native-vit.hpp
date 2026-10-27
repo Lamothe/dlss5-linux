@@ -352,8 +352,13 @@ inline Status vit_attention(const float* qkv, int tokens, int channels,
 
 // VitFfnExpand: 1024 -> 4096 with the cubic activation, no residual.
 // out = e4m3(f16(activation(matmul(in)))).
+// `stash`, when non-null, receives the UNROUNDED activation (the pinned
+// `int4.side[("hidden", block)]`: "the activation stays unrounded for the
+// contraction's int4 channels, which quantise it themselves") alongside the
+// `e4m3(f16(...))` store in `out`.
 inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
-                             const E4m3Matrix& weight, float* out) {
+                             const E4m3Matrix& weight, float* out,
+                             float* stash = nullptr) {
     if (in == nullptr || weight.bits == nullptr || out == nullptr) {
         return Status::kNullPointer;
     }
@@ -371,7 +376,11 @@ inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
             for (int k = 0; k < c_in; ++k) {
                 acc += row[k] * e4m3_from_bits(w[k]);
             }
-            dst[n] = e4m3(vit_f16(ffn_activation(acc)));
+            const float hidden = ffn_activation(acc);
+            if (stash != nullptr) {
+                stash[static_cast<std::size_t>(t) * c_out + n] = hidden;
+            }
+            dst[n] = e4m3(vit_f16(hidden));
         }
     }
     return Status::kOk;
@@ -383,7 +392,7 @@ inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
 inline Status vit_residual_linear(const float* in, const float* skip, int tokens,
                                   int c_in, int c_out,
                                   const E4m3Matrix& weight, const float* gain,
-                                  float* out) {
+                                  float* out, float* stash = nullptr) {
     if (in == nullptr || skip == nullptr || weight.bits == nullptr
         || gain == nullptr || out == nullptr) {
         return Status::kNullPointer;
@@ -403,7 +412,13 @@ inline Status vit_residual_linear(const float* in, const float* skip, int tokens
             for (int k = 0; k < c_in; ++k) {
                 acc += row[k] * e4m3_from_bits(w[k]);
             }
-            dst[n] = e4m3(vit_f16(acc + vit_f16(gain[n]) * skip_row[n]));
+            // The binary16 value is the pinned's stash (`int4.side`); the
+            // store rounds it to e4m3.
+            const float value = vit_f16(acc + vit_f16(gain[n]) * skip_row[n]);
+            if (stash != nullptr) {
+                stash[static_cast<std::size_t>(t) * c_out + n] = value;
+            }
+            dst[n] = e4m3(value);
         }
     }
     return Status::kOk;

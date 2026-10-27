@@ -1414,7 +1414,8 @@ inline Status eval_split_projection(EvalContext& ctx, const LayerSpec& spec,
                                                       spec.c_in}, gain};
         status = spec.kind == LayerKind::kSplitFfwdProj
             ? split_ffwd_proj(in_tokens, residual_tokens, x.rows, x.cols, weight,
-                              out_tokens)
+                              out_tokens,
+                              out.stash.attn)   // the pinned's ("attn", block)
             : split_proj(in_tokens, residual_tokens, x.rows, x.cols, weight,
                          out_tokens);
     }
@@ -1526,7 +1527,12 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
         // projection the padded tokens take. Note the seam-wide divergence
         // (record contract above): the run's map is the producer's e4m3
         // store, where the pinned quantises the producer's f16 value.
-        status = int4_quantise(site->matrix, in_tokens,
+        // The quantiser reads the projection's stash when the run provides
+        // it (the pinned `int4.side[("attn", block)]`); the stored-map
+        // fallback is the documented seam divergence.
+        const float* attn_src = call.stash.attn != nullptr
+            ? call.stash.attn : in_tokens;
+        status = int4_quantise(site->matrix, attn_src,
                                static_cast<int>(tokens), codes);
         if (status == Status::kOk) {
             status = int4_accumulate(site->matrix, codes,
@@ -1705,7 +1711,7 @@ inline Status eval_split_final_head(EvalContext& ctx, const LayerSpec& spec,
 // vit_residual_linear's exactly.
 inline Status vit_residual_mixed(const float* product, const float* skip,
                                  int tokens, int c_out, const float* gain,
-                                 float* out) {
+                                 float* out, float* stash = nullptr) {
     if (product == nullptr || skip == nullptr || gain == nullptr
         || out == nullptr) {
         return Status::kNullPointer;
@@ -1718,10 +1724,39 @@ inline Status vit_residual_mixed(const float* product, const float* skip,
         const float* skip_row = skip + static_cast<std::size_t>(t) * c_out;
         float* dst = out + static_cast<std::size_t>(t) * c_out;
         for (int n = 0; n < c_out; ++n) {
-            dst[n] = e4m3(vit_f16(row[n] + vit_f16(gain[n]) * skip_row[n]));
+            // The binary16 value is the pinned's stash (`int4.side`); the
+            // store rounds it to e4m3.
+            const float value = vit_f16(row[n] + vit_f16(gain[n]) * skip_row[n]);
+            if (stash != nullptr) {
+                stash[static_cast<std::size_t>(t) * c_out + n] = value;
+            }
+            dst[n] = e4m3(value);
         }
     }
     return Status::kOk;
+}
+
+// The contract rows' stash destination (the pinned's `self.stash`): ("c",
+// block) for layer 1 (this block's QKV), else ("stream", block + 1) when the
+// next block has an expansion table. The writer value is the row's binary16
+// `value` (product + gain * skip before the e4m3 store).
+inline float* contract_stash_dest(const EvalWeights* weights, int block,
+                                  int layer, StashBuffers& stash) {
+    // The pinned sets `self.stash` only when `int4.active()`.
+    if (weights == nullptr || weights->int4 == nullptr) {
+        return nullptr;
+    }
+    if (layer == 1) {
+        return stash.c;
+    }
+    {
+        const Int4Site* next = weights->int4(weights->context, block + 1, 0,
+                                             "vit_ffn");
+        if (next != nullptr && next->has_ex) {
+            return stash.stream;
+        }
+    }
+    return nullptr;
 }
 
 // The ViT feed-forward's mixed contraction (VitFfn.contraction): the int4
@@ -1733,7 +1768,9 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
                                  const FeatureBatchView& x,
                                  const FeatureBatchView& skip,
                                  const Int4Site& site, std::size_t tokens,
-                                 RowBlocks& blocks) {
+                                 RowBlocks& blocks,
+                                 const float* hidden_stash = nullptr,
+                                 StashBuffers* stash_out = nullptr) {
     const int c_in = spec.c_in;
     const int c_out = spec.c_out;
     const int k4 = site.matrix.cols;
@@ -1815,11 +1852,15 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
     for (std::size_t i = 0; i < in_count; ++i) {
         hidden_e4m3[i] = e4m3(in_tokens[i]);
     }
+    // The int4 channels quantise the producer's stash (the pinned's
+    // unrounded activation) when the run provides it; the stored-map copy is
+    // the documented fallback (the seam divergence).
+    const float* int4_src = hidden_stash != nullptr ? hidden_stash : in_tokens;
     for (std::size_t t = 0; t < tokens; ++t) {
         for (int j = 0; j < k4; ++j) {
             gathered[t * static_cast<std::size_t>(k4) + j] =
-                in_tokens[t * static_cast<std::size_t>(c_in)
-                          + static_cast<std::size_t>(site.perm[j])];
+                int4_src[t * static_cast<std::size_t>(c_in)
+                         + static_cast<std::size_t>(site.perm[j])];
         }
     }
     // The tail is exact e4m3 values delivered as raw codes. The pinned's
@@ -1841,7 +1882,12 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
     }
     status = vit_residual_mixed(product, skip_tokens,
                                 static_cast<int>(tokens), c_out, gain,
-                                out_tokens);
+                                out_tokens, stash_out != nullptr
+                                    ? contract_stash_dest(ctx.weights,
+                                                          spec.block,
+                                                          spec.layer,
+                                                          *stash_out)
+                                    : nullptr);
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out,
                                        x.rows, x.cols, blocks.main, out_count);
@@ -1857,7 +1903,8 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
 inline Status eval_vit_qkv_int4(EvalContext& ctx, const LayerSpec& spec,
                                 const FeatureBatchView& x,
                                 const Int4Site& site, int channels,
-                                std::size_t tokens, RowBlocks& blocks) {
+                                std::size_t tokens, RowBlocks& blocks,
+                                const float* c_stash = nullptr) {
     // The pinned vit_matrix is block 16 non-half with no permutation: a
     // mis-delivered half-form or FFN-style record rejects rather than
     // silently evaluating with the wrong quantiser.
@@ -1887,7 +1934,11 @@ inline Status eval_vit_qkv_int4(EvalContext& ctx, const LayerSpec& spec,
     float* out_tokens = codes + in_count;
     status = eval_planar_to_tokens(x, in_tokens, in_count);
     if (status == Status::kOk) {
-        status = int4_quantise(site.matrix, in_tokens,
+        // The quantiser reads the contract's stash (the pinned
+        // `int4.side[("c", block)]`) when the run provides it; the
+        // stored-map fallback is the documented seam divergence.
+        const float* qkv_src = c_stash != nullptr ? c_stash : in_tokens;
+        status = int4_quantise(site.matrix, qkv_src,
                                static_cast<int>(tokens), codes);
     }
     if (status == Status::kOk) {
@@ -1923,6 +1974,111 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             if (x.channels != spec.c_in) {
                 return Status::kInvalidDimensions;
             }
+            // The int4 expansion (the pinned `expand_preactivation`): with
+            // the site's ex matrix AND the ("stream", block) stash present
+            // the expansion quantises the STASH (never the layer input) and
+            // scatters the permuted rows into the original channel order;
+            // otherwise the e4m3 matmul reads the layer input (the pinned's
+            // `exact(tokens)`).
+            const Int4Site* site = nullptr;
+            if (ctx.weights->int4 != nullptr) {
+                site = ctx.weights->int4(ctx.weights->context, spec.block,
+                                         spec.layer, "vit_ffn");
+            }
+            if (site != nullptr && site->has_ex
+                && call.stash.stream != nullptr) {
+                if (site->perm == nullptr || site->perm_count != spec.c_out
+                    || site->ex.rows != spec.c_out
+                    || site->ex.cols != spec.c_in
+                    || site->ex.block < 1
+                    || site->ex.block > site->ex.cols
+                    || site->ex.cols % site->ex.block != 0
+                    || site->ex.q == nullptr || site->ex.scale == nullptr
+                    || site->ex.constant == nullptr
+                    || site->ex.aq == nullptr) {
+                    return Status::kInvalidValues;
+                }
+                if (site->ex.half) {
+                    // The pinned builds the ViT sites non-half.
+                    return Status::kInvalidValues;
+                }
+                // The permutation is validated before any allocation (the
+                // range check plus the contraction's sum/xor completeness
+                // heuristic — a corrupt record may mis-evaluate but cannot
+                // write out of bounds; out_tokens is zeroed so a duplicate
+                // cannot leak indeterminate arena values).
+                {
+                    long long sum = 0;
+                    long long xors = 0;
+                    for (int i = 0; i < spec.c_out; ++i) {
+                        const int p = site->perm[i];
+                        if (p < 0 || p >= spec.c_out) {
+                            return Status::kInvalidValues;
+                        }
+                        sum += p;
+                        xors ^= p;
+                    }
+                    long long want_sum = 0;
+                    long long want_xor = 0;
+                    for (int i = 0; i < spec.c_out; ++i) {
+                        want_sum += i;
+                        want_xor ^= i;
+                    }
+                    if (sum != want_sum || xors != want_xor) {
+                        return Status::kInvalidValues;
+                    }
+                }
+                const std::size_t in_count = tokens
+                    * static_cast<std::size_t>(spec.c_in);
+                const std::size_t out_count = tokens
+                    * static_cast<std::size_t>(spec.c_out);
+                status = row_begin(ctx, spec, out_count, 0,
+                                   in_count + out_count + out_count, blocks);
+                if (status != Status::kOk) {
+                    return status;
+                }
+                float* permuted = blocks.work;
+                float* out_tokens = permuted + out_count;
+                float* codes = out_tokens + out_count;
+                for (std::size_t i = 0; i < out_count; ++i) {
+                    out_tokens[i] = 0.0f;
+                }
+                status = int4_quantise(site->ex, call.stash.stream,
+                                       static_cast<int>(tokens), codes);
+                if (status == Status::kOk) {
+                    status = int4_accumulate(site->ex, codes,
+                                             static_cast<int>(tokens),
+                                             permuted);
+                }
+                if (status == Status::kOk) {
+                    for (std::size_t t = 0; t < tokens; ++t) {
+                        for (int n = 0; n < spec.c_out; ++n) {
+                            // `out[:, perm] = permuted` (the pinned).
+                            const float hidden = ffn_activation(
+                                permuted[t * static_cast<std::size_t>(
+                                                spec.c_out)
+                                        + static_cast<std::size_t>(n)]);
+                            const int target = site->perm[n];
+                            if (out.stash.hidden != nullptr) {
+                                out.stash.hidden[t * static_cast<std::size_t>(
+                                                       spec.c_out)
+                                                 + static_cast<std::size_t>(
+                                                       target)] = hidden;
+                            }
+                            out_tokens[t * static_cast<std::size_t>(
+                                               spec.c_out)
+                                       + static_cast<std::size_t>(target)]
+                                = e4m3(vit_f16(hidden));
+                        }
+                    }
+                }
+                if (status == Status::kOk) {
+                    status = eval_tokens_to_planar(out_tokens, out_count,
+                                                   spec.c_out, x.rows, x.cols,
+                                                   blocks.main, out_count);
+                }
+                break;
+            }
             const std::uint8_t* codes = nullptr;
             status = fetch_e4m3(ctx.weights, spec.block, spec.layer, "weight",
                                 spec.c_out, spec.c_in, codes);
@@ -1945,7 +2101,7 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                 status = vit_ffn_expand(in_tokens, static_cast<int>(tokens),
                                         spec.c_in, spec.c_out,
                                         E4m3Matrix{codes, spec.c_out, spec.c_in},
-                                        out_tokens);
+                                        out_tokens, out.stash.hidden);
             }
             if (status == Status::kOk) {
                 status = eval_tokens_to_planar(out_tokens, out_count,
@@ -1976,7 +2132,8 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             }
             if (site != nullptr) {
                 status = eval_vit_ffn_mixed(ctx, spec, x, skip, *site, tokens,
-                                            blocks);
+                                            blocks, call.stash.hidden,
+                                            &out.stash);
                 break;
             }
             const std::uint8_t* codes = nullptr;
@@ -2013,7 +2170,10 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                                              spec.c_out,
                                              E4m3Matrix{codes, spec.c_out,
                                                         spec.c_in},
-                                             gain, out_tokens);
+                                             gain, out_tokens,
+                                             contract_stash_dest(
+                                                 ctx.weights, spec.block,
+                                                 spec.layer, out.stash));
             }
             if (status == Status::kOk) {
                 status = eval_tokens_to_planar(out_tokens, out_count,
@@ -2036,7 +2196,7 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             }
             if (qkv_site != nullptr) {
                 status = eval_vit_qkv_int4(ctx, spec, x, *qkv_site, channels,
-                                           tokens, blocks);
+                                           tokens, blocks, call.stash.c);
                 break;
             }
             const std::uint8_t* q_codes = nullptr;

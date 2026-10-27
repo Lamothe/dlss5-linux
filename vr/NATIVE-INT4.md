@@ -232,3 +232,21 @@ never corresponds to NVIDIA's or AMD's implementation. No proprietary
 weights, recovery tables, captures, binaries or proprietary runtime are used
 or redistributed; the tree performs no runtime or capture probes. Synthetic
 known answers establish synthetic correctness only — never vendor parity.
+
+## The binary16 side channel (the pinned `int4.side`)
+
+The four producer->consumer stash pairs are bound: the expand's UNROUNDED
+activation ("hidden" -> its contraction's int4 channels), the contract/
+projection rows' binary16 `value` ("c" -> this block's QKV; "stream" ->
+the NEXT block's expansion), and the split projection's value ("attn" ->
+its attention's QKV). `StashView`/`StashBuffers` (native-network.hpp) carry
+the keys; `network_run` routes the caller's per-key buffers to every row
+(each key's write is consumed before the next write in the plan order).
+The expansion's mixed path reads ONLY the stream stash and scatters
+`out[:, perm] = permuted` (non-half ex). Independent review of this slice
+raised eleven findings, all fixed: three unwired pairs (the QKV read, the
+stream writer on the projection row, the attn writer), the run-loop wipe,
+an arena leak on the expand's perm rejection, the half-form acceptance and
+the perm completeness check, the stash gates, and comment drift. Tests:
+518 checks at both levels (the expand side-stream hand case, the contract
+stash literal, the QKV read/stream writer/attn writer discriminators).
