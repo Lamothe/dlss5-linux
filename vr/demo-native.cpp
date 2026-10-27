@@ -41,6 +41,7 @@ struct Options {
     unsigned seed = 20261028u;
     int frames = 4;
     int reset_at = 2;  // -1 = never; otherwise reset BEFORE this frame index
+    bool profile = false;
 };
 
 void usage() {
@@ -52,7 +53,8 @@ void usage() {
         "  --preset NAME      weight preset: seeded | zero\n"
         "  --seed N           preset seed (default: 20261028)\n"
         "  --frames N         frames to evaluate (default: 4)\n"
-        "  --reset-at K       temporal reset before frame K (default: 2; -1 = never)\n",
+        "  --reset-at K       temporal reset before frame K (default: 2; -1 = never)\n"
+        "  --profile          print the per-kind wall-time breakdown of the run\n",
         kFrameW, kFrameH);
 }
 
@@ -113,6 +115,45 @@ std::uint8_t* read_file(const char* path, std::size_t& length) {
     }
     length = read;
     return data;
+}
+
+// ---- the profiling seam ------------------------------------------------
+// Wraps dlss5_nr::eval_layer at the NetworkRun dispatch boundary and
+// accumulates per-kind wall time and row counts. Diagnostic only: the
+// wrapper forwards byte-exactly and adds no arithmetic.
+constexpr int kKindCount = 18;
+
+const char* kind_name(int kind) {
+    static const char* names[kKindCount] = {
+        "PreBlock",     "Swin1H",       "Swin2H",       "Swin4H",
+        "Swin8H",       "SplitFfwd",    "SplitFfwdProj", "SplitQKVAttn",
+        "SplitProj",    "SplitProjPool", "SplitFinalHead", "VitFfnExpand",
+        "VitFfnContract", "VitQKV",     "VitAttention",  "VitProjection",
+        "DecInputUpsample", "PostBlock"};
+    return kind >= 0 && kind < kKindCount ? names[kind] : "?";
+}
+
+struct ProfileStats {
+    double ms[kKindCount] = {};
+    long long rows[kKindCount] = {};
+};
+
+ProfileStats* g_profile = nullptr;
+
+dlss5_nr::Status profile_layer(void* context, const dlss5_nr::LayerSpec& spec,
+                               const dlss5_nr::LayerCall& call,
+                               dlss5_nr::LayerValue& out) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const dlss5_nr::Status st =
+        dlss5_nr::eval_layer(context, spec, call, out);
+    const auto t1 = std::chrono::steady_clock::now();
+    const int kind = static_cast<int>(spec.kind);
+    if (g_profile != nullptr && kind >= 0 && kind < kKindCount) {
+        g_profile->ms[kind] +=
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+        g_profile->rows[kind] += 1;
+    }
+    return st;
 }
 
 double frame_mean(const std::uint8_t* rgb, int width, int height) {
@@ -176,6 +217,8 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
+        } else if (std::strcmp(a, "--profile") == 0) {
+            opt.profile = true;
         } else if (std::strcmp(a, "--help") == 0) {
             usage();
             return 0;
@@ -333,7 +376,9 @@ int main(int argc, char** argv) {
     run.outputs = outputs;
     run.skip_sources = skip_scratch;
     run.last_uses = last_scratch;
-    run.layer = dlss5_nr::eval_layer;
+    static ProfileStats profile;
+    g_profile = opt.profile ? &profile : nullptr;
+    run.layer = opt.profile ? profile_layer : dlss5_nr::eval_layer;
     run.release = dlss5_nr::eval_release;
 
     double total_ms = 0.0;
@@ -516,6 +561,24 @@ int main(int argc, char** argv) {
         std::free(arena);
         std::free(image_storage);
         return 1;
+    }
+    if (opt.profile) {
+        double total = 0.0;
+        for (int k = 0; k < kKindCount; ++k) {
+            total += profile.ms[k];
+        }
+        std::printf("per-kind breakdown (all frames, %s):\n",
+                    opt.profile ? "timed at the dispatch seam" : "");
+        for (int k = 0; k < kKindCount; ++k) {
+            if (profile.rows[k] > 0) {
+                std::printf("  %-17s %4lld rows  %9.2f ms  %6.2f%%\n",
+                            kind_name(k), profile.rows[k], profile.ms[k],
+                            total > 0.0 ? 100.0 * profile.ms[k] / total
+                                        : 0.0);
+            }
+        }
+        std::printf("  %-17s %4d rows  %9.2f ms  %6.2f%%\n", "TOTAL",
+                    count * opt.frames, total, 100.0);
     }
     std::printf("artefacts:\n  %s\n  %s\n  %s\n", before_path.c_str(),
                 after_path.c_str(), contact_path.c_str());
