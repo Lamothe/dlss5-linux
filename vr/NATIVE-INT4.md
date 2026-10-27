@@ -48,6 +48,29 @@ vendor code and no vendor correspondence.
   `NR_HS_FOLD_BLOCKS` (absent or empty = fold everywhere, as the pinned
   parsing does; an unlisted block drops to 0.0 even for blocks 0/70).
 
+## Network miring (the mixed ViT feed-forward)
+
+The record boundary gains `Int4Site` (the decoded matrix plus the hidden
+permutation) and `EvalWeights.int4`, a named-site callback in the same style
+as the `ffwd` boundary. The eval dispatch's `kVitFfnContract` row takes the
+mixed path when the "vit_ffn" site record is present (the pinned's
+table-presence gating) and the e4m3 path otherwise; `kVitProjection` never
+takes the site. The mixed path implements `VitFfn.contraction`: the int4
+channels (`perm[:cols]`) from the unrounded activation through
+`int4_quantise` + `int4_accumulate`, the tail channels (`perm[cols:]`) from
+the e4m3-rounded copy through the "tail" record (e4m3 codes decoded with the
+SOLVER's table — the two NaN codes read as 0, not the matmul table's
+canonical NaN), the tail product accumulated left to right in float32 and
+added to the int4 affine in one float32 operation (the pinned's
+`total + tail_product`), then the residual arithmetic byte-identical to
+`vit_residual_linear` (`e4m3(vit_f16(product + vit_f16(gain) * skip))`).
+The permutation check is a range check plus a sum/xor heuristic — strong but
+not a proof of completeness (memory safety holds regardless: every gather
+index is range-checked). Out of this slice: the `kVitFfnExpand` site (the
+pinned's side-stream expansion copy is a device-side quantised cache — an
+open integration boundary), the QKV sites ("vit_qkv"/"attention"), and the
+SwinSite hard-swish/fold changes.
+
 ## Reference and provenance
 
 Semantics re-derived from the MIT reference `mauri870/dlssnr-pytorch`
@@ -84,7 +107,30 @@ mochizuki0323, whose licence text accompanies that project.
 ## Known-answer test
 
 `vr/tests/native-int4-test.cpp` (83 checks at -O2 and again at -O0 via
-`vr/test-native-int4.sh`) pins the path with hand-derived answers: the
+`vr/test-native-int4.sh`) pins the path with hand-derived answers:
+`vr/tests/native-eval-int4-test.cpp` (36 checks at both levels via
+`vr/test-native-eval-int4.sh`) pins the miring: the hand-derived two-token
+mixed contraction ([1, -22, 3, -32] through the permuted gather, the quantiser
+ties-to-even at 4.5, the dots, the f64 affines, the tail products and the
+e4m3 residual stores), the gain hop with a non-zero skip ([3, -20, 5, -30]),
+the tail's solver-table NaN decode, the record-presence gating (null site =
+the e4m3 path; a `kVitProjection` row offered a site still runs e4m3), the
+site-validation rejections with sentinel-untouched outputs, determinism and
+zero-allocation accounting. Independent review re-derived the mixed answers
+independently (confirming them and the residual equivalence line-by-line)
+and raised seven findings, all fixed and reverified: the tail NaN-code
+decode divergence from the pinned solver table, the affine+tail association
+(now the pinned's single f32 add), the perm-check comment overclaim (now
+documented as a memory-safe heuristic), the missing zero-allocation checks,
+a wrong rejection comment (now a true missing-tail case with sentinels), the
+untested `kVitProjection` gate (now pinned) plus the gain-hop and tail-NaN
+cases, and the documentation gaps closed above. Disclosed: the
+`eval_pre_block` non-null history path remains covered at the lift level
+only (the eval suite covers the stub path). The operand-path findings from
+the previous slice are recorded below. The sanitised build is skipped on
+this toolchain (missing `/usr/lib64/libubsan.so.1.0.0`).
+
+The operand-path suite pins: the
 Hadamard butterflies (`fwht([1,2,3,4]) = [10,-2,-4,0]` and a second
 independent group), the 1.5 * 2^23 ties-to-even (2.5 -> 2, 3.5 -> 4,
 -1.5 -> -2, -0.5 -> 0), the gain/zero derivation in all three forms

@@ -71,6 +71,18 @@ struct Int4MatrixView {
     bool half;
 };
 
+// The per-site record for the network miring (the host's weight-file
+// boundary): the decoded int4 matrix plus, for the ViT feed-forward site, the
+// hidden permutation (perm_count = matrix.cols + the tail's columns; the
+// first matrix.cols entries order the int4 channels, the rest order the e4m3
+// tail channels). The tail matrix itself arrives through the eval records'
+// `e4m3` callback as "tail" ([rows, tail_cols]).
+struct Int4Site {
+    Int4MatrixView matrix;
+    const int* perm = nullptr;
+    int perm_count = 0;
+};
+
 // The bounds keep every index and accumulation in range: cols <= 2^14 makes
 // the integer dot exact for int8 q and |x| <= 8 (partial sums <= 2^24).
 inline constexpr int kInt4MaxRows = 16384;
@@ -270,7 +282,9 @@ inline Status int4_accumulate(const Int4MatrixView& matrix, const float* codes,
 // perm[cols..cols + tail_cols) the tail channels); hidden_e4m3 is
 // [tokens, cols + tail_cols] (the exact e4m3 values in the hidden order) and
 // tail is [rows, tail_cols] float32. out is [tokens, rows]; the tail product
-// accumulates left to right in float32 (the native deterministic contract).
+// accumulates left to right in float32 (the native deterministic contract;
+// the pinned's matmul order is unspecified) and is added to the int4 affine
+// in one float32 operation, as the pinned's `total + tail_product`.
 inline Status int4_mixed_contraction(const Int4MatrixView& matrix,
                                      const float* codes,
                                      const float* tail, int tail_cols,
@@ -303,13 +317,15 @@ inline Status int4_mixed_contraction(const Int4MatrixView& matrix,
                 : matrix.scale[n];
             const float c = matrix.half ? f16(matrix.constant[n])
                 : matrix.constant[n];
-            float value = static_cast<float>(static_cast<double>(total) * s
-                                             + c);
+            const float affine = static_cast<float>(
+                static_cast<double>(total) * s + c);
+            float tail_acc = 0.0f;
             for (int j = 0; j < tail_cols; ++j) {
-                value += e4m3_row[perm[matrix.cols + j]]
+                tail_acc += e4m3_row[perm[matrix.cols + j]]
                     * tail[static_cast<std::size_t>(n) * tail_cols + j];
             }
-            out[static_cast<std::size_t>(t) * matrix.rows + n] = value;
+            out[static_cast<std::size_t>(t) * matrix.rows + n] = affine
+                + tail_acc;
         }
     }
     return Status::kOk;

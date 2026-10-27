@@ -45,6 +45,11 @@
 //   fallback: when the record has fewer than C entries, the last (C - m)
 //   entries of the "residual_scale" table are prepended to its m entries and
 //   the first C of the concatenation used.
+//   VitFfnContract: the e4m3 "weight" + f16 "skip_weight", OR the int4
+//     site ("vit_ffn" through the `int4` callback) with its "tail" e4m3
+//     record and "skip_weight" — the site's presence selects the mixed path
+//     (the pinned's table-presence gating); the mixed path never fetches
+//     "weight". kVitProjection never takes the site.
 //   SplitFfwd: the ffwd callback, which 0 = expand_in [512, 512], 1 =
 //   expand_hidden [2048, 64], 2 = contract [512, 256] (raw e4m3 codes).
 //   SplitFfwdProj/SplitProj/SplitProjPool: e4m3 "weight" [c_out, c_in] +
@@ -92,6 +97,7 @@
 
 #include "native-compose.hpp"
 #include "native-decoder.hpp"
+#include "native-int4.hpp"
 #include "native-network.hpp"
 #include "native-split-swin.hpp"
 #include "native-swin-resample.hpp"
@@ -120,6 +126,12 @@ struct EvalWeights {
                         const char* name, int count) = nullptr;
     const std::uint8_t* (*ffwd)(void* context, int block, int layer, int which,
                                 int rows, int cols) = nullptr;
+    // The int4 mixed-network boundary (native-int4.hpp's Int4Site): the named
+    // site's decoded record ("vit_ffn", "vit_qkv"), or null to run the site
+    // in e4m3 — the pinned's table-presence gating. The ViT feed-forward's
+    // e4m3 tail arrives through `e4m3` as "tail".
+    const Int4Site* (*int4)(void* context, int block, int layer,
+                            const char* name) = nullptr;
 };
 
 // One evaluation context: the records, the caller-provided scratch (the
@@ -1560,6 +1572,155 @@ inline Status eval_split_final_head(EvalContext& ctx, const LayerSpec& spec,
 
 // ---- the vit family ------------------------------------------------------------------------------
 
+// The int4 mixed contraction's residual form: `product` is the mixed int4 +
+// e4m3-tail total per token (float32); the residual arithmetic is
+// vit_residual_linear's exactly.
+inline Status vit_residual_mixed(const float* product, const float* skip,
+                                 int tokens, int c_out, const float* gain,
+                                 float* out) {
+    if (product == nullptr || skip == nullptr || gain == nullptr
+        || out == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (tokens <= 0 || c_out <= 0) {
+        return Status::kInvalidDimensions;
+    }
+    for (int t = 0; t < tokens; ++t) {
+        const float* row = product + static_cast<std::size_t>(t) * c_out;
+        const float* skip_row = skip + static_cast<std::size_t>(t) * c_out;
+        float* dst = out + static_cast<std::size_t>(t) * c_out;
+        for (int n = 0; n < c_out; ++n) {
+            dst[n] = e4m3(vit_f16(row[n] + vit_f16(gain[n]) * skip_row[n]));
+        }
+    }
+    return Status::kOk;
+}
+
+// The ViT feed-forward's mixed contraction (VitFfn.contraction): the int4
+// channels from the unrounded activation through the site's matrix, the rest
+// from the e4m3 copy through the tail matrix, summed in float32, then the
+// residual arithmetic of vit_residual_linear. The host's records: the site
+// (matrix + hidden permutation) and the tail through `e4m3` as "tail".
+inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
+                                 const FeatureBatchView& x,
+                                 const FeatureBatchView& skip,
+                                 const Int4Site& site, std::size_t tokens,
+                                 RowBlocks& blocks) {
+    const int c_in = spec.c_in;
+    const int c_out = spec.c_out;
+    const int k4 = site.matrix.cols;
+    const int tail_cols = c_in - k4;
+    if (site.matrix.rows != c_out || tail_cols < 1
+        || site.matrix.block < 1 || site.matrix.block > k4
+        || k4 % site.matrix.block != 0) {
+        return Status::kInvalidValues;
+    }
+    if (site.perm == nullptr || site.perm_count != c_in) {
+        return Status::kInvalidValues;
+    }
+    // The permutation must cover [0, c_in): every index is range-checked
+    // below (which keeps the gathers in bounds), and the sum/xor pair is a
+    // strong heuristic for completeness — it is NOT a proof (a duplicate can
+    // preserve both), so a corrupt record may mis-evaluate but cannot read
+    // out of bounds. Allocation-free; c_in <= 4096 keeps the sums exact.
+    {
+        long long sum = 0;
+        long long xors = 0;
+        for (int i = 0; i < c_in; ++i) {
+            const int p = site.perm[i];
+            if (p < 0 || p >= c_in) {
+                return Status::kInvalidValues;
+            }
+            sum += p;
+            xors ^= p;
+        }
+        long long want_sum = 0;
+        long long want_xor = 0;
+        for (int i = 0; i < c_in; ++i) {
+            want_sum += i;
+            want_xor ^= i;
+        }
+        if (sum != want_sum || xors != want_xor) {
+            return Status::kInvalidValues;
+        }
+    }
+    const std::uint8_t* tail_codes = nullptr;
+    Status status = fetch_e4m3(ctx.weights, spec.block, spec.layer, "tail",
+                               c_out, tail_cols, tail_codes);
+    if (status != Status::kOk) {
+        return status;
+    }
+    const float* gain = nullptr;
+    status = fetch_f16(ctx.weights, spec.block, spec.layer, "skip_weight",
+                       c_out, gain);
+    if (status != Status::kOk) {
+        return status;
+    }
+    const std::size_t in_count = tokens * static_cast<std::size_t>(c_in);
+    const std::size_t out_count = tokens * static_cast<std::size_t>(c_out);
+    const std::size_t gather_count = tokens * static_cast<std::size_t>(k4);
+    const std::size_t tail_size = static_cast<std::size_t>(c_out)
+        * static_cast<std::size_t>(tail_cols);
+    status = row_begin(ctx, spec, out_count, 0,
+                       in_count + out_count + out_count + in_count
+                           + gather_count + gather_count + out_count
+                           + tail_size,
+                       blocks);
+    if (status != Status::kOk) {
+        return status;
+    }
+    float* in_tokens = blocks.work;
+    float* skip_tokens = in_tokens + in_count;
+    float* out_tokens = skip_tokens + out_count;
+    float* hidden_e4m3 = out_tokens + out_count;
+    float* gathered = hidden_e4m3 + in_count;
+    float* codes = gathered + gather_count;
+    float* product = codes + gather_count;
+    float* tail_values = product + out_count;
+    status = eval_planar_to_tokens(x, in_tokens, in_count);
+    if (status == Status::kOk) {
+        status = eval_planar_to_tokens(skip, skip_tokens, out_count);
+    }
+    if (status != Status::kOk) {
+        return status;
+    }
+    for (std::size_t i = 0; i < in_count; ++i) {
+        hidden_e4m3[i] = e4m3(in_tokens[i]);
+    }
+    for (std::size_t t = 0; t < tokens; ++t) {
+        for (int j = 0; j < k4; ++j) {
+            gathered[t * static_cast<std::size_t>(k4) + j] =
+                in_tokens[t * static_cast<std::size_t>(c_in)
+                          + static_cast<std::size_t>(site.perm[j])];
+        }
+    }
+    // The tail is exact e4m3 values delivered as raw codes. The pinned's
+    // tail decode is the SOLVER's table, where the two NaN codes (0x7f, 0xff)
+    // read as 0 — not the matmul table's canonical NaN.
+    for (std::size_t i = 0; i < tail_size; ++i) {
+        tail_values[i] = (tail_codes[i] & 0x7fu) == 0x7fu
+            ? 0.0f : e4m3_from_bits(tail_codes[i]);
+    }
+    status = int4_quantise(site.matrix, gathered,
+                           static_cast<int>(tokens), codes);
+    if (status == Status::kOk) {
+        status = int4_mixed_contraction(site.matrix, codes, tail_values,
+                                        tail_cols, hidden_e4m3, site.perm,
+                                        static_cast<int>(tokens), product);
+    }
+    if (status != Status::kOk) {
+        return status;
+    }
+    status = vit_residual_mixed(product, skip_tokens,
+                                static_cast<int>(tokens), c_out, gain,
+                                out_tokens);
+    if (status == Status::kOk) {
+        status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out,
+                                       x.rows, x.cols, blocks.main, out_count);
+    }
+    return status;
+}
+
 inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                        const LayerCall& call, LayerValue& out) {
     if (call.x == nullptr || call.x->data == nullptr) {
@@ -1618,6 +1779,21 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             if (x.channels != spec.c_in || skip.channels != spec.c_out
                 || skip.rows != x.rows || skip.cols != x.cols) {
                 return Status::kInvalidDimensions;
+            }
+            // The int4 site's record presence selects the mixed path (the
+            // pinned's table-presence gating); the mixed site carries its own
+            // matrix and never fetches the e4m3 "weight". kVitProjection
+            // always runs e4m3.
+            const Int4Site* site = nullptr;
+            if (spec.kind == LayerKind::kVitFfnContract
+                && ctx.weights->int4 != nullptr) {
+                site = ctx.weights->int4(ctx.weights->context, spec.block,
+                                         spec.layer, "vit_ffn");
+            }
+            if (site != nullptr) {
+                status = eval_vit_ffn_mixed(ctx, spec, x, skip, *site, tokens,
+                                            blocks);
+                break;
             }
             const std::uint8_t* codes = nullptr;
             status = fetch_e4m3(ctx.weights, spec.block, spec.layer, "weight",
