@@ -164,3 +164,16 @@ missing threading tests. Next action: item (4) of Michael's brief --
 sustained-operation and stability hardening of the GPU path (long runs,
 memory stability, device-loss behaviour documented honestly), then the
 swin rows' batched window seam if hardening holds.
+
+## Latest continuation (28/10/2026, performance stage 4 - hardening)
+
+Published: the GPU-path hardening slice (native-vulkan-stress-test.cpp,
+1,965 checks at -O2/-O0): init/teardown cycles with balanced allocation
+accounting, 200 resident runs bit-identical to the independent reference,
+cache hash-mismatch + capacity behaviour, sentinel-untouched failure
+paths; the 50-frame sustained run (arena flat; RSS plateaus ~573 MB with a
+documented residual creep); the device-loss gap documented honestly (no
+fault injection; the inert generation counter recorded, the handle check
+is the real guard). Review 9 findings fixed. Next action: the swin rows'
+batched/offset-dispatch window seam (G6's recorded fix) or performance
+stage closure, at Michael's direction.

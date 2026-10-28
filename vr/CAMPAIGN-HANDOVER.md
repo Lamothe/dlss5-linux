@@ -370,3 +370,29 @@ Next: item (4) of Michael's brief -- sustained-operation and stability
 hardening of the GPU path (long runs, memory stability, device-loss
 behaviour documented honestly); then the swin rows' batched/offset-dispatch
 window seam (G6's recorded fix) if hardening holds.
+
+## Performance stage 4: GPU-path hardening (28/10/2026)
+
+vr/tests/native-vulkan-stress-test.cpp + vr/test-native-vulkan-stress.sh +
+vr/NATIVE-VULKAN-STRESS.md: 1,965 checks at -O2/-O0 covering 50
+init/teardown cycles (CPU allocation accounting balances each cycle),
+200 mixed-shape resident runs bit-identical to the independent scalar
+reference, the weight cache's content-hash re-upload and capacity
+behaviour (511 accepted of 520 distinct keys; first past capacity
+rejected), and failure paths (sentinel-untouched outputs; oversized
+tokens/rows rejections added). Sustained operation: the 50-frame demo run
+(mean 7,662 ms/frame) keeps the arena high-water flat at 48,531,972
+floats; RSS plateaus at ~573 MB with a residual ~1.5 KiB/s creep after
+warm-up (below the C++ layer — CPU allocation accounting balances exactly;
+documented as an unresolved slow term, not claimed zero). Device loss is
+an HONEST GAP (no fault injection): VkResult paths return Status and the
+stale-set rewrite is guarded by the written_in/written_out handle check
+(the generation counter is inert — recorded), but real device-loss
+recovery is untested and not claimed. Review: 9 findings (the HIGH one:
+the "400 runs" figure vs the actual 200; plus the inert generation-counter
+claim, mislabelled/missing rejection classes, sentinel gaps, the operator
+delete set) — all fixed and reverified.
+
+Next: the swin rows' batched/offset-dispatch window seam (G6's recorded
+fix, would lift the 79% CPU swin share), or close the performance stage
+and hand over.
