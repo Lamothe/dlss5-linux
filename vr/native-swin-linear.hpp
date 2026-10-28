@@ -22,6 +22,10 @@
 #include "native-int4.hpp"
 #include "native-swin-primitives.hpp"
 
+// The executor type lives in native-vit.hpp (no include cycle: the vit
+// header does not include the swin headers).
+#include "native-vit.hpp"
+
 namespace dlss5_nr {
 
 // ---- documented constants ----------------------------------------------------------------------
@@ -108,8 +112,26 @@ inline Status validate_linear_output(const MutableMatrixView* out, int cols,
 // Validation (dimensions, strides, the e4m3 operand grid, output capacity)
 // completes before the first output write; on any error `out` is untouched. The
 // buffers must not overlap (caller discipline, never rejected).
+// An external raw-projection site for swin_linear: one hoisted executor
+// call per swin_linear invocation. The operand views may carry padding
+// strides (validate_linear_operand allows them), so the input is gathered
+// dense and the dense products scattered back through the output's row
+// stride — bit-identical to the CPU kernel when the products are grid-exact
+// and every intermediate is in the fp32 normal range (the Vulkan backend's
+// documented denormal tolerance). Null keeps the CPU kernel. The int4
+// branches (swin_linear_int4, the attention's int4_qkv) keep the CPU
+// int4 path and ignore the site: a set site must not change them.
+struct SwinProjectionSite {
+    const ProjectionExecutor* ex = nullptr;
+    float* input_dense = nullptr;    // [x.rows * x.cols]
+    float* products = nullptr;       // [x.rows * weight.rows]
+    std::size_t input_capacity = 0;
+    std::size_t products_capacity = 0;
+};
+
 inline Status swin_linear(const MatrixView& x, const MatrixView& weight,
-                          MutableMatrixView* out, std::size_t out_capacity) {
+                          MutableMatrixView* out, std::size_t out_capacity,
+                          const SwinProjectionSite* site = nullptr) {
     if (x.data == nullptr || weight.data == nullptr) {
         return Status::kNullPointer;
     }
@@ -140,6 +162,62 @@ inline Status swin_linear(const MatrixView& x, const MatrixView& weight,
             return status;
         }
     }
+    if (site != nullptr) {
+        // Validate the site only after the shape checks above (the same
+        // status ordering as the CPU path for bad shapes).
+        const std::size_t in_count = static_cast<std::size_t>(x.rows)
+            * static_cast<std::size_t>(x.cols);
+        const std::size_t out_count = static_cast<std::size_t>(x.rows)
+            * static_cast<std::size_t>(weight.rows);
+        if (site->ex == nullptr || site->input_dense == nullptr
+            || site->products == nullptr || site->input_capacity < in_count
+            || site->products_capacity < out_count) {
+            return Status::kInvalidBuffer;
+        }
+        for (int r = 0; r < x.rows; ++r) {
+            const float* x_row = x.data + static_cast<std::size_t>(r)
+                * static_cast<std::size_t>(x.row_stride);
+            float* dense_row = site->input_dense
+                + static_cast<std::size_t>(r)
+                    * static_cast<std::size_t>(x.cols);
+            for (int c = 0; c < x.cols; ++c) {
+                dense_row[c] = x_row[c];
+            }
+        }
+        // The weight view must be dense for the executor's [rows, cols]
+        // layout; fall back to the CPU kernel for a padded weight (the
+        // record interface supplies dense weights).
+        if (weight.row_stride != weight.cols || site->ex->matmul_f32 == nullptr) {
+            goto cpu_path;
+        }
+        {
+            const Status st = site->ex->matmul_f32(
+                site->ex->ctx, site->input_dense, x.rows, x.cols, weight.data,
+                weight.rows, site->products);
+            if (st == Status::kInvalidDimensions) {
+                // The executor accepts a smaller shape envelope than
+                // swin_linear (tokens <= 65535 vs kMaxLinearRows); an
+                // out-of-envelope call keeps the CPU kernel rather than
+                // narrowing swin_linear's accepted shapes.
+                goto cpu_path;
+            }
+            if (st != Status::kOk) {
+                return st;
+            }
+        }
+        for (int r = 0; r < x.rows; ++r) {
+            float* out_row = out->data + static_cast<std::size_t>(r)
+                * static_cast<std::size_t>(out->row_stride);
+            const float* product_row = site->products
+                + static_cast<std::size_t>(r)
+                    * static_cast<std::size_t>(weight.rows);
+            for (int n = 0; n < weight.rows; ++n) {
+                out_row[n] = product_row[n];
+            }
+        }
+        return Status::kOk;
+    }
+cpu_path:
     // Row-parallel (native-parallel.hpp): every output element keeps the
     // single-threaded key-ordered accumulation exactly, so any thread count
     // is bit-identical to the serial reference.
@@ -217,7 +295,8 @@ inline Status swin_linear_int4(const MatrixView& x,
 
 inline Status swin_hidden(const MatrixView& x, const MatrixView& expand,
                           MutableMatrixView* out, std::size_t out_capacity,
-                          const SwinSiteOverlay* overlay = nullptr) {
+                          const SwinSiteOverlay* overlay = nullptr,
+                          const SwinProjectionSite* site = nullptr) {
     Status status = Status::kOk;
     const Int4MatrixView* int4_expand = overlay != nullptr
         ? overlay->int4_expand : nullptr;
@@ -236,7 +315,7 @@ inline Status swin_hidden(const MatrixView& x, const MatrixView& expand,
         }
         status = swin_linear_int4(x, *int4_expand, out);
     } else {
-        status = swin_linear(x, expand, out, out_capacity);
+        status = swin_linear(x, expand, out, out_capacity, site);
     }
     if (status != Status::kOk) {
         return status;

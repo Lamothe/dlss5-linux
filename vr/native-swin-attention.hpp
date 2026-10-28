@@ -942,7 +942,8 @@ inline Status swin_attention(const MatrixView& quantised, const MatrixView& qkv,
                              const MatrixView& out_proj,
                              MutableMatrixView* out, std::size_t out_capacity,
                              float* scratch, std::size_t scratch_capacity,
-                             const Int4MatrixView* int4_qkv = nullptr) {
+                             const Int4MatrixView* int4_qkv = nullptr,
+                             const SwinProjectionSite* site = nullptr) {
     if (quantised.data == nullptr || qkv.data == nullptr || head_scale.data == nullptr
         || exp_bias.data == nullptr || skip.data == nullptr
         || attn_scale.data == nullptr || out_proj.data == nullptr || scratch == nullptr) {
@@ -1053,7 +1054,9 @@ inline Status swin_attention(const MatrixView& quantised, const MatrixView& qkv,
         // pinned SwinSite's qkv); the accumulator is the same raw float32.
         const Status status = int4_qkv != nullptr
             ? swin_linear_int4(quantised, *int4_qkv, &qkv_mat)
-            : swin_linear(quantised, qkv, &qkv_mat, qkv_span);
+            // The int4_qkv branch above keeps the CPU int4 path and
+            // ignores the site (a set site must not change it).
+            : swin_linear(quantised, qkv, &qkv_mat, qkv_span, site);
         if (status != Status::kOk) {
             return status;
         }

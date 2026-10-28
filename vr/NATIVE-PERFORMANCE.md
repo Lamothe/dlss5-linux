@@ -120,3 +120,13 @@ of the frame profile. 86 checks at -O2/-O0; the complete-network CPU-vs-GPU
 gate stays byte-identical with these rows on the GPU. Staging still
 dominates the GPU row cost; G4 residency is next, then the swin family and
 the end-to-end frame numbers.
+
+## G4 — the swin projection seam (30/10/2026)
+
+The SwinProjectionSite + ProjectionExecutor::matmul_f32 seam (swin_linear's
+expand/QKV projections; strided gather/scatter; bit-identical on
+grid-exact products) threads through the swin composition with CPU
+defaults everywhere. Eval wiring is deliberately deferred to G5 weight
+residency: per-window GPU calls (16 tokens) would thrash under per-call
+staging. 95 checks at -O2/-O0. Measured G3 numbers stand; the complete
+network is unchanged by this slice.

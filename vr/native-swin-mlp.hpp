@@ -239,7 +239,8 @@ inline Status swin_mlp(const MatrixView& x, const MatrixView& expand,
                        const MatrixView& scale,
                        MutableMatrixView* out, std::size_t out_capacity,
                        MutableMatrixView* scratch, std::size_t scratch_capacity,
-                       const SwinSiteOverlay* overlay = nullptr) {
+                       const SwinSiteOverlay* overlay = nullptr,
+                       const SwinProjectionSite* site = nullptr) {
     if (x.data == nullptr || expand.data == nullptr || contract.data == nullptr
         || residual.data == nullptr || scale.data == nullptr
         || (mid != nullptr && mid->data == nullptr)) {
@@ -320,7 +321,7 @@ inline Status swin_mlp(const MatrixView& x, const MatrixView& expand,
     hidden.row_stride = scratch->row_stride;
     {
         const Status status = swin_hidden(x, expand, &hidden, scratch_capacity,
-                                          overlay);
+                                          overlay, site);
         if (status != Status::kOk) {
             return status;
         }

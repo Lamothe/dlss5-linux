@@ -276,3 +276,28 @@ status divergence, the site/dimension validation order and a null-input
 delegation gap. Next: G4 weight residency (removes the per-call
 decode+upload that dominates the GPU row cost), then the swin GPU family,
 then the end-to-end per-frame GPU timings vs the CPU baselines.
+
+## Performance phase G4: the swin projection seam + a gitignore defect fix
+(30/10/2026)
+
+Published: SwinProjectionSite + ProjectionExecutor::matmul_f32 (the swin
+family's decoded FLOAT weights; the shader is float-native) threaded through
+swin_hidden/swin_mlp/swin_attention/swin_block/swin_core/swin_downsample/
+swin_layer_upsample as a defaulted parameter — every default call stays on
+the CPU, 95 checks at -O2/-O0 covering the strided seam bit-identity, both
+fallbacks and the status ordering. SCOPE (stated in the docs): the eval
+rows pass no site yet — per-window GPU calls (16 tokens) would thrash
+under per-call staging, so the swin rows' GPU wiring lands with G5 weight
+residency; the complete network is unchanged by this slice. Also fixed a
+real G1 defect: .gitignore's allowlist never included *.comp, so the
+shader source (vr/shaders/matmul_e4m3.comp) was NEVER TRACKED — a fresh
+checkout could not build the tests; the allowlist and the source are now
+committed. Independent review raised 6 findings, all fixed (swin_layer_upsample
+dropping the site at its two swin_block calls — the silent-miss class again,
+now caught and fixed with the downsample row threaded consistently; the
+site validation keyed on the wrong callback; a push-constant overrun and
+dead weight_mode residue from an earlier misfire; the executor-envelope
+narrowing now falls back to the CPU kernel; three comment overclaims; two
+test gaps). Next: G5 weight residency (persistent weight buffers; the
+prerequisite for wiring the swin rows AND for the split rows' many small
+calls), then the end-to-end per-frame GPU timings vs the CPU baselines.

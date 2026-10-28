@@ -23,6 +23,7 @@
 #include "native-vulkan.hpp"
 #include "native-vit.hpp"
 #include "native-split-swin.hpp"
+#include "native-swin-linear.hpp"
 
 namespace {
 
@@ -532,6 +533,132 @@ int main(int argc, char** argv) {
                 CHECK(std::memcmp(pooled_cpu, pooled_gpu,
                                   sizeof(float) * 32 * 20)
                       == 0);
+            }
+
+            // Swin seam: swin_linear's site path (gather -> matmul_f32 ->
+            // scatter) must equal the CPU kernel bit-for-bit, including
+            // STRIDED inputs/outputs (the block windows are strided).
+            {
+                static MatrixView sw_x;
+                static MatrixView sw_w;
+                static MutableMatrixView sw_out_cpu;
+                static MutableMatrixView sw_out_gpu;
+                static float sw_x_data[16 * (32 + 5)];   // row_stride 37
+                static float sw_w_data[20 * 32];
+                static float sw_cpu_data[16 * (20 + 3)];  // row_stride 23
+                static float sw_gpu_data[16 * (20 + 3)];
+                for (int i = 0; i < 16 * 37; ++i) {
+                    sw_x_data[i] = static_cast<float>((i * 7) % 31) / 8.0f
+                        - 2.0f;
+                }
+                for (int i = 0; i < 20 * 32; ++i) {
+                    sw_w_data[i] = static_cast<float>((i * 5) % 15) / 8.0f
+                        - 1.0f;
+                }
+                sw_x.data = sw_x_data;
+                sw_x.rows = 16;
+                sw_x.cols = 32;
+                sw_x.row_stride = 37;
+                sw_w.data = sw_w_data;
+                sw_w.rows = 20;
+                sw_w.cols = 32;
+                sw_w.row_stride = 32;
+                sw_out_cpu.data = sw_cpu_data;
+                sw_out_cpu.rows = 16;
+                sw_out_cpu.row_stride = 23;
+                sw_out_gpu.data = sw_gpu_data;
+                sw_out_gpu.rows = 16;
+                sw_out_gpu.row_stride = 23;
+                CHECK(swin_linear(sw_x, sw_w, &sw_out_cpu,
+                                  16 * 23)
+                      == Status::kOk);
+                {
+                    static float sw_in_dense[16 * 32];
+                    static float sw_products[16 * 20];
+                    SwinProjectionSite swsite;
+                    swsite.ex = &ex;
+                    swsite.input_dense = sw_in_dense;
+                    swsite.products = sw_products;
+                    swsite.input_capacity = 16 * 32;
+                    swsite.products_capacity = 16 * 20;
+                    CHECK(swin_linear(sw_x, sw_w, &sw_out_gpu, 16 * 23,
+                                      &swsite)
+                          == Status::kOk);
+                }
+                CHECK(std::memcmp(sw_cpu_data, sw_gpu_data,
+                                  sizeof(sw_cpu_data))
+                      == 0);
+
+                // The fallback: a padded weight (row_stride > cols) keeps
+                // the CPU kernel and still bit-matches (both paths are the
+                // CPU kernel here; the discriminator is that no executor
+                // call happens — a null ex->matmul_f32 also falls back).
+                {
+                    static float pw[20 * (32 + 4)];
+                    for (int i = 0; i < 20 * 36; ++i) {
+                        pw[i] = static_cast<float>((i * 3) % 15) / 8.0f
+                            - 1.0f;
+                    }
+                    MatrixView pad_w;
+                    pad_w.data = pw;
+                    pad_w.rows = 20;
+                    pad_w.cols = 32;
+                    pad_w.row_stride = 36;
+                    static float p_cpu[16 * 23];
+                    static float p_gpu[16 * 23];
+                    static MutableMatrixView pv_cpu;
+                    static MutableMatrixView pv_gpu;
+                    pv_cpu.data = p_cpu;
+                    pv_cpu.rows = 16;
+                    pv_cpu.row_stride = 23;
+                    pv_gpu.data = p_gpu;
+                    pv_gpu.rows = 16;
+                    pv_gpu.row_stride = 23;
+                    CHECK(swin_linear(sw_x, pad_w, &pv_cpu, 16 * 23)
+                          == Status::kOk);
+                    {
+                        static float sw_in_dense[16 * 32];
+                        static float sw_products[16 * 20];
+                        SwinProjectionSite swsite;
+                        swsite.ex = &ex;
+                        swsite.input_dense = sw_in_dense;
+                        swsite.products = sw_products;
+                        swsite.input_capacity = 16 * 32;
+                        swsite.products_capacity = 16 * 20;
+                        CHECK(swin_linear(sw_x, pad_w, &pv_gpu, 16 * 23,
+                                          &swsite)
+                              == Status::kOk);
+                    }
+                    CHECK(std::memcmp(p_cpu, p_gpu, sizeof(p_cpu)) == 0);
+                }
+
+                // The site validates after the shape checks: a bad site is
+                // kInvalidBuffer, a bad shape stays kInvalidDimensions.
+                {
+                    SwinProjectionSite bad;
+                    bad.ex = &ex;
+                    bad.input_dense = nullptr;
+                    static MutableMatrixView out_v;
+                    static float out_buf[16 * 23];
+                    out_v.data = out_buf;
+                    out_v.rows = 16;
+                    out_v.row_stride = 23;
+                    CHECK(swin_linear(sw_x, sw_w, &out_v, 16 * 23, &bad)
+                          == Status::kInvalidBuffer);
+                    static MatrixView bad_w;
+                    bad_w.data = sw_w_data;
+                    bad_w.rows = 20;
+                    bad_w.cols = 31;  // x.cols is 32: a real shape error
+                    bad_w.row_stride = 31;
+                    CHECK(swin_linear(sw_x, bad_w, &out_v, 16 * 23, nullptr)
+                          == Status::kInvalidDimensions);
+                    // Bad shape AND bad site: the shape error wins.
+                    SwinProjectionSite also_bad;
+                    also_bad.ex = &ex;
+                    also_bad.input_dense = nullptr;
+                    CHECK(swin_linear(sw_x, bad_w, &out_v, 16 * 23, &also_bad)
+                          == Status::kInvalidDimensions);
+                }
             }
 
             // The site validates its buffer before use.

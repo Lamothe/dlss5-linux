@@ -363,6 +363,12 @@ inline Status vit_attention(const float* qkv, int tokens, int channels,
 // reference arithmetic unchanged. Null keeps the CPU kernel (the reference).
 struct ProjectionExecutor {
     void* ctx = nullptr;
+    // The float-weight variant (the swin family's decoded weights): raw
+    // float32 rows [rows, cols], no e4m3 codes. Same product semantics
+    // (bit-parity assumes grid-exact products and the normal-range
+    // contract; see NATIVE-VULKAN.md).
+    Status (*matmul_f32)(void* engine, const float* in, int tokens, int c_in,
+                         const float* weights, int rows, float* out) = nullptr;
     Status (*matmul)(void* ctx, const float* in, int tokens, int c_in,
                      const E4m3Matrix& w, float* out) = nullptr;
 };

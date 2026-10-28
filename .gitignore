@@ -22,6 +22,9 @@
 !/vr/tests/*.c
 !/vr/tests/*.cpp
 !/vr/tests/*.py
+!/vr/shaders/
+/vr/shaders/*
+!/vr/shaders/*.comp
 !/vr/capture/
 /vr/capture/*
 !/vr/capture/*.c

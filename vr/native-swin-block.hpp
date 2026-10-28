@@ -137,7 +137,8 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
                          const SwinBlockParams& params,
                          float* wide_dst, std::size_t wide_count,
                          float* acc_dst, std::size_t acc_count,
-                         float* scratch, std::size_t scratch_capacity) {
+                         float* scratch, std::size_t scratch_capacity,
+                         const SwinProjectionSite* site = nullptr) {
     if (x.data == nullptr || wide_dst == nullptr || scratch == nullptr) {
         return Status::kNullPointer;
     }
@@ -414,7 +415,7 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
                                            static_cast<std::size_t>(
                                                kWindowTokens)
                                                * params.expand.rows,
-                                           params.site);
+                                           params.site, site);
             if (status != Status::kOk) {
                 return status;
             }
@@ -451,7 +452,8 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
                                                  attn_needed,
                                                  params.site != nullptr
                                                      ? params.site->int4_qkv
-                                                     : nullptr);
+                                                     : nullptr,
+                                                 site);
             if (status != Status::kOk) {
                 return status;
             }
@@ -487,10 +489,11 @@ inline Status swin_core(const FeatureBatchView& x,
                         const SwinBlockParams& params,
                         float* wide_dst, std::size_t wide_count,
                         float* acc_dst, std::size_t acc_count,
-                        float* scratch, std::size_t scratch_capacity) {
+                        float* scratch, std::size_t scratch_capacity,
+                        const SwinProjectionSite* site = nullptr) {
     return swin_block(x, &x, shift_rows, shift_cols, params,
                       wide_dst, wide_count, acc_dst, acc_count,
-                      scratch, scratch_capacity);
+                      scratch, scratch_capacity, site);
 }
 
 }  // namespace dlss5_nr

@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 the dlss5-linux contributors
+//
+// out[t][n] = sum_k in[t][k] * w[n][k]: the CPU reference's matmul_e4m3
+// shape. The e4m3 weights are uploaded as exact float32 decodes by the host.
+// `precise` keeps every accumulation in key order without contraction or
+// reassociation so the GPU result is bit-identical to the CPU reference.
+#version 450
+layout(local_size_x = 128, local_size_y = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer InBuf { float in_data[]; };
+layout(set = 0, binding = 1) readonly buffer WBuf { float w_data[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_data[]; };
+
+layout(push_constant) uniform Push {
+    uint tokens;
+    uint c_in;
+    uint rows;
+} pc;
+
+void main() {
+    // 2D dispatch: x covers the output rows (128-wide groups, within the
+    // guaranteed workgroup limits), y covers the tokens. Each (t, n) is
+    // computed exactly once.
+    const uint t = gl_GlobalInvocationID.y;
+    const uint n = gl_GlobalInvocationID.x;
+    if (t >= pc.tokens || n >= pc.rows) {
+        return;
+    }
+    const uint idx = t * pc.rows + n;
+    precise float acc = 0.0;
+    for (uint k = 0; k < pc.c_in; ++k) {
+        acc = acc + in_data[t * pc.c_in + k] * w_data[n * pc.c_in + k];
+    }
+    out_data[idx] = acc;
+}

@@ -684,6 +684,62 @@ inline void vulkan_projection_close(VulkanProjectionSite& site) {
     site = VulkanProjectionSite{};
 }
 
+// The float-weight variant (the swin family's decoded weights): raw float32
+// rows [rows, cols] with no e4m3 codes and no decode/quantisation error. The
+// GPU shader is float-native. Bit-parity with the CPU kernel additionally
+// assumes grid-exact products (the swin seam validates both operands onto
+// the e4m3 grid) and the documented fp32 normal-range contract.
+inline Status vulkan_projection_matmul_f32(void* ctx, const float* in,
+                                           int tokens, int c_in,
+                                           const float* weights, int rows,
+                                           float* out) {
+    auto* site = static_cast<VulkanProjectionSite*>(ctx);
+    if (site == nullptr || site->device == nullptr || site->spirv == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (in == nullptr || weights == nullptr || out == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (tokens < 1 || c_in < 1 || rows < 1) {
+        return Status::kInvalidDimensions;
+    }
+    if (tokens > 65535 || rows > 65535 * 128
+        || static_cast<std::uint64_t>(tokens) * rows > UINT32_MAX
+        || static_cast<std::uint64_t>(tokens) * c_in > UINT32_MAX
+        || static_cast<std::uint64_t>(rows) * c_in > UINT32_MAX) {
+        return Status::kInvalidDimensions;
+    }
+    if (site->matmul.pipeline == VK_NULL_HANDLE
+        || tokens > site->matmul.max_tokens || c_in > site->matmul.max_c_in
+        || rows > site->matmul.max_rows) {
+        int max_tokens = site->matmul.max_tokens > tokens
+            ? site->matmul.max_tokens : tokens;
+        int max_c_in = site->matmul.max_c_in > c_in ? site->matmul.max_c_in
+                                                    : c_in;
+        int max_rows = site->matmul.max_rows > rows ? site->matmul.max_rows
+                                                    : rows;
+        if (max_tokens < 4096) { max_tokens = 4096; }
+        if (max_c_in < 1024) { max_c_in = 1024; }
+        if (max_rows < 1024) { max_rows = 1024; }
+        vulkan_matmul_destroy(*site->device, site->matmul);
+        const Status st = vulkan_matmul_create(*site->device, site->matmul,
+                                               site->spirv, site->spirv_words,
+                                               max_tokens, max_c_in, max_rows);
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
+    VulkanMatmulTiming timing;
+    const Status st = vulkan_matmul_run(*site->device, site->matmul, in, tokens,
+                                        c_in, weights, rows, out, timing);
+    if (st == Status::kOk) {
+        site->kernel_ms += timing.kernel_ms;
+        site->upload_ms += timing.upload_ms;
+        site->download_ms += timing.download_ms;
+    }
+    return st;
+}
+
 inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
                                        int c_in, const E4m3Matrix& w,
                                        float* out) {
@@ -760,6 +816,7 @@ inline ProjectionExecutor vulkan_projection_executor(VulkanProjectionSite*
     ProjectionExecutor ex;
     ex.ctx = site;
     ex.matmul = &vulkan_projection_matmul;
+    ex.matmul_f32 = &vulkan_projection_matmul_f32;
     return ex;
 }
 

@@ -1233,6 +1233,10 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
             return status;
         }
         const MatrixView gain{gain_row, 1, channels, channels};
+        // No SwinProjectionSite here: the swin rows' projections run inside
+        // per-window loops (16 tokens per call) and per-call staging would
+        // thrash; the GPU wiring for these rows lands with weight residency
+        // (persistent weight buffers), keeping the CPU kernel meanwhile.
         status = swin_layer_upsample(x, skip, shift_rows, shift_cols, params,
                                      resample, gain, blocks.main, blend_count,
                                      up_scratch,
@@ -2570,6 +2574,8 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     status = blend(x, skip, main_gain, skip_gain,
                    static_cast<std::size_t>(channels), blend_map, map);
     if (status == Status::kOk) {
+        // No SwinProjectionSite: see the upsample row's note (per-window
+        // calls need weight residency first).
         status = swin_core(blend_batch, shift_rows, shift_cols, params,
                            wide_map, map, nullptr, 0, block_scratch,
                            block_needed);

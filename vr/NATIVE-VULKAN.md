@@ -94,6 +94,31 @@ artefacts) now covers the split rows on the GPU as well.
 Per-call staging still dominates the GPU row cost (the G4 weight-residency
 slice removes it); the split families were 44% of the frame profile.
 
+## G4 — the swin-family projection seam (30/10/2026)
+
+SwinProjectionSite routes swin_linear's raw projection (the expand and QKV
+projections in the swin rows) through the same executor with ONE hoisted
+call per invocation, gathering strided operands dense and scattering the
+dense products back through the output stride — bit-identical to the CPU
+kernel for grid-exact products in the normal-range contract. A new
+`ProjectionExecutor::matmul_f32` entry carries the swin family's decoded
+FLOAT weights (the GPU shader is float-native; there is no decode or
+quantisation step). The seam threads through swin_hidden/swin_mlp/
+swin_attention/swin_block/swin_core/swin_downsample/swin_layer_upsample as
+a defaulted parameter; every default call stays on the CPU path.
+
+**Scope, stated plainly:** the eval rows pass NO site yet. The swin rows'
+projections run inside per-window loops (16 tokens per call) and per-call
+staging would thrash — the GPU wiring for these rows lands with the G5
+weight-residency slice (persistent weight buffers, no per-run staging),
+which is also required before the split rows' many small calls can benefit.
+The complete-network GPU behaviour is therefore UNCHANGED by this slice;
+the seam, its threading and its parity tests are what land now. 95 checks
+at -O2/-O0: the strided seam bit-identity, the padded-weight fallback (the
+CPU kernel), the null-matmul_f32 fallback, the site/shape status ordering
+and the executor-envelope fallback (a shape rejection keeps the CPU kernel
+rather than narrowing swin_linear's accepted shapes).
+
 ## Provenance
 
 No proprietary code, payload, capture or binary is used or redistributed;

@@ -183,7 +183,8 @@ inline Status swin_downsample(const FeatureBatchView& x,
                               int out_rows, int out_cols,
                               float* next_dst, std::size_t next_count,
                               float* body_dst, std::size_t body_count,
-                              float* scratch, std::size_t scratch_capacity) {
+                              float* scratch, std::size_t scratch_capacity,
+                              const SwinProjectionSite* site = nullptr) {
     if (x.data == nullptr || next_dst == nullptr || body_dst == nullptr
         || scratch == nullptr || resample.data == nullptr) {
         return Status::kNullPointer;
@@ -261,7 +262,7 @@ inline Status swin_downsample(const FeatureBatchView& x,
         const Status status = swin_block(x, nullptr, shift_rows, shift_cols,
                                          params, body_dst, map_count,
                                          acc_map, map_count,
-                                         block_scratch, block_needed);
+                                         block_scratch, block_needed, site);
         if (status != Status::kOk) {
             return status;
         }
@@ -538,7 +539,8 @@ inline Status swin_layer_upsample(const FeatureBatchView& x,
                                   const MatrixView& gain,
                                   float* out_dst, std::size_t out_count,
                                   float* scratch,
-                                  std::size_t scratch_capacity) {
+                                  std::size_t scratch_capacity,
+                                  const SwinProjectionSite* site = nullptr) {
     if (x.data == nullptr || skip.data == nullptr || out_dst == nullptr
         || scratch == nullptr || project.data == nullptr
         || gain.data == nullptr) {
@@ -702,7 +704,7 @@ inline Status swin_layer_upsample(const FeatureBatchView& x,
         const Status status = swin_block(blend_map, &blend_map, shift_rows,
                                          shift_cols, params,
                                          out_dst, out_count, nullptr, 0,
-                                         block_scratch, block_needed);
+                                         block_scratch, block_needed, site);
         if (status != Status::kOk) {
             return status;
         }
@@ -713,7 +715,7 @@ inline Status swin_layer_upsample(const FeatureBatchView& x,
         const Status status = swin_block(blend_map, nullptr, shift_rows,
                                          shift_cols, params,
                                          out_dst, out_count, nullptr, 0,
-                                         block_scratch, block_needed);
+                                         block_scratch, block_needed, site);
         if (status != Status::kOk) {
             return status;
         }
