@@ -618,3 +618,26 @@ injection and the live generation counter).
 Next: phase 5 (stretch: desktop delivery boundary + a Centre Stage branch
 on a worktree — the tested boundary with a mock host is a valid outcome),
 and the recorded defect (the uninitialised read's localisation).
+
+## Desktop delivery boundary (29/10/2026, overnight phase 5 stretch) — `vr/NATIVE-HOST.md`
+
+The stable host boundary: `vr/native-host.h` + `vr/native-host.cpp`, a C
+ABI over the temporal frame step for desktop renderers (create/evaluate/
+destroy, the counter with resets, the arena report, stable status strings)
+with the labelling IN BAND — `dlss5_nr_label()` returns "synthetic weights
+— arbitrary transform" and the contract says a host must display it. The
+mock host (`vr/tests/native-host-test.c`, 45 checks at -O2) is a pure C
+consumer compiled as C11 against the C++ implementation: the ABI exactly
+as a host sees it, including the untouched-output-on-rejection contract
+and the pipeline's cross-handle determinism.
+
+The Centre Stage interop was investigated (C# + Silk.NET OpenGL 3.3;
+P/Invoke over this ABI is mechanically clean — the app already reads
+framebuffers): the full app branch is NOT delivered — the evaluator costs
+~8 s/frame at the demo geometry, the renderer has no test harness, and the
+brief's stated valid outcome is the tested boundary with a mock host when
+the interop is not clean end to end. The app branch (a worktree, never
+main) is the recorded next step for a session with display access.
+
+Next: the recorded defect (the uninitialised read's localisation with its
+MALLOC_PERTURB_ regression), then the Centre Stage worktree branch.

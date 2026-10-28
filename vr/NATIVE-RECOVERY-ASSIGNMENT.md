@@ -242,3 +242,21 @@ Next action: localise phase 2's uninitialised read (MALLOC_PERTURB_
 reproduction as the regression), then phase 4 (sustained GPU hardening) and
 phase 5 (stretch: desktop delivery boundary + Centre Stage worktree
 branch).
+
+## Latest continuation (29/10/2026, overnight phases 4-5)
+
+Phase 4 PUBLISHED (`5c38892`): the G8 soak in `vr/test-native-vulkan.sh` —
+six frames with a mid-stream reset on the GPU path, artefacts byte-identical
+to the CPU reference over the whole sequence, the arena high-water pinned
+(90,298,116 floats = 344.4 MiB; 350 MiB bound) and peak-RSS stability
+(168 KiB growth over four extra frames; 4 MiB creep bound). Device-loss
+honesty re-verified green (stress 1,997 checks). Phase 5 (stretch) lands
+the tested boundary: `vr/native-host.h`/`native-host.cpp` (the C ABI with
+the in-band "synthetic weights — arbitrary transform" label) + the C mock
+host `vr/tests/native-host-test.c` (45 checks at -O2); the Centre Stage
+interop was investigated (P/Invoke clean; ~8 s/frame and no renderer test
+harness) and the app branch stays the recorded next step.
+
+Next action: localise phase 2's uninitialised read (the MALLOC_PERTURB_
+regression), then the Centre Stage worktree branch (never main) for a
+session with display access.

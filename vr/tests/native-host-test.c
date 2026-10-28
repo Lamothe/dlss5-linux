@@ -1,0 +1,187 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Michael Lamothe
+ *
+ * The mock host: a C consumer of vr/native-host.h ONLY (compiled as C,
+ * linked against the C++ implementation) — the stable desktop boundary's
+ * contract exactly as a host renderer sees it: the label, the create/
+ * evaluate/destroy lifecycle, the counter schedule with DLSSNR.Reset, the
+ * determinism of the synthetic pipeline, the arena report, and the
+ * rejection matrix with the output buffer untouched on failure.
+ *
+ * Built by vr/test-native-host.sh at -O2 (the full mock) and compile-only
+ * at -O0 (the recorded NATIVE-LIVE.md gap). The synthetic weights make the
+ * transformation arbitrary; the label must say so.
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "native-host.h"
+
+static int g_failures = 0;
+static long long g_checks = 0;
+
+static void check(int ok, const char* expr, int line) {
+    ++g_checks;
+    if (!ok) {
+        printf("FAILED (%d): %s\n", line, expr);
+        ++g_failures;
+    }
+}
+#define CHECK(expr) check((expr) != 0, #expr, __LINE__)
+
+static void check_status(dlss5_nr_status got, dlss5_nr_status want,
+                         const char* expr, int line) {
+    ++g_checks;
+    if (got != want) {
+        printf("FAILED (%d): %s (got %d, want %d)\n", line, expr, (int)got,
+               (int)want);
+        ++g_failures;
+    }
+}
+#define CHECK_STATUS(got, want) \
+    check_status((got), (want), #got, __LINE__)
+
+enum { kWidth = 64, kHeight = 72, kBytes = 3 * kWidth * kHeight };
+
+static void fill_frame(unsigned char* rgb, int frame, int salt) {
+    for (int i = 0; i < kBytes; ++i) {
+        rgb[i] = (unsigned char)((i * 13 + 7 + 31 * frame + salt) % 256);
+    }
+}
+
+int main(void) {
+    /* ---- the label and the status names ------------------------------- */
+    const char* label = dlss5_nr_label();
+    CHECK(label != NULL);
+    CHECK(label != NULL && strstr(label, "synthetic weights") != NULL);
+    CHECK(label != NULL && strstr(label, "arbitrary transform") != NULL);
+    CHECK(strcmp(dlss5_nr_status_name(DLSS5_NR_OK), "ok") == 0);
+    CHECK(dlss5_nr_status_name(DLSS5_NR_INVALID_STRIDE) != NULL);
+
+    /* ---- the rejection matrix (nothing runs; the output stays) -------- */
+    {
+        dlss5_nr_handle* handle = NULL;
+        CHECK_STATUS(dlss5_nr_create(0, kHeight, 8, &handle),
+                     DLSS5_NR_INVALID_DIMENSIONS);
+        CHECK(handle == NULL);
+        CHECK_STATUS(dlss5_nr_create(1000, 1000, 8, &handle),
+                     DLSS5_NR_INVALID_DIMENSIONS);
+        CHECK(handle == NULL);
+        CHECK_STATUS(dlss5_nr_create(kWidth, kHeight, 65, &handle),
+                     DLSS5_NR_INVALID_VALUES);
+        CHECK(handle == NULL);
+        CHECK_STATUS(dlss5_nr_create(kWidth, kHeight, 8, NULL),
+                     DLSS5_NR_NULL_POINTER);
+        CHECK_STATUS(dlss5_nr_evaluate(NULL, NULL, 0, NULL, 0, 0),
+                     DLSS5_NR_NULL_POINTER);
+    }
+
+    /* ---- the sequence: reset, counter schedule, determinism ------------ */
+    static unsigned char host[kBytes];
+    static unsigned char out[kBytes];
+    static unsigned char replay[kBytes];
+    static unsigned char snapshot[kBytes];
+    static unsigned char sentinel[kBytes];
+    dlss5_nr_handle* handle = NULL;
+    dlss5_nr_handle* second = NULL;
+    CHECK_STATUS(dlss5_nr_create(kWidth, kHeight, 8, &handle),
+                 DLSS5_NR_OK);
+    CHECK_STATUS(dlss5_nr_create(kWidth, kHeight, 8, &second), DLSS5_NR_OK);
+    CHECK(handle != NULL && second != NULL);
+    if (handle == NULL || second == NULL) {
+        return 1;
+    }
+    size_t high_water = 0;
+    CHECK_STATUS(dlss5_nr_arena_high_water(handle, &high_water),
+                 DLSS5_NR_OK);
+    CHECK(high_water == 0);  // nothing ran yet
+
+    for (int frame = 0; frame < 3; ++frame) {
+        fill_frame(host, frame, 0);
+        memset(out, 0xA5, sizeof(out));
+        CHECK_STATUS(dlss5_nr_evaluate(handle, host, 3 * kWidth, out,
+                                       3 * kWidth, frame == 0),
+                     DLSS5_NR_OK);
+        /* The counter: zeroed by the reset at frame 0, then advancing. */
+        CHECK(dlss5_nr_counter(handle) == (unsigned int)(frame + 1));
+        /* The second handle replays the same stream on fresh state: every
+         * frame bit-identical (the pipeline's determinism). */
+        CHECK_STATUS(dlss5_nr_evaluate(second, host, 3 * kWidth, replay,
+                                       3 * kWidth, frame == 0),
+                     DLSS5_NR_OK);
+        CHECK(memcmp(out, replay, sizeof(out)) == 0);
+        if (frame == 0) {
+            memcpy(snapshot, out, sizeof(out));
+        }
+    }
+    /* The arena high-water: reported, positive after the frames and
+     * constant across them (the per-frame rewind contract). */
+    size_t high_water_2 = 0;
+    CHECK_STATUS(dlss5_nr_arena_high_water(handle, &high_water_2),
+                 DLSS5_NR_OK);
+    CHECK(high_water_2 > 0);
+
+    /* A reset frame: the counter restarts (0 after the reset's commit = 1). */
+    fill_frame(host, 3, 0);
+    CHECK_STATUS(dlss5_nr_evaluate(handle, host, 3 * kWidth, out,
+                                   3 * kWidth, 1),
+                 DLSS5_NR_OK);
+    CHECK(dlss5_nr_counter(handle) == 1u);
+    {
+        size_t high_water_3 = 0;
+        CHECK_STATUS(dlss5_nr_arena_high_water(handle, &high_water_3),
+                     DLSS5_NR_OK);
+        CHECK(high_water_3 == high_water_2);
+    }
+
+    /* ---- the untouched-output contract on rejection -------------------- */
+    memset(sentinel, 0x5A, sizeof(sentinel));
+    fill_frame(host, 0, 0);
+    CHECK_STATUS(dlss5_nr_evaluate(handle, host, 3 * kWidth - 1, sentinel,
+                                   3 * kWidth, 0),
+                 DLSS5_NR_INVALID_STRIDE);
+    {
+        int untouched = 1;
+        for (int i = 0; i < kBytes; ++i) {
+            if (sentinel[i] != 0x5A) {
+                untouched = 0;
+            }
+        }
+        CHECK(untouched);
+    }
+    CHECK_STATUS(dlss5_nr_evaluate(handle, host, 3 * kWidth, sentinel,
+                                   3 * kWidth - 1, 0),
+                 DLSS5_NR_INVALID_STRIDE);
+    {
+        int untouched = 1;
+        for (int i = 0; i < kBytes; ++i) {
+            if (sentinel[i] != 0x5A) {
+                untouched = 0;
+            }
+        }
+        CHECK(untouched);
+    }
+    CHECK_STATUS(dlss5_nr_evaluate(handle, NULL, 0, out, 0, 0),
+                 DLSS5_NR_NULL_POINTER);
+    CHECK_STATUS(dlss5_nr_evaluate(handle, host, 0, NULL, 0, 0),
+                 DLSS5_NR_NULL_POINTER);
+
+    /* The counter and arena accessors' null contracts. */
+    CHECK(dlss5_nr_counter(NULL) == 0u);
+    CHECK_STATUS(dlss5_nr_arena_high_water(NULL, &high_water),
+                 DLSS5_NR_NULL_POINTER);
+    CHECK_STATUS(dlss5_nr_arena_high_water(handle, NULL),
+                 DLSS5_NR_NULL_POINTER);
+
+    dlss5_nr_destroy(handle);
+    dlss5_nr_destroy(second);
+    dlss5_nr_destroy(NULL);  // idempotent
+
+    if (g_failures == 0) {
+        printf("native-host: %lld checks passed\n", g_checks);
+        return 0;
+    }
+    printf("native-host: %d check(s) FAILED\n", g_failures);
+    return 1;
+}

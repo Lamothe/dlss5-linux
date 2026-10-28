@@ -68,6 +68,7 @@ bash vr/test-native-eval-int4-network.sh  # int4 mixed-network PLAN integration 
 bash vr/test-native-demo.sh  # typed CPU synthetic input-to-image demo slice
 bash vr/test-native-parallel.sh  # typed CPU parallel-for layer slice
 bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames, ~90 s at -O2; -O0 build compile-only, see vr/NATIVE-LIVE.md)
+bash vr/test-native-host.sh  # stable desktop host boundary (C ABI + C mock host; SLOW: full-network frames; -O0 build compile-only, see vr/NATIVE-HOST.md)
 ```
 
 Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.
