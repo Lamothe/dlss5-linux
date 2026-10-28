@@ -519,3 +519,45 @@ at the seam), and an overstated comment (scoped).
 
 Next: overnight phase 2 — live-input evaluation (sustained multi-frame
 feeding of the evaluator with measured throughput and no resource leaks).
+
+## Live-input evaluation (29/10/2026, overnight phase 2) — `vr/NATIVE-LIVE.md`
+
+`vr/tests/native-live-test.cpp` + `vr/test-native-live.sh` feed full-network
+frames through the real consumer (`temporal_image_evaluation`) in three
+sequences (sustain + mid-stream reset, bit-exact replay on fresh carriers,
+different-input responsiveness) and assert the sustained-run contracts:
+balanced allocations across every frame (the parallel layer's spawn-and-join
+thread state is balanced churn, not zero), constant arena high-water, bounded
+RSS after warm-up, and the counter schedule including the reset's zero
+(observed directly on the carrier's post-call state).
+
+Measured (RTX 4070 Ti SUPER, -O2, 8 threads, 9 frames): **8,260-8,440
+ms/frame** (decode 0.24 ms, output 0.03 ms; pipeline derived), 89,320
+allocations/frame balanced, arena constant, RSS growth 76-276 KiB. **87
+checks at -O2**; suite green in ~93 s. Speed numbers are real measurements;
+the synthetic weights make the transformation arbitrary (no image-quality
+claim).
+
+Independent read-only review: FAIL (6 findings: 4 MINOR, 2 NIT) — all fixed
+and reverified: a tautological reset-frame counter assertion (now the
+post-call carrier counter is asserted directly), an unguarded fixed 320x320
+probe assumption (now asserted), two stale comment claims (-O0 run and
+serial coverage; both corrected to the real configuration), the wrong RSS
+baseline claim, and a hard-coded 4 KiB page conversion (now
+`sysconf(_SC_PAGESIZE)`).
+
+**Open defect (recorded, performance-only):** an uninitialised heap read in
+the network path, proven by `MALLOC_PERTURB_=165` flipping clean -O0 probes
+into stalling on their second run (output hashes unchanged; auto-initialised
+locals exonerated; ruled out: contention/throttling, buffering artefacts,
+denormal assists alone, the record store, the arena allocator, the consumer
+phases). Exposure is -O0 codegen only — -O2 stays clean at both thread
+counts even under `MALLOC_PERTURB_`. The exact site is not localised; the
+suite's -O0 run is compile-only until it is. NATIVE-LIVE.md carries the full
+evidence trail.
+
+Next: localise the uninitialised read (candidates: the swin scratch
+partitions and the per-row decode staging in `native-eval.hpp`; add a
+regression reproducing under `MALLOC_PERTURB_`), then overnight phase 3
+(int4 mixed-network path hardening), phase 4 (sustained GPU hardening) and
+phase 5 (desktop delivery boundary).

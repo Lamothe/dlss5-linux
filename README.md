@@ -57,6 +57,16 @@ bash vr/test-native-block.sh  # typed CPU residual block core slice (LayerNorm, 
 bash vr/test-native-graph-plan.sh  # typed CPU network graph plan slice (layer table, extent walk, padding, skip wiring)
 bash vr/test-native-vit.sh  # typed CPU vit bottleneck family slice (FFN, QKV, grouped global attention, projection)
 bash vr/test-native-split-swin.sh  # typed CPU split Swin family slice (grouped FFN, projections, pooled head, shifted-window attention)
+bash vr/test-native-decoder.sh  # typed CPU decoder input stage slice (DecInputUpsample)
+bash vr/test-native-network.sh  # typed CPU network dispatch slice (the plan-row run loop)
+bash vr/test-native-eval.sh  # typed CPU synthetic evaluator slice (all 18 kinds over synthetic records)
+bash vr/test-native-history.sh  # typed CPU temporal history carrier slice (FP16 output-texture store, counter, reset contract)
+bash vr/test-native-io.sh  # typed CPU host-image boundary + the temporal frame step (reset/feed/run/store/commit)
+bash vr/test-native-int4.sh  # typed CPU int4 mixed-network operand kernels slice
+bash vr/test-native-eval-int4.sh  # typed CPU int4 mixed-network evaluator slice
+bash vr/test-native-demo.sh  # typed CPU synthetic input-to-image demo slice
+bash vr/test-native-parallel.sh  # typed CPU parallel-for layer slice
+bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames, ~90 s at -O2; -O0 build compile-only, see vr/NATIVE-LIVE.md)
 ```
 
 Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.

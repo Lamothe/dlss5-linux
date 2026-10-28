@@ -190,3 +190,34 @@ brief -- the batched/offset-dispatch swin seam with its honest
 measurement; the swin rows stay opt-in until a batched path measures
 faster than CPU (or the measurement shows it cannot, in which case they
 stay opt-in with the evidence recorded).
+
+## Latest continuation (29/10/2026, overnight phases 1-2)
+
+Phase 1 (temporal history consumer) is PUBLISHED at `9988bdb`: the real
+frame step (`image_map_evaluation` / `frame_to_history` /
+`temporal_image_evaluation` — reset first, history feed, run, FP16
+output-texture store, host read-back, bit-exact commit + counter), with the
+zero-map feed at start-up/reset replacing the single-frame stub in temporal
+mode. 2,351 checks at -O2/-O0; independent review FAIL (3 findings + 4
+nits) all fixed and reverified.
+
+Phase 2 (live-input evaluation) is BUILT, REVIEWED AND GREEN: the sustained
+suite (`vr/tests/native-live-test.cpp` / `vr/test-native-live.sh`,
+`vr/NATIVE-LIVE.md`) runs three multi-frame sequences through the real
+consumer and asserts balanced allocations, constant arena high-water,
+bounded RSS and the counter schedule (the reset observed on the post-call
+carrier state). 87 checks at -O2 (8.3 s/frame measured, 93 s suite);
+independent review FAIL (6 findings) all fixed and reverified. An OPEN
+DEFECT is recorded: an uninitialised heap read (proven by MALLOC_PERTURB_
+flipping -O0 probes; performance-only; -O0 codegen only; -O2 clean even
+under perturb; exact site not localised) — the suite's -O0 run is
+compile-only until it is; the full evidence trail is in NATIVE-LIVE.md.
+
+Next action: localise the uninitialised read (instrument the swin scratch
+partitions and the per-row decode staging in `native-eval.hpp`; reproduce
+under MALLOC_PERTURB_ as a regression), then phase 3 (int4 mixed-network
+path hardening), phase 4 (sustained GPU hardening: soak, device-loss
+re-verify, arena stability at the 345 MiB high-water) and phase 5 (stretch:
+desktop delivery boundary + a Centre Stage branch on a worktree, "synthetic
+weights — arbitrary transform" label; the tested boundary with a mock host
+is a valid outcome).
