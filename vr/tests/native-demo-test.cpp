@@ -208,9 +208,9 @@ int main() {
         for (int i = 0; i < 64; ++i) {
             CHECK(ra[i] >= 12 && ra[i] <= 28);
         }
-        // Different keys differ (some byte). The store keeps ONE buffer per
-        // kind, so the first record is copied out before the second fetch
-        // (a side-by-side pointer compare would alias the same memory).
+        // Different keys differ (some byte). The store keeps one buffer per
+        // key (stable), so both records can be fetched at once; the first is
+        // copied out anyway so this check predates per-key storage.
         std::uint8_t first[64];
         std::memcpy(first, ra, 64);
         bool differs = false;

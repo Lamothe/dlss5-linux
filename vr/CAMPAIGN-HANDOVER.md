@@ -321,3 +321,26 @@ key), all fixed and reverified. Next: G6 end-to-end per-frame GPU timings
 of the complete network vs the CPU baselines with the swin/split eval rows
 wired (the residency now makes their per-window calls viable), then the
 reported speedup summary.
+
+## Performance phase G6: full swin wiring + the stable record store
+(28/10/2026)
+
+The swin eval rows (pre/post, downsample, upsample, core) are WIREABLE and
+parity-verified (fixed per-window site sizing: the swin windows are always
+64 rows; the review caught the map-based sizing being undersized for small
+maps — HIGH finding, fixed). The per-key stable record store (one lazily
+allocated buffer per record key, no round-robin eviction) collapses the
+decode column 885 -> 455 ms/frame. MEASURED SURPRISE (honest): with the
+swin rows' GPU site enabled the end-to-end REGRESSES to 14,418 ms/frame
+(vs 12,380 G5) — the ~5k per-window matmul calls thrash the per-call
+input/output staging (3,337 ms upload + 5,549 ms download vs 1,229 ms
+kernel). The swin rows are therefore OPT-IN (EvalContext::swin_gpu,
+default false) with the CPU kernels the default; the recorded G7 fix is an
+offset-dispatch seam (upload each swin row's map once, per-window matmuls
+with device-local offsets, download once — bit-parity preserved). G6
+default measured: 11,717 ms/frame (1.39x vs cpu-mt, 3.22x vs cpu-1t),
+parity byte-identical, 615,365 checks green. Review: 5 findings (the
+HIGH scratch-sizing defect, the DemoStore double-free risk from the
+implicit copy, three comment staleness items), all fixed and reverified.
+Next: G7 the offset-dispatch window seam, then CPU SIMD (item 3 of
+Michael's brief), then sustained-operation hardening (item 4).

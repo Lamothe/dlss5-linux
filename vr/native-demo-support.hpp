@@ -254,24 +254,39 @@ struct DemoStore {
     Preset preset = Preset::kSeeded;
     std::uint32_t seed = 20261028u;
 
-    // Per-key record storage. Slot counts cover the widest known
-    // within-row live set (five swin code records + the scalar tables, the
-    // pre-block's lift + tables) with margin. The largest single requests:
-    // the vit ffn weight [4096, 1024] = 4194304 codes (exactly one code
-    // slot, zero slack) and the split bias table [16, 4096] = 65536 floats.
-    static constexpr int kCodeSlots = 16;
-    static constexpr int kValueSlots = 32;
+    // Per-key record storage: each (block, layer, name, which) key keeps one
+    // buffer, stable after its first fetch at its final size (a larger later
+    // request may realloc and move it — the plan fetches each key at one
+    // fixed size, so this is first-fill in practice). Stable pointers let the
+    // Vulkan weight cache SKIP its per-hit re-upload; the cache's content
+    // hash remains the correctness guard either way. (The earlier round-robin
+    // slots recycled pointers across keys, which the hash had to catch and
+    // re-upload every frame.) The plan's record set is well under
+    // kMaxRecords; memory is the sum of the actual records (~80 MiB of codes
+    // for the vit matrices), allocated on first fetch.
+    static constexpr int kMaxRecords = 256;
     struct Slot {
         std::uint64_t key = 0;
         bool used = false;
         std::size_t filled = 0;
+        std::uint8_t* codes = nullptr;
+        float* values = nullptr;
     };
-    Slot code_slots[kCodeSlots] = {};
-    std::uint8_t codes[kCodeSlots][1 << 22] = {};
-    Slot value_slots[kValueSlots] = {};
-    float values[kValueSlots][1 << 17] = {};
+    Slot code_slots[kMaxRecords] = {};
+    Slot value_slots[kMaxRecords] = {};
     int code_next = 0;
     int value_next = 0;
+
+    ~DemoStore() {
+        for (int i = 0; i < kMaxRecords; ++i) {
+            std::free(code_slots[i].codes);
+            std::free(value_slots[i].values);
+        }
+    }
+    DemoStore() = default;
+    // Owned malloc'd buffers: copying would double-free.
+    DemoStore(const DemoStore&) = delete;
+    DemoStore& operator=(const DemoStore&) = delete;
 };
 
 namespace demo_detail {
@@ -313,7 +328,8 @@ inline std::uint64_t request_key(const char* name, int block, int layer,
                                      | ((which + 16) & 0xFF));
 }
 
-// Finds the key's slot, or takes the next round-robin slot.
+// Finds the key's stable slot, or appends a new one (never evicting: the
+// pointer handed out for a key must keep its content).
 inline int claim_slot(DemoStore::Slot* slots, int count, std::uint64_t key,
                       int& cursor) {
     for (int i = 0; i < count; ++i) {
@@ -321,8 +337,11 @@ inline int claim_slot(DemoStore::Slot* slots, int count, std::uint64_t key,
             return i;
         }
     }
+    if (cursor >= count) {
+        return -1;
+    }
     const int slot = cursor;
-    cursor = (cursor + 1) % count;
+    ++cursor;
     slots[slot].key = key;
     slots[slot].used = true;
     slots[slot].filled = 0;
@@ -336,10 +355,25 @@ inline const std::uint8_t* fill_codes(DemoStore& s, int block, int layer,
     if (count > (1u << 22)) {
         return nullptr;
     }
-    const int slot = claim_slot(s.code_slots, DemoStore::kCodeSlots,
+    const int slot = claim_slot(s.code_slots, DemoStore::kMaxRecords,
                                 request_key(name, block, layer, which),
                                 s.code_next);
-    std::uint8_t* out = s.codes[slot];
+    if (slot < 0) {
+        return nullptr;
+    }
+    if (s.code_slots[slot].filled < count) {
+        // Lazy exact-size allocation; growth keeps the pointer STABLE is
+        // not guaranteed by realloc — but a grown record's old prefix was
+        // handed out to previous calls already consumed, and the cache's
+        // hash catches content changes at the same pointer either way.
+        auto* grown = static_cast<std::uint8_t*>(
+            std::realloc(s.code_slots[slot].codes, count));
+        if (grown == nullptr) {
+            return nullptr;
+        }
+        s.code_slots[slot].codes = grown;
+    }
+    std::uint8_t* out = s.code_slots[slot].codes;
     if (s.code_slots[slot].filled >= count) {
         return out;  // the prefix already handed out is the same stream
     }
@@ -365,10 +399,21 @@ inline const float* fill_values(DemoStore& s, int block, int layer,
     if (count > (1u << 17)) {
         return nullptr;
     }
-    const int slot = claim_slot(s.value_slots, DemoStore::kValueSlots,
+    const int slot = claim_slot(s.value_slots, DemoStore::kMaxRecords,
                                 request_key(name, block, layer, which),
                                 s.value_next);
-    float* out = s.values[slot];
+    if (slot < 0) {
+        return nullptr;
+    }
+    if (s.value_slots[slot].filled < count) {
+        auto* grown = static_cast<float*>(
+            std::realloc(s.value_slots[slot].values, count * sizeof(float)));
+        if (grown == nullptr) {
+            return nullptr;
+        }
+        s.value_slots[slot].values = grown;
+    }
+    float* out = s.value_slots[slot].values;
     if (s.value_slots[slot].filled >= count) {
         return out;
     }

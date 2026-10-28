@@ -155,3 +155,46 @@ G2's per-call staging here. The full residency benefit requires stable
 pointer-to-content record storage (a per-key record store); that is part of
 the G6 wiring slice along with the swin/split eval rows. A stable-key
 provider pays the hash per hit and never re-uploads.
+
+## G6 — full swin wiring + the stable record store (28/10/2026)
+
+Two deliverables, one measured surprise.
+
+1. **The swin eval rows are WIREABLE and parity-verified** — eval_pre_block,
+   the swin_downsample row, the swin_layer_upsample row and the swin_core
+   row each construct a SwinProjectionSite (fixed per-window sizing: the
+   swin windows are always 64 rows, so the site scratch is 320*channels
+   floats) and route their swin_linear projections through the executor.
+   The complete-network CPU-vs-GPU parity gate stays byte-identical with
+   the wiring enabled.
+
+2. **The per-key stable record store** (native-demo-support.hpp): one
+   lazily-allocated buffer per record key, stable after first fill, so the
+   Vulkan weight cache serves hits without re-upload and the e4m3 decode
+   collapses: 885 -> 454 ms/frame.
+
+**Measured surprise (honest):** with the swin rows' GPU site ENABLED the
+end-to-end frame time REGRESSES: 14,418 ms/frame vs 12,380 (G5) — the
+per-window calls (64-token windows; ~5k matmul calls per frame across the
+swin rows) thrash the per-call input/output staging: 3,337 ms staging
+upload + 5,549 ms download per frame versus the 1,229 ms of kernel time.
+The per-window transfer overhead dominates even with resident weights.
+The swin rows are therefore OPT-IN (`EvalContext::swin_gpu`, default
+false): the wiring and its parity tests land, the CPU kernels stay the
+default for these rows until a batched seam exists.
+
+**The recorded fix (G7):** an offset-dispatch seam — upload each swin row's
+map ONCE, run the per-window matmuls with device-local in/out offsets (two
+extra push constants), download ONCE. The products per window are
+unchanged (bit-parity preserved; only the transfer granularity changes).
+Until then the measured configuration is: vit + split rows on GPU (hoisted,
+few large calls), swin rows on CPU, stable record store resident —
+11,717 ms/frame end-to-end (1.39x vs cpu-mt; 3.22x vs cpu-1t), parity
+gate byte-identical, 615,365-check eval suite green.
+
+| Path | ms/frame | note |
+|---|---|---|
+| cpu-mt (8 threads) | 16,303 | P2 reference |
+| G5 (vit+split GPU, staging) | 12,380 | per-call weight staging |
+| G6 swin-wired (measured) | 14,418 | REGRESSION: per-window transfer thrash |
+| G6 default (swin on CPU) | 11,717 | stable store resident (decode 885->455 ms) |

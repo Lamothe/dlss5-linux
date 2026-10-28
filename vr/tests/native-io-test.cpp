@@ -121,6 +121,30 @@ void operator delete(void* p, std::size_t, std::align_val_t) noexcept { std::fre
 void operator delete[](void* p, std::size_t, std::align_val_t) noexcept { std::free(p); }
 
 int main() {
+    // ---- end-to-end round trip on a full synthetic frame ---------------------
+    // frame_from_u8 -> frame_to_u8: every input byte must survive exactly
+    // (the levels round trip is exact on its own grid; the mirror padding
+    // is not read back).
+    {
+        constexpr int kRows = 32;
+        constexpr int kCols = 24;
+        constexpr int kPixels = kRows * kCols;
+        static std::uint8_t src[kPixels * 3];
+        static std::uint8_t dst[kPixels * 3];
+        for (int i = 0; i < kPixels * 3; ++i) {
+            src[i] = static_cast<std::uint8_t>((i * 73 + 19) & 0xFF);
+        }
+        static float storage[3 * kRows * kCols + 16 * 3];
+        static dlss5_nr::HostFrame frame;
+        const Status st = dlss5_nr::frame_from_u8(
+            src, 3, kRows, kCols, storage,
+            sizeof(storage) / sizeof(storage[0]), frame);
+        CHECK(st == Status::kOk);
+        const Status st2 = dlss5_nr::frame_to_u8(frame, dst);
+        CHECK(st2 == Status::kOk);
+        CHECK(std::memcmp(src, dst, sizeof(src)) == 0);
+    }
+
     // ---- the pinned `_mirror` index map (hand-derived tables) ----------------
     // extent 3: [0,1,2] in range; 3 -> 2*3-3-2 = 1; 4 -> 0; 5 -> -2 clamps to 0.
     {

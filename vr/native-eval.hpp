@@ -183,6 +183,12 @@ struct EvalContext {
     // the deterministic reference. The kernels' post chains always run on
     // the CPU, so executor results flow through the reference arithmetic.
     const ProjectionExecutor* projection = nullptr;
+    // G6: the swin rows' per-window projections are WIREABLE but measure a
+    // regression through the per-call seam (in/out transfer thrash at
+    // 64-token windows: 14,418 vs 12,380 ms/frame end-to-end), so their GPU
+    // site is opt-in until a batched/offset-dispatch seam exists. The vit
+    // and split rows (hoisted, few large calls) stay on GPU by default.
+    bool swin_gpu = false;
 };
 
 // ---- vocabulary ---------------------------------------------------------------------------------
@@ -955,9 +961,18 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
     const std::size_t pooled_count = static_cast<std::size_t>(channels)
         * pixels / 4;
     const std::size_t frame_count = 3u * pixels;
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
+        && ctx.swin_gpu;
+    // The swin windows are always kWindowTokens (64) rows (zero-padded), so
+    // the largest site calls are fixed: [64, C] in, [64, 4C] out.
+    const std::size_t site_input = std::size_t{64} * channels;
+    const std::size_t site_products = std::size_t{256} * channels;
+    const std::size_t site_scratch =
+        gpu_projection ? site_input + site_products : 0;
     const std::size_t work_count = static_cast<std::size_t>(kStoredLiftValues)
         + map + map + frame_count + swin_decoded_floats(channels, heads, fetch)
-        + block_needed;
+        + block_needed + site_scratch;
     RowBlocks blocks;
     status = row_begin(ctx, spec, pooled_count, map, work_count, blocks);
     if (status != Status::kOk) {
@@ -970,6 +985,14 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
     float* frame = acc + map;
     float* decoded = frame + frame_count;
     float* block_scratch = decoded + swin_decoded_floats(channels, heads, fetch);
+    SwinProjectionSite swsite;
+    if (gpu_projection) {
+        swsite.ex = ctx.projection;
+        swsite.input_dense = block_scratch + block_needed;
+        swsite.products = swsite.input_dense + site_input;
+        swsite.input_capacity = site_input;
+        swsite.products_capacity = site_products;
+    }
     SwinSiteOverlay overlay;
     build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,
                        overlay);
@@ -1016,7 +1039,8 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
         static_cast<std::ptrdiff_t>(image.rows) * image.cols;
     lifted_map.row_stride = static_cast<std::ptrdiff_t>(image.cols);
     status = swin_core(lifted_map, shift_rows, shift_cols, params, blocks.aside,
-                       map, acc, map, block_scratch, block_needed);
+                       map, acc, map, block_scratch, block_needed,
+                       gpu_projection ? &swsite : nullptr);
     if (status != Status::kOk) {
         row_abort(ctx, spec);
         return status;
@@ -1111,9 +1135,17 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
             * static_cast<std::size_t>(x.cols / 2);
         const std::size_t block_needed = swin_block_scratch_needed(
             x, false, false, shift_rows, shift_cols, shape);
+        const bool gpu_projection =
+            ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
+            && ctx.swin_gpu;
+        // Fixed per-window sizing: the swin windows are always 64 rows.
+        const std::size_t site_input = std::size_t{64} * channels;
+        const std::size_t site_products = std::size_t{256} * channels;
+        const std::size_t site_scratch =
+            gpu_projection ? site_input + site_products : 0;
         const std::size_t work_count = decoded_count
             + static_cast<std::size_t>(2 * channels) * channels  // resample
-            + map + pooled + block_needed;
+            + map + pooled + block_needed + site_scratch;
         status = row_begin(ctx, spec, next_count, map, work_count, blocks);
         if (status != Status::kOk) {
             return status;
@@ -1122,6 +1154,14 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         float* resample_dst = decoded + decoded_count;
         float* ds_scratch = resample_dst
             + static_cast<std::size_t>(2 * channels) * channels;
+        SwinProjectionSite swsite;
+        if (gpu_projection) {
+            swsite.ex = ctx.projection;
+            swsite.input_dense = ds_scratch + map + pooled + block_needed;
+            swsite.products = swsite.input_dense + site_input;
+            swsite.input_capacity = site_input;
+            swsite.products_capacity = site_products;
+        }
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
         params.site = &overlay;
@@ -1137,7 +1177,8 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         status = swin_downsample(x, shift_rows, shift_cols, params, resample,
                                  spec.out_w, spec.out_h, blocks.main,
                                  next_count, blocks.aside, map, ds_scratch,
-                                 map + pooled + block_needed);
+                                 map + pooled + block_needed,
+                                 gpu_projection ? &swsite : nullptr);
         if (status != Status::kOk) {
             row_abort(ctx, spec);
             return status;
@@ -1201,10 +1242,18 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         blend_view.row_stride = static_cast<std::ptrdiff_t>(skip.cols);
         const std::size_t block_needed = swin_block_scratch_needed(
             blend_view, channels == 32, true, shift_rows, shift_cols, shape);
+        const bool gpu_projection =
+            ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
+            && ctx.swin_gpu;
+        // Fixed per-window sizing: the swin windows are always 64 rows.
+        const std::size_t site_input = std::size_t{64} * channels;
+        const std::size_t site_products = std::size_t{256} * channels;
+        const std::size_t site_scratch =
+            gpu_projection ? site_input + site_products : 0;
         const std::size_t work_count = decoded_count
             + static_cast<std::size_t>(channels) * 2 * channels  // resample
             + static_cast<std::size_t>(channels)                 // gain copy
-            + blend_count + projected_count + block_needed;
+            + blend_count + projected_count + block_needed + site_scratch;
         status = row_begin(ctx, spec, blend_count, 0, work_count, blocks);
         if (status != Status::kOk) {
             return status;
@@ -1214,6 +1263,15 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         float* gain_dst = resample_dst
             + static_cast<std::size_t>(channels) * 2 * channels;
         float* up_scratch = gain_dst + static_cast<std::size_t>(channels);
+        SwinProjectionSite swsite;
+        if (gpu_projection) {
+            swsite.ex = ctx.projection;
+            swsite.input_dense =
+                up_scratch + blend_count + projected_count + block_needed;
+            swsite.products = swsite.input_dense + site_input;
+            swsite.input_capacity = site_input;
+            swsite.products_capacity = site_products;
+        }
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
         params.site = &overlay;
@@ -1233,15 +1291,12 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
             return status;
         }
         const MatrixView gain{gain_row, 1, channels, channels};
-        // No SwinProjectionSite here: the swin rows' projections run inside
-        // per-window loops (16 tokens per call) and per-call staging would
-        // thrash; the GPU wiring for these rows lands with weight residency
-        // (persistent weight buffers), keeping the CPU kernel meanwhile.
         status = swin_layer_upsample(x, skip, shift_rows, shift_cols, params,
                                      resample, gain, blocks.main, blend_count,
                                      up_scratch,
                                      blend_count + projected_count
-                                         + block_needed);
+                                         + block_needed,
+                                     gpu_projection ? &swsite : nullptr);
         if (status != Status::kOk) {
             row_abort(ctx, spec);
             return status;
@@ -2536,9 +2591,17 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     const SwinBlockParams shape = swin_shape_params(channels, heads);
     const std::size_t block_needed = swin_block_scratch_needed(
         blend_view, true, true, shift_rows, shift_cols, shape);
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
+        && ctx.swin_gpu;
+    // Fixed per-window sizing: the swin windows are always 64 rows.
+    const std::size_t site_input = std::size_t{64} * channels;
+    const std::size_t site_products = std::size_t{256} * channels;
+    const std::size_t site_scratch =
+        gpu_projection ? site_input + site_products : 0;
     const std::size_t work_count = map + map + frame_count + frame_count
         + frame_count + swin_decoded_floats(channels, heads, fetch)
-        + block_needed;
+        + block_needed + site_scratch;
     RowBlocks blocks;
     status = row_begin(ctx, spec, frame_count, 0, work_count, blocks);
     if (status != Status::kOk) {
@@ -2551,6 +2614,14 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     float* staged = frame + frame_count;
     float* decoded = staged + frame_count;
     float* block_scratch = decoded + swin_decoded_floats(channels, heads, fetch);
+    SwinProjectionSite swsite;
+    if (gpu_projection) {
+        swsite.ex = ctx.projection;
+        swsite.input_dense = block_scratch + block_needed;
+        swsite.products = swsite.input_dense + site_input;
+        swsite.input_capacity = site_input;
+        swsite.products_capacity = site_products;
+    }
     SwinSiteOverlay overlay;
     build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,
                        overlay);
@@ -2574,11 +2645,9 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     status = blend(x, skip, main_gain, skip_gain,
                    static_cast<std::size_t>(channels), blend_map, map);
     if (status == Status::kOk) {
-        // No SwinProjectionSite: see the upsample row's note (per-window
-        // calls need weight residency first).
         status = swin_core(blend_batch, shift_rows, shift_cols, params,
                            wide_map, map, nullptr, 0, block_scratch,
-                           block_needed);
+                           block_needed, gpu_projection ? &swsite : nullptr);
     }
     if (status == Status::kOk) {
         FeatureBatchView wide;
