@@ -7,7 +7,7 @@ testing of the GPU path. The CPU reference path is unchanged; every check
 below requires bit-identical results against an independently accumulated
 scalar reference (the shader's `precise` key-order accumulation).
 
-## What is covered (native-vulkan-stress-test.cpp; 1,965 checks at -O2/-O0)
+## What is covered (native-vulkan-stress-test.cpp; 1,997 checks at -O2/-O0)
 
 1. **Init/teardown cycles (50).** Full `VulkanMatmul` create -> resident
    run -> destroy cycles: every result bit-identical, and the CPU-side
@@ -26,6 +26,20 @@ scalar reference (the shader's `precise` key-order accumulation).
 4. **Failure paths.** Null in/out, zero tokens, entry-shape mismatch and
    oversized tokens/rows reject with `Status`, leave the output sentinel
    untouched, and a subsequent good run remains correct.
+5. **Forced failures (fault injection) + the live generation counter.**
+   The test-only `VulkanFaultPlan` seam makes the next `vkQueueSubmit` or
+   `vkMapMemory` fail synthetically WITHOUT touching the driver (armed for
+   exactly one failure; inert at -1 — production behaviour unchanged).
+   Each armed failure surfaces as `Status` with the output sentinel
+   untouched, and the next unarmed run is correct. The countdown
+   semantics are checked deterministically at the seam (one run issues
+   several submits, so run-level "Nth submit" expectations are avoided).
+   The generation counter is now LIVE: `vulkan_matmul_destroy` preserves
+   it (it is the matmul's identity, not a resource) and create advances
+   it, so a grow-only rebuild (destroy + create) moves 1 -> 2 and the
+   cache hit rewrites the entry's descriptor against the new buffers
+   (`written_gen`, `written_in` asserted). The ensure-insert path records
+   `written_gen` (previously left 0).
 
 ## Sustained operation (the 50-frame demo run)
 
@@ -36,9 +50,11 @@ frames-since-reset counter walks 0..19 then resets to 0, and the process
 RSS (sampled every 5 s) is flat across the run. The measured numbers are
 in NATIVE-PERFORMANCE.md.
 
-## What is NOT covered — device-loss behaviour (honest gap)
+## What is NOT covered — real device loss (honest gap)
 
-Forcing `VK_ERROR_DEVICE_LOST` requires driver fault injection
+The forced-failure seam injects failures at the CALL RESULT level (our
+code's `VkResult` handling); it cannot reproduce a driver's behaviour
+after `VK_ERROR_DEVICE_LOST`. Forcing that needs driver fault injection
 (`VK_EXT_device_fault` fault submission or a faulting layer) which we
 deliberately do not add: no proprietary runtime probes and no fragile
 driver shims. What IS established:
@@ -48,20 +64,26 @@ driver shims. What IS established:
   on a failed transfer/dispatch — the G1 review verified the failure-path
   cleanup; the two `vkEnumeratePhysicalDevices` results are ignored by
   design — failure leaves the count zero and the run skips cleanly);
-- the weight cache's stale-set rewrite is guarded by the
-  `written_in`/`written_out` handle check (the entry's generation field is
-  currently inert: `vulkan_matmul_create` resets the struct before
-  incrementing, so `written_gen` never distinguishes a rebuild — recorded
-  here rather than claimed as protection);
+- the weight cache's stale-set rewrite is guarded by the LIVE generation
+  counter (verified: a rebuild moves the generation and the next hit
+  rewrites the descriptor) together with the `written_in`/`written_out`
+  handle check;
 - a failed run leaves the CPU reference path fully functional (the GPU
   backend is optional at every seam).
 
-What is untested: actual device-loss recovery (re-creation of the device,
-in-flight command buffer behaviour and driver-specific teardown ordering).
-A real device loss mid-run is expected to surface as a failed `VkResult`
-on the next submission -> `Status` -> the row's caller rejects; the demo
-prints the failing frame. This expectation is NOT verified against a real
-device loss and must not be read as a claim.
+What is recovered after a FORCED failure (tested): nothing needs recovery
+— the run returns `Status`, outputs stay sentinel-untouched, the CPU
+reference path is unaffected, and the next unarmed run is correct (the
+entry cache and matmul stay usable).
+
+What is NOT implemented: real device-loss recovery. A `VK_ERROR_DEVICE_LOST`
+mid-run is expected to surface as a failed `VkResult` on the next
+submission -> `Status` -> the row's caller rejects; the demo prints the
+failing frame. What is NOT recovered and NOT claimed: the device, queues
+and in-flight command buffers (after device loss the driver's teardown
+ordering is undefined and the caller must discard the whole Vulkan context
+— `vulkan_close` + recreate — before retrying). This expectation is NOT
+verified against a real device loss and must not be read as a claim.
 
 ## Provenance and honesty
 

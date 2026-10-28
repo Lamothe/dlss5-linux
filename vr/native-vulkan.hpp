@@ -36,6 +36,34 @@ namespace dlss5_nr {
 
 // ---- the device -----------------------------------------------------------------------------------
 
+// TEST-ONLY forced-failure seam (fault INJECTION for tests). Armed
+// counters make the Nth call of a run-path operation fail synthetically
+// WITHOUT touching the driver; -1 (the default) means never. This is not
+// a runtime or capture probe: it never queries the driver and changes
+// nothing when unarmed. Production behaviour is byte-identical to the
+// previous build when the counters are left at -1.
+struct VulkanFaultPlan {
+    // Fires on the Nth vkMapMemory (0 = the next call).
+    int fail_map_countdown = -1;
+    // Fires on the Nth vkQueueSubmit (0 = the next call).
+    int fail_submit_countdown = -1;
+};
+inline VulkanFaultPlan g_vulkan_faults{};
+
+// Consumes one call from the countdown: returns true when the call must
+// fail. The counter arms for exactly one failure (then resets to -1).
+inline bool vulkan_fault_consume(int& countdown) {
+    if (countdown < 0) {
+        return false;
+    }
+    if (countdown == 0) {
+        countdown = -1;
+        return true;
+    }
+    --countdown;
+    return false;
+}
+
 struct VulkanDevice {
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
@@ -244,8 +272,9 @@ inline Status vulkan_upload(const VulkanDevice& d, VulkanBuffer& staging,
         return Status::kInvalidBuffer;
     }
     void* mapped = nullptr;
-    if (vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
-        != VK_SUCCESS) {
+    if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+        || vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
+               != VK_SUCCESS) {
         return Status::kInvalidBuffer;
     }
     std::memcpy(mapped, data, bytes);
@@ -271,7 +300,14 @@ inline Status vulkan_upload(const VulkanDevice& d, VulkanBuffer& staging,
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    ok = ok && vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS;
+    {
+        bool submit_ok = false;
+        if (!vulkan_fault_consume(g_vulkan_faults.fail_submit_countdown)) {
+            submit_ok = vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
+                        == VK_SUCCESS;
+        }
+        ok = ok && submit_ok;
+    }
     ok = ok && vkQueueWaitIdle(d.queue) == VK_SUCCESS;
     vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
     return ok ? Status::kOk : Status::kInvalidBuffer;
@@ -304,15 +340,23 @@ inline Status vulkan_download(const VulkanDevice& d, VulkanBuffer& staging,
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
     si.pCommandBuffers = &cmd;
-    ok = ok && vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS;
+    {
+        bool submit_ok = false;
+        if (!vulkan_fault_consume(g_vulkan_faults.fail_submit_countdown)) {
+            submit_ok = vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
+                        == VK_SUCCESS;
+        }
+        ok = ok && submit_ok;
+    }
     ok = ok && vkQueueWaitIdle(d.queue) == VK_SUCCESS;
     vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
     if (!ok) {
         return Status::kInvalidBuffer;
     }
     void* mapped = nullptr;
-    if (vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
-        != VK_SUCCESS) {
+    if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+        || vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
+               != VK_SUCCESS) {
         return Status::kInvalidBuffer;
     }
     std::memcpy(data, mapped, bytes);
@@ -368,8 +412,14 @@ struct VulkanMatmulTiming {
 };
 
 inline void vulkan_matmul_destroy(const VulkanDevice& d, VulkanMatmul& m) {
+    // The generation is the matmul's IDENTITY (the cache's stale-set check
+    // compares it), not a resource: destroying frees the handles but keeps
+    // the counter, so destroy + create (the grow-only rebuild) advances it
+    // and a rebuilt matmul cannot silently reuse an old descriptor.
+    const std::uint32_t preserved_generation = m.generation;
     if (d.device == VK_NULL_HANDLE) {
         m = VulkanMatmul{};
+        m.generation = preserved_generation;
         return;
     }
     vkDeviceWaitIdle(d.device);
@@ -393,6 +443,7 @@ inline void vulkan_matmul_destroy(const VulkanDevice& d, VulkanMatmul& m) {
         vkDestroyDescriptorSetLayout(d.device, m.dsl, nullptr);
     }
     m = VulkanMatmul{};
+    m.generation = preserved_generation;
 }
 
 inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
@@ -403,8 +454,16 @@ inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
         || max_rows < 1) {
         return Status::kInvalidValues;
     }
+    // Preserve the generation across the destroy + struct reset so a
+    // grow-only rebuild (destroy + create) is distinguishable from the
+    // first create: the cache's stale-set check compares this counter, and
+    // VkBuffer handles are reusable after free (a handle comparison alone
+    // cannot tell an old descriptor from a reused handle). Read BEFORE the
+    // destroy (destroy zeroes the struct).
+    const std::uint32_t next_generation = out.generation + 1;
     vulkan_matmul_destroy(d, out);  // safe on a zeroed or live handle set
     out = VulkanMatmul{};
+    out.generation = next_generation;
     out.max_tokens = max_tokens;
     out.max_c_in = max_c_in;
     out.max_rows = max_rows;
@@ -505,7 +564,6 @@ inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
                                     | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                 true)
                == Status::kOk;
-    ++out.generation;
     VkDescriptorBufferInfo infos[3]{};
     infos[0] = {out.in_dev.buffer, 0, in_bytes};
     infos[1] = {out.w_dev.buffer, 0, w_bytes};
@@ -768,6 +826,7 @@ inline Status vulkan_weight_cache_ensure(VulkanWeightCache& cache,
     e.cols = cols;
     e.written_in = m.in_dev.buffer;
     e.written_out = m.out_dev.buffer;
+    e.written_gen = m.generation;
     e.hash = content_hash;
     *out = &e;
     ++cache.count;
@@ -864,8 +923,9 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
     bool submitted = false;
     {
         const auto t0 = std::chrono::steady_clock::now();
-        submitted = vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
-                    == VK_SUCCESS;
+        submitted = !vulkan_fault_consume(g_vulkan_faults.fail_submit_countdown)
+                    && vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
+                           == VK_SUCCESS;
         submitted = (vkQueueWaitIdle(d.queue) == VK_SUCCESS) && submitted;
         const auto t1 = std::chrono::steady_clock::now();
         timing.kernel_ms =
@@ -987,8 +1047,9 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
     bool submitted = false;
     {
         const auto t0 = std::chrono::steady_clock::now();
-        submitted = vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
-                    == VK_SUCCESS;
+        submitted = !vulkan_fault_consume(g_vulkan_faults.fail_submit_countdown)
+                    && vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
+                           == VK_SUCCESS;
         submitted = (vkQueueWaitIdle(d.queue) == VK_SUCCESS) && submitted;
         const auto t1 = std::chrono::steady_clock::now();
         timing.kernel_ms =

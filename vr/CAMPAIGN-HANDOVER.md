@@ -396,3 +396,31 @@ delete set) — all fixed and reverified.
 Next: the swin rows' batched/offset-dispatch window seam (G6's recorded
 fix, would lift the 79% CPU swin share), or close the performance stage
 and hand over.
+
+## Device-loss honesty slice (28/10/2026)
+
+The gap is closed in both directions Michael named. (1) Forced-failure
+testing: the test-only VulkanFaultPlan seam injects VkResult-level
+failures (vkQueueSubmit / vkMapMemory) WITHOUT touching the driver (armed
+for one failure; inert at -1, production behaviour unchanged); each armed
+failure is verified to surface as Status with the output sentinel
+untouched and the path usable afterwards. (2) The generation counter is
+LIVE: destroy preserves it (it is identity, not a resource), create
+advances it (a rebuild moves 1 -> 2), and the ensure-insert records
+written_gen (previously 0); the stale-set rewrite is verified through a
+rebuild + cache hit. Recovery is documented PRECISELY: forced failures
+need no recovery (Status + sentinel + next run correct); real device loss
+is NOT implemented/claimed (the caller must discard the Vulkan context;
+in-flight command buffers are undefined) and the injection is call-result
+level, not driver device-loss. native-vulkan-stress-test: 1,997 checks at
+-O2/-O0; the main vulkan suite + the complete-network parity gate stay
+byte-identical. Review: 14 findings; the real gaps (the content-hash
+contract tests, doc wording) fixed; findings 1/MAJOR-1/MAJOR-2 were
+verified against the tree as already-fixed or unfounded (the tests assert
+written_gen-after-insert and the symmetric aligned accounting; the run
+returns before the download on a failed dispatch at native-vulkan.hpp
+933-935) — recorded rather than silently dropped.
+
+Remaining: the batched/offset-dispatch swin seam (gap 1 of the 28/10
+brief) with its honest measurement (the swin rows stay opt-in until a
+batched path measures faster than CPU).

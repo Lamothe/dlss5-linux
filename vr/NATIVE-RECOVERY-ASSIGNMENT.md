@@ -177,3 +177,16 @@ fault injection; the inert generation counter recorded, the handle check
 is the real guard). Review 9 findings fixed. Next action: the swin rows'
 batched/offset-dispatch window seam (G6's recorded fix) or performance
 stage closure, at Michael's direction.
+
+## Latest continuation (28/10/2026, device-loss honesty)
+
+Published: the forced-failure injection seam (call-result level, inert
+when unarmed), the LIVE generation counter (destroy preserves identity;
+rebuilds advance it; insert records written_gen), sentinel-verified
+failure paths and precise recovery documentation (forced failures: tested;
+real device loss: not implemented/claimed). Stress suite 1,997 checks at
+-O2/-O0; parity gate byte-identical. Next action: gap 1 of the 28/10
+brief -- the batched/offset-dispatch swin seam with its honest
+measurement; the swin rows stay opt-in until a batched path measures
+faster than CPU (or the measurement shows it cannot, in which case they
+stay opt-in with the evidence recorded).

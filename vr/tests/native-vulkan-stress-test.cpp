@@ -414,6 +414,129 @@ int main(int argc, char** argv) {
         std::printf("native-vulkan-stress: failure paths OK\n");
     }
 
+    // ---- 4b. the content-hash contract (findings 12/13) ------------------
+    // The hash must be total (no NaN self-mismatches), distinct for
+    // different content INCLUDING sign-bit changes, and distinct when the
+    // same pointer carries different (rows, cols) extents (the equal-
+    // pointer twin case: same address, different extent -> different hash
+    // -> a hit cannot bind the wrong extent).
+    {
+        float plus_zero = 0.0f;
+        float minus_zero = -0.0f;
+        CHECK(std::memcmp(&plus_zero, &minus_zero, sizeof plus_zero) != 0);
+        CHECK(vulkan_weight_hash(&plus_zero, sizeof plus_zero)
+              != vulkan_weight_hash(&minus_zero, sizeof minus_zero));
+        const float nan_v = __builtin_nanf("");
+        float nan_copy = nan_v;
+        CHECK(vulkan_weight_hash(&nan_v, sizeof nan_v)
+              == vulkan_weight_hash(&nan_copy, sizeof nan_copy));
+        static float nine[9];
+        for (int i = 0; i < 9; ++i) {
+            nine[i] = 0.25f;
+        }
+        // Same base pointer, two extents: 8 floats vs 9 floats.
+        CHECK(vulkan_weight_hash(nine, 8 * sizeof(float))
+              != vulkan_weight_hash(nine, 9 * sizeof(float)));
+    }
+
+    // ---- 5. forced failures + the live generation counter -----------------
+    // The fault seam injects failures WITHOUT touching the driver: each
+    // armed failure must surface as Status with the output sentinel
+    // untouched, and the next unarmed run must be correct (the path is
+    // usable after a failure). The generation counter must advance across
+    // a grow-only rebuild (destroy + create), which is what makes the
+    // cache's stale-set check meaningful.
+    {
+        VulkanMatmul m;
+        CHECK(vulkan_matmul_create(device, m, spv.data(), spv.size(), 4096,
+                                   1024, 4096)
+              == Status::kOk);
+        CHECK(m.generation == 1);
+        VulkanWeightCache cache;
+        CHECK(cache.init(device) == Status::kOk);
+        VulkanWeightCache::Entry* entry = nullptr;
+        CHECK(vulkan_weight_cache_ensure(
+                  cache, device, m, weights, weights, kRows, kIn,
+                  vulkan_weight_hash(weights, sizeof weights), &entry)
+              == Status::kOk);
+        CHECK(entry->written_gen == m.generation);
+
+        static float out[33 * 41];
+        static float sentinel[33 * 41];
+        for (std::size_t i = 0; i < 33 * 41; ++i) {
+            sentinel[i] = __builtin_nanf("");
+        }
+        // Forced submit failure on the next submit: run rejects, output
+        // untouched, and the following unarmed run is correct.
+        std::memcpy(out, sentinel, sizeof out);
+        g_vulkan_faults.fail_submit_countdown = 0;
+        CHECK(vulkan_matmul_run_resident(device, m, input, kTokens, kIn,
+                                         *entry, kRows, out, g_timing)
+              != Status::kOk);
+        CHECK(std::memcmp(out, sentinel, sizeof out) == 0);
+        CHECK(g_vulkan_faults.fail_submit_countdown == -1);
+        CHECK(vulkan_matmul_run_resident(device, m, input, kTokens, kIn,
+                                         *entry, kRows, out, g_timing)
+              == Status::kOk);
+        CHECK(std::memcmp(out, cpu_out, sizeof out) == 0);
+
+        // Forced map failure (the download's staging map): the resident run
+        // rejects before writing `out`; the path stays usable.
+        std::memcpy(out, sentinel, sizeof out);
+        g_vulkan_faults.fail_map_countdown = 0;
+        CHECK(vulkan_matmul_run_resident(device, m, input, kTokens, kIn,
+                                         *entry, kRows, out, g_timing)
+              != Status::kOk);
+        CHECK(std::memcmp(out, sentinel, sizeof out) == 0);
+        CHECK(vulkan_matmul_run_resident(device, m, input, kTokens, kIn,
+                                         *entry, kRows, out, g_timing)
+              == Status::kOk);
+        CHECK(std::memcmp(out, cpu_out, sizeof out) == 0);
+
+        // The countdown semantics, checked deterministically at the seam
+        // (one run issues several submits — upload/dispatch/download — so
+        // run-level "Nth submit" expectations would be fragile; the
+        // run-level checks above use countdown = 0, the run's first
+        // submit).
+        {
+            int countdown = 1;
+            CHECK(!vulkan_fault_consume(countdown));
+            CHECK(countdown == 0);
+            CHECK(vulkan_fault_consume(countdown));
+            CHECK(countdown == -1);
+            CHECK(!vulkan_fault_consume(countdown));
+            int never = -1;
+            CHECK(!vulkan_fault_consume(never));
+            CHECK(never == -1);
+        }
+
+        // Grow-only rebuild: the generation must advance (the cache's
+        // stale-set check compares it), and the entry's descriptor must be
+        // rewritten against the new matmul state (written_gen matches).
+        vulkan_matmul_destroy(device, m);
+        CHECK(vulkan_matmul_create(device, m, spv.data(), spv.size(), 8192,
+                                   1024, 4096)
+              == Status::kOk);
+        CHECK(m.generation == 2);
+        // The entry's descriptor was written against the OLD buffers: a
+        // cache hit must detect the stale generation and rewrite the
+        // descriptor against the new matmul state (the stale-set guard).
+        CHECK(vulkan_weight_cache_ensure(
+                  cache, device, m, weights, weights, kRows, kIn,
+                  vulkan_weight_hash(weights, sizeof weights), &entry)
+              == Status::kOk);
+        CHECK(entry->written_gen == m.generation);
+        CHECK(entry->written_in == m.in_dev.buffer);
+        CHECK(vulkan_matmul_run_resident(device, m, input, kTokens, kIn,
+                                         *entry, kRows, out, g_timing)
+              == Status::kOk);
+        CHECK(std::memcmp(out, cpu_out, sizeof out) == 0);
+        cache.destroy(device);
+        vulkan_matmul_destroy(device, m);
+        std::printf("native-vulkan-stress: forced failures + generation "
+                    "OK\n");
+    }
+
     vulkan_close(device);
     std::printf("native-vulkan-stress: %lld checks passed\n", g_checks);
     return 0;
