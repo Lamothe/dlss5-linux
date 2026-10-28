@@ -178,6 +178,16 @@ struct EvalContext {
     // The temporal history colour for the pre block's lift (slots 7..9);
     // null keeps the documented single-frame stub (current-colour copy).
     const FrameView* history = nullptr;
+    // The binary16 side channel's ("stream", block) state: the plan block
+    // whose value the caller's stash.stream buffer currently holds, or -1
+    // when no producer has written it. The pinned's `int4.side` is a dict
+    // whose key may be ABSENT — the first vit block's expansion has no
+    // producer (the split block before it writes no stream) and the pinned
+    // falls back to the e4m3 form there — and this stamp reproduces that
+    // gate exactly while keeping a never-written buffer from being read
+    // (the stale-content hazard). eval_reset clears it; the vit projection
+    // rows stamp the block they write for.
+    int stash_stream_block = -1;
     // Optional raw-projection executor for the vit projection rows (the
     // G2 GPU backend in native-vulkan.hpp). Null keeps the CPU kernel —
     // the deterministic reference. The kernels' post chains always run on
@@ -351,6 +361,7 @@ inline Status eval_reset(EvalContext& ctx) {
     state.put(1, static_cast<std::uint32_t>(kEvalStateWords));
     state.put(2, 0u);
     state.put(3, 0u);
+    ctx.stash_stream_block = -1;
     return Status::kOk;
 }
 
@@ -2040,14 +2051,18 @@ inline Status eval_vit_ffn_mixed(EvalContext& ctx, const LayerSpec& spec,
     if (status != Status::kOk) {
         return status;
     }
+    float* stash_dest = stash_out != nullptr
+        ? contract_stash_dest(ctx.weights, spec.block, spec.layer, *stash_out)
+        : nullptr;
     status = vit_residual_mixed(product, skip_tokens,
                                 static_cast<int>(tokens), c_out, gain,
-                                out_tokens, stash_out != nullptr
-                                    ? contract_stash_dest(ctx.weights,
-                                                          spec.block,
-                                                          spec.layer,
-                                                          *stash_out)
-                                    : nullptr);
+                                out_tokens, stash_dest);
+    if (status == Status::kOk && stash_dest != nullptr
+        && stash_dest == stash_out->stream) {
+        // The symmetric stamp to the e4m3 path's: the ("stream", block + 1)
+        // key exists only after the write succeeded.
+        ctx.stash_stream_block = spec.block + 1;
+    }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out,
                                        x.rows, x.cols, blocks.main, out_count);
@@ -2139,14 +2154,17 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             // the expansion quantises the STASH (never the layer input) and
             // scatters the permuted rows into the original channel order;
             // otherwise the e4m3 matmul reads the layer input (the pinned's
-            // `exact(tokens)`).
+            // `exact(tokens)`). The stamp is the pinned's dict-key presence:
+            // no producer wrote ("stream", block) (the first vit block) or a
+            // later block already consumed/overwrote it means e4m3.
             const Int4Site* site = nullptr;
             if (ctx.weights->int4 != nullptr) {
                 site = ctx.weights->int4(ctx.weights->context, spec.block,
                                          spec.layer, "vit_ffn");
             }
             if (site != nullptr && site->has_ex
-                && call.stash.stream != nullptr) {
+                && call.stash.stream != nullptr
+                && ctx.stash_stream_block == spec.block) {
                 if (site->perm == nullptr || site->perm_count != spec.c_out
                     || site->ex.rows != spec.c_out
                     || site->ex.cols != spec.c_in
@@ -2377,6 +2395,14 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                                              E4m3Matrix{codes, spec.c_out,
                                                         spec.c_in},
                                              gain, out_tokens, stash_dest);
+            }
+            if (status == Status::kOk && stash_dest != nullptr
+                && stash_dest == out.stash.stream) {
+                // The ("stream", block + 1) key comes into existence HERE
+                // (the pinned's dict entry appears only when this row writes
+                // it) — stamped only after the write succeeded, so a failed
+                // row never leaves the stamp claiming an unwritten buffer.
+                ctx.stash_stream_block = spec.block + 1;
             }
             if (status == Status::kOk) {
                 status = eval_tokens_to_planar(out_tokens, out_count,

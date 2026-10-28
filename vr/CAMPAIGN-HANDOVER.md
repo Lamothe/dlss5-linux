@@ -561,3 +561,44 @@ partitions and the per-row decode staging in `native-eval.hpp`; add a
 regression reproducing under `MALLOC_PERTURB_`), then overnight phase 3
 (int4 mixed-network path hardening), phase 4 (sustained GPU hardening) and
 phase 5 (desktop delivery boundary).
+
+## int4 mixed-network path (29/10/2026, overnight phase 3) — `vr/NATIVE-INT4.md`
+
+**A real seam gap found and closed.** The pinned's `int4.side` is a dict
+whose keys may be ABSENT; the vit FFN expansion's ("stream", block) key has
+no producer for the FIRST vit block (the split block before it writes no
+stream), so the pinned falls back to the e4m3 form there. The seam gated the
+int4 expansion on the caller's buffer POINTER: with buffers present it
+diverged from the pinned at the first block and read the caller's
+never-written buffer (an uninitialised-content hazard). Fixed with
+`EvalContext.stash_stream_block` — the exact dict-key presence semantics:
+the projections stamp the block they write for (only after a successful
+write), the expansion requires the stamp to match its own block,
+`eval_reset` clears it, and callers without buffers are behaviourally
+unchanged (the demo/live/GPU paths).
+
+**The plan-level integration suite** (`vr/tests/native-eval-int4-network-
+test.cpp`, 374 checks at -O2) runs the full 76-row small plan with the
+supported rows on their int4 sites: the record-consumption policy over
+every row (a mixed row never fetches its e4m3 twin; the first vit block's
+expansion fetches "weight" in every config — the pinned's fallback), the
+side channel's end-to-end routing discriminator (the mixed expansion's
+missing "weight" fetch needs the ("stream", block+1) chain across block
+boundaries; the has_ex-off control fetches "weight" again), row-level
+discriminators (the final map cannot see vit-row-only changes — the
+synthetic weights collapse the bottleneck's late rows to zero), determinism
+pairs, the network_run rejection contract and the temporal consumer over
+the mixed network. The row suite gained the producer-side stamp pin (519
+checks at both levels).
+
+Independent read-only review: FAIL (3 MINOR + 4 NIT) — all addressed (the
+stamp after the successful write; the replay compares both frames; the
+vacuous sentinel fixed; the symmetric stamp; two nits removed) with one
+clang-wording nit recorded (family template; clang unsupported). Sibling
+regressions green (eval 615,365/308,162; eval-int4 519/519; network 3,564;
+vit 662; split-swin 34,272).
+
+Next: localise the uninitialised read (phase 2's recorded defect), then
+phase 4 (sustained GPU hardening: soak, device-loss re-verify, arena
+stability at the 345 MiB high-water) and phase 5 (stretch: desktop delivery
+boundary + a Centre Stage branch on a worktree).

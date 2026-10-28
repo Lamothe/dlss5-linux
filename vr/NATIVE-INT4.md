@@ -109,6 +109,76 @@ store diverge. Delivering the side channel is the same open integration
 boundary as the `kVitFfnExpand` expansion cache. Out of scope: the
 `kVitFfnExpand` site and the SwinSite hard-swish/fold changes.
 
+## The side channel's dict semantics (the ("stream", block) stamp)
+
+The pinned's `int4.side` is a dict whose keys may be ABSENT: the vit FFN
+expansion reads `("stream", block)`, and the only producer is the previous
+block's projection row ("stream", block + 1 when the next block has an
+expansion table). The FIRST vit block therefore has no producer — the split
+block before it writes no stream — and the pinned falls back to the e4m3
+form (`exact(tokens)`) there. The earlier seam gated the int4 expansion on
+`call.stash.stream != nullptr`, a caller-supplied buffer pointer: with
+buffers present that gate could not express "key absent", diverging from the
+pinned at the first block AND reading the caller's never-written buffer
+there (an uninitialised-content hazard).
+
+`EvalContext.stash_stream_block` reproduces the dict key exactly: the value
+is the plan block whose binary16 value the caller's `stash.stream` buffer
+currently holds (-1 = the key is absent). `eval_reset` clears it; the vit
+projection rows stamp `spec.block + 1` and ONLY after their stash write
+succeeded (a failed row never leaves the stamp claiming an unwritten
+buffer); the expansion's gate requires the stamp to equal its own block.
+With no caller buffers nothing stamps and every consumer falls back, so the
+demo/live/GPU paths are behaviourally unchanged. The other keys (hidden,
+c, attn) are written by the immediately preceding row of the same block on
+every path and need no stamp.
+
+## Plan-level integration suite
+
+`vr/tests/native-eval-int4-network-test.cpp` (374 checks at -O2 via
+`vr/test-native-eval-int4-network.sh`; the -O0 build is compile-only — the
+recorded uninitialised-read gap of NATIVE-LIVE.md) runs the full 76-row
+small plan (64x72) with synthetic sites bound by policy: a pure-e4m3
+baseline, a fully mixed network (vit FFN contraction + expansion, vit QKV,
+split attn_qkv, the Swin overlay), an alternating-vit-block mixed network,
+a has_ex-off negative control, a wrong-shaped-site rejection and the
+temporal consumer over the mixed network. What it pins that the row suites
+cannot:
+
+* **The record-consumption policy over every row**: a mixed row never
+  fetches its e4m3 twin ("weight" at the FFN rows, "q"/"k"/"v" at the QKV
+  rows, "qkv" at the split rows) and a plain row always does — the run's
+  routing proof, including the first vit block's "weight" fetch in every
+  config (the pinned's no-producer fallback above).
+* **The side channel end to end**: the mixed expansion's missing "weight"
+  fetch is only possible when the ("stream", block+1) chain delivered the
+  producer's stash across row and block boundaries — and the has_ex-off
+  control must fetch "weight" again, proving the pins discriminate.
+* **Row-level discriminators**: the per-row output hashes (captured live
+  through the layer callback; post-run reads are stale — the arena's freed
+  blocks are reused) pin exactly which rows the routing changes. The
+  final-map comparisons cannot: the synthetic weights collapse the
+  bottleneck's late rows to zero (e4m3 underflow of the arbitrary
+  activations), so vit-row-only changes vanish before the output frame.
+* Determinism pairs (bit-identical replays of the final map), balanced
+  allocation accounting, the network_run mid-run rejection contract (the
+  failing row and everything after stay untouched), and the temporal
+  counter schedule with a frame-by-frame bit-identical replay.
+
+Review (independent, read-only): FAIL (3 MINOR + 4 NIT), all addressed: the
+stamp is now written only after the stash write succeeds (the failure path
+could previously leave a stale stamp); the temporal replay compares BOTH
+frames (the final-frame-only comparison could miss a reset-frame read-back
+divergence); the projection-row producer's sentinel check was vacuous (now
+sentinel-initialised with the exact f16 value and the stamp asserted); the
+mixed contraction path stamps symmetrically with the e4m3 path; a
+tautological allocation check and a dead trace flag were removed. One NIT
+(runner: the missing-runtime matcher does not cover clang compiler-rt
+wording) is recorded rather than changed: the runner mirrors the family's
+template exactly and clang is not a supported toolchain here. The review
+verified the stamp semantics in every reachable configuration and the
+site-factory shapes against each validation block.
+
 ## Reference and provenance
 
 Semantics re-derived from the MIT reference `mauri870/dlssnr-pytorch`
@@ -146,7 +216,7 @@ mochizuki0323, whose licence text accompanies that project.
 
 `vr/tests/native-int4-test.cpp` (83 checks at -O2 and again at -O0 via
 `vr/test-native-int4.sh`) pins the path with hand-derived answers:
-`vr/tests/native-eval-int4-test.cpp` (485 checks at both levels via
+`vr/tests/native-eval-int4-test.cpp` (519 checks at both levels via
 `vr/test-native-eval-int4.sh`) pins the miring: the hand-derived two-token
 mixed contraction ([1, -22, 3, -32] through the permuted gather, the quantiser
 ties-to-even at 4.5, the dots, the f64 affines, the tail products and the

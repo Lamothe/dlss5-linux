@@ -64,6 +64,7 @@ bash vr/test-native-history.sh  # typed CPU temporal history carrier slice (FP16
 bash vr/test-native-io.sh  # typed CPU host-image boundary + the temporal frame step (reset/feed/run/store/commit)
 bash vr/test-native-int4.sh  # typed CPU int4 mixed-network operand kernels slice
 bash vr/test-native-eval-int4.sh  # typed CPU int4 mixed-network evaluator slice
+bash vr/test-native-eval-int4-network.sh  # int4 mixed-network PLAN integration (routing policy, side-channel routing, rejection, temporal; SLOW ~2 min; -O0 build compile-only)
 bash vr/test-native-demo.sh  # typed CPU synthetic input-to-image demo slice
 bash vr/test-native-parallel.sh  # typed CPU parallel-for layer slice
 bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames, ~90 s at -O2; -O0 build compile-only, see vr/NATIVE-LIVE.md)

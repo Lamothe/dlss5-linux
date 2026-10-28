@@ -221,3 +221,24 @@ re-verify, arena stability at the 345 MiB high-water) and phase 5 (stretch:
 desktop delivery boundary + a Centre Stage branch on a worktree, "synthetic
 weights — arbitrary transform" label; the tested boundary with a mock host
 is a valid outcome).
+
+## Latest continuation (29/10/2026, overnight phase 3 - int4 mixed network)
+
+PUBLISHED with this slice: the int4 side channel's dict-key semantics
+(`EvalContext.stash_stream_block` — the pinned's absent-key fallback for the
+first vit block's expansion, closing both a fidelity divergence and an
+uninitialised-buffer hazard) and the plan-level mixed-network integration
+suite (`vr/tests/native-eval-int4-network-test.cpp`, 374 checks at -O2:
+the per-row record-consumption policy, the ("stream", block+1) routing
+discriminator with its has_ex negative control, row-level discriminators
+(the synthetic weights collapse the bottleneck's late rows to zero, so the
+final map cannot see vit-row-only changes), determinism, the network_run
+rejection contract and the temporal consumer over the mixed network). Row
+suite 519 checks at both levels. Independent review FAIL (3 MINOR + 4 NIT),
+all addressed; one clang-wording nit recorded (family template). Sibling
+regressions green.
+
+Next action: localise phase 2's uninitialised read (MALLOC_PERTURB_
+reproduction as the regression), then phase 4 (sustained GPU hardening) and
+phase 5 (stretch: desktop delivery boundary + Centre Stage worktree
+branch).

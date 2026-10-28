@@ -1067,6 +1067,11 @@ int main(void) {
         ctx.scratch = scratch;
         ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
         CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        // The simulated producer: the run's ("stream", 5) entry exists (the
+        // vit projection row stamps the block it writes for; without the
+        // stamp the expansion falls back to e4m3 as the pinned does for a
+        // missing dict key).
+        ctx.stash_stream_block = 5;
         const unsigned long long alloc_before = g_allocations.load();
         CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
         CHECK(g_allocations.load() == alloc_before);
@@ -1078,6 +1083,7 @@ int main(void) {
         static float copy[2];
         std::memcpy(copy, out.main.data, sizeof(copy));
         CHECK_STATUS(eval_reset(ctx), Status::kOk);
+        ctx.stash_stream_block = 5;
         CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
         CHECK(std::memcmp(copy, out.main.data, sizeof(copy)) == 0);
         // Without the stream stash the row falls back to the e4m3 matmul
@@ -1093,6 +1099,7 @@ int main(void) {
         bad.stash.hidden = sentinel;
         static int bad_perm[2] = {5, 0};
         site.perm = bad_perm;
+        ctx.stash_stream_block = 5;
         CHECK_STATUS(eval_layer(&ctx, spec, call, bad),
                      Status::kInvalidValues);
         CHECK(sentinel[0] == -777.0f && sentinel[1] == -777.0f);
@@ -1270,7 +1277,7 @@ int main(void) {
         ctx.scratch_capacity = sizeof(scratch) / sizeof(scratch[0]);
         static float x_data[2 * 1 * 1] = {1.0f, 1.0f};
         static float skip_data[2 * 1 * 1] = {1.0f, 1.0f};
-        static float stream_out[2];
+        static float stream_out[2] = {-777.0f, -777.0f};
         FeatureBatchView x = make_view(x_data, 2, 1, 1);
         FeatureBatchView skip = make_view(skip_data, 2, 1, 1);
         LayerSpec spec = row(0, 6, 4, LayerKind::kVitProjection, 2, 2, 1,
@@ -1282,7 +1289,10 @@ int main(void) {
         out.stash.stream = stream_out;
         CHECK_STATUS(eval_reset(ctx), Status::kOk);
         CHECK_STATUS(eval_layer(&ctx, spec, call, out), Status::kOk);
-        CHECK(stream_out[0] != -777.0f);
+        // The producer's exact write (f16(0 + 1 * 1) = 1 per token) and the
+        // ("stream", block + 1) stamp the consumer gate checks.
+        CHECK(stream_out[0] == 1.0f && stream_out[1] == 1.0f);
+        CHECK(ctx.stash_stream_block == 7);
         g_int4_site = nullptr;
     }
 
