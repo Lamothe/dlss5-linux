@@ -64,10 +64,10 @@ fi
 # fallback) and honours the same no-device SKIP as the suite.
 "${CXX}" "${COMMON[@]}" -O2 -DDLSS5_DEMO_VULKAN "$ROOT/vr/demo-native.cpp" \
     -o "$temp/demo" -lvulkan
-mkdir -p "$temp/cpu" "$temp/gpu"
+mkdir -p "$temp/cpu" "$temp/gpu" "$temp/gpu-swin"
 "$temp/demo" --out "$temp/cpu" --frames 1 --reset-at -1 --threads 8 >/dev/null
 if ! "$temp/demo" --out "$temp/gpu" --frames 1 --reset-at -1 --threads 8 \
-        --gpu "$SPIRV" > "$temp/gpu-run.log" 2>&1; then
+        --gpu "$SPIRV" --cpu-swin > "$temp/gpu-run.log" 2>&1; then
     if grep -q "no compute-capable Vulkan device" "$temp/gpu-run.log"; then
         echo "native-vulkan: SKIP (no Vulkan device for the G2 gate)"
         echo "native-vulkan: suite passed"
@@ -80,5 +80,29 @@ grep "gpu totals:" "$temp/gpu-run.log"  # the GPU must have actually run
 cmp "$temp/cpu/after.ppm" "$temp/gpu/after.ppm"
 cmp "$temp/cpu/before.ppm" "$temp/gpu/before.ppm"
 echo "native-vulkan: G2 complete-network parity OK (artefacts byte-identical)"
+
+# ---- G8: the swin rows' batched seam (third run: routing + parity) -------
+# --gpu-swin routes the swin rows through the batched chunk seam (the default
+# whenever an executor is attached; --cpu-swin forces the G6/G7 measured
+# configuration). The gate requires (a) the swin rows actually ROUTED through
+# the executor (strictly more executor calls than the swin-CPU run) and
+# (b) the artefacts stay byte-identical to the CPU reference.
+if ! "$temp/demo" --out "$temp/gpu-swin" --frames 1 --reset-at -1 --threads 8 \
+        --gpu "$SPIRV" --gpu-swin > "$temp/gpu-swin-run.log" 2>&1; then
+    cat "$temp/gpu-swin-run.log" >&2
+    exit 1
+fi
+calls_off="$(sed -n 's/^gpu totals: \([0-9][0-9]*\) calls.*/\1/p' \
+    "$temp/gpu-run.log")"
+calls_on="$(sed -n 's/^gpu totals: \([0-9][0-9]*\) calls.*/\1/p' \
+    "$temp/gpu-swin-run.log")"
+echo "gpu totals: swin-CPU run $calls_off calls, swin-batched run $calls_on calls"
+if [[ -z "$calls_on" || -z "$calls_off" || "$calls_on" -le "$calls_off" ]]; then
+    echo "error: the swin rows did not route through the batched executor" >&2
+    exit 1
+fi
+cmp "$temp/cpu/after.ppm" "$temp/gpu-swin/after.ppm"
+cmp "$temp/cpu/before.ppm" "$temp/gpu-swin/before.ppm"
+echo "native-vulkan: G8 batched swin parity OK (artefacts byte-identical)"
 
 echo "native-vulkan: suite passed"

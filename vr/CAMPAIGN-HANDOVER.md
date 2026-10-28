@@ -334,10 +334,12 @@ decode column 885 -> 455 ms/frame. MEASURED SURPRISE (honest): with the
 swin rows' GPU site enabled the end-to-end REGRESSES to 14,418 ms/frame
 (vs 12,380 G5) — the ~5k per-window matmul calls thrash the per-call
 input/output staging (3,337 ms upload + 5,549 ms download vs 1,229 ms
-kernel). The swin rows are therefore OPT-IN (EvalContext::swin_gpu,
-default false) with the CPU kernels the default; the recorded G7 fix is an
-offset-dispatch seam (upload each swin row's map once, per-window matmuls
-with device-local offsets, download once — bit-parity preserved). G6
+kernel). The swin rows were therefore OPT-IN (EvalContext::swin_gpu,
+default false) at G6 (SUPERSEDED by the G8 entry below — the batched seam
+measured faster than the CPU rows and the default is now true); the
+recorded G7 fix was to be an offset-dispatch seam (upload each swin row's
+map once, per-window matmuls with device-local offsets, download once —
+bit-parity preserved). G6
 default measured: 11,717 ms/frame (1.39x vs cpu-mt, 3.22x vs cpu-1t),
 parity byte-identical, 615,365 checks green. Review: 5 findings (the
 HIGH scratch-sizing defect, the DemoStore double-free risk from the
@@ -424,3 +426,51 @@ returns before the download on a failed dispatch at native-vulkan.hpp
 Remaining: the batched/offset-dispatch swin seam (gap 1 of the 28/10
 brief) with its honest measurement (the swin rows stay opt-in until a
 batched path measures faster than CPU).
+
+## Batched swin seam slice (28/10/2026) — gap 1 closed
+
+The batched/offset-dispatch gap is closed with the batched form (it
+subsumes offset dispatch and measured better). `swin_block`'s per-window
+loop is one shared `run_window_batch` body with two extents: the per-window
+path (byte-identical to the published G4/G6 behaviour) and a chunked path —
+one `swin_mlp` + one `swin_attention` call per `kSwinBatchWindows` (32)
+windows, so each site-projected stage (expand/hidden and QKV) is ONE
+executor call per chunk instead of one per 64-token window. Every stage is
+row/window independent, so chunked and per-window results are
+bit-identical by construction; the tests memcmp them over the window-count
+matrix {1, 2, 16, 32, 33, 92}, both head families (incl. the grouped-mid
+path), both residual paths, zero/non-trivial corpora and both acc modes,
+plus the executor call-shape contract (chunk-shaped calls — the thrash
+elimination is pinned, not assumed), every capacity/shape fallback
+predicate (per-window preserved), the null-executor and null-gather G4
+rejection classes, the padded-weight CPU fallback and `swin_layer_plain`'s
+site threading (that row was CPU-only; it is now wired like the other
+three). Chunk scratch rides in the SwinProjectionSite (`batch_work`,
+sized by `swin_batch_work_needed`/`swin_site_scratch_needed`); the eval
+rows carve chunk-sized buffers (`swin_site_count`/`swin_site_carve`).
+
+MEASURED (RTX 4070 Ti SUPER, 64x72 kSmall, 8 threads, 4-frame means):
+cpu-mt 8,301 ms/frame; G7 config (swin CPU) 7,770; G8 batched K=32
+**6,850 (1.21x vs cpu-mt, 1.13x vs G7)** — byte-identical artefacts. The
+executor call count collapses ~5,000 -> 427 per frame; GPU-side is now
+download-bound (1,348 ms/frame of ~1.2 GB products, the honest remaining
+ceiling). K=8 pays thrash again (7,199); K=64 outgrows a 512 MiB arena
+(recorded). DECISION: swin GPU rows are faster than the CPU rows, so
+`EvalContext::swin_gpu` defaults TRUE with an executor attached
+(`--cpu-swin` reproduces the G6/G7 configuration); the demo arena is now
+512 MiB (high-water 185 -> 345 MiB, the batched scratch cost). The
+complete-network gate runs three ways (CPU, --gpu --cpu-swin,
+--gpu --gpu-swin) requiring byte-identical artefacts and routing evidence
+(61 -> 427 calls). Check counts: swin-block 5,772,726 at -O2/-O0; all
+sibling regressions green (eval 615,365/308,162; vulkan 116 + gates;
+stress 1,997; the rest unchanged). Independent read-only review: PASS
+(7 findings — the two doc-staleness and three nit items fixed here, the
+two disclosures recorded in NATIVE-SWIN-BLOCK.md and the handover).
+Speed numbers are real; synthetic weights mean the output is arbitrary —
+no image-quality or vendor-parity claim.
+
+Next: the CPU synthetic input-to-image evaluator hardening or the
+temporal history/reset consumer (the second colour copy is still the
+single-frame stub), then live-input evaluation — recorded in
+NATIVE-PERFORMANCE.md's G8 section as the remaining performance-stage
+items.

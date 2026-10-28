@@ -121,12 +121,24 @@ inline Status validate_linear_output(const MutableMatrixView* out, int cols,
 // documented denormal tolerance). Null keeps the CPU kernel. The int4
 // branches (swin_linear_int4, the attention's int4_qkv) keep the CPU
 // int4 path and ignore the site: a set site must not change them.
+//
+// G8 batched seam: `batch_work` is caller-owned scratch for swin_block's
+// CHUNKED path (one swin_mlp/swin_attention call per kSwinBatchWindows
+// windows instead of per window, so the executor sees chunk-sized
+// projections: one upload/dispatch/download per chunk, not per 64-token
+// window). The chunk work layout and the capacity formula live in
+// native-swin-block.hpp (swin_batch_work_needed / swin_site_scratch_needed).
+// A null `batch_work` (or a capacity below the formula) keeps the per-window
+// path exactly as before — the chunked path is a strict opt-in through the
+// site's buffers.
 struct SwinProjectionSite {
     const ProjectionExecutor* ex = nullptr;
     float* input_dense = nullptr;    // [x.rows * x.cols]
     float* products = nullptr;       // [x.rows * weight.rows]
     std::size_t input_capacity = 0;
     std::size_t products_capacity = 0;
+    float* batch_work = nullptr;
+    std::size_t batch_capacity = 0;
 };
 
 inline Status swin_linear(const MatrixView& x, const MatrixView& weight,

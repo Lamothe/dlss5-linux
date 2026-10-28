@@ -179,18 +179,20 @@ per-window calls (64-token windows; ~5k matmul calls per frame across the
 swin rows) thrash the per-call input/output staging: 3,337 ms staging
 upload + 5,549 ms download per frame versus the 1,229 ms of kernel time.
 The per-window transfer overhead dominates even with resident weights.
-The swin rows are therefore OPT-IN (`EvalContext::swin_gpu`, default
-false): the wiring and its parity tests land, the CPU kernels stay the
-default for these rows until a batched seam exists.
+The swin rows were therefore OPT-IN (`EvalContext::swin_gpu`, default
+false) at G6: the wiring and its parity tests landed, the CPU kernels
+stayed the default for these rows until a batched seam existed. **G8
+(superseded): the batched seam below landed and measured faster than the
+CPU rows, so `swin_gpu` now defaults to TRUE whenever a projection
+executor is attached** (the demo's `--cpu-swin` reproduces the G6/G7
+measured configuration).
 
-**The recorded fix (G7):** an offset-dispatch seam — upload each swin row's
-map ONCE, run the per-window matmuls with device-local in/out offsets (two
-extra push constants), download ONCE. The products per window are
-unchanged (bit-parity preserved; only the transfer granularity changes).
-Until then the measured configuration is: vit + split rows on GPU (hoisted,
-few large calls), swin rows on CPU, stable record store resident —
-11,717 ms/frame end-to-end (1.39x vs cpu-mt; 3.22x vs cpu-1t), parity
-gate byte-identical, 615,365-check eval suite green.
+**The recorded fix (G6's plan, landed as G8):** an offset/batched seam —
+upload each swin row's token batches once, run the projections chunk-sized
+(one executor call per kSwinBatchWindows-window chunk instead of per
+window), download once. The products per window are unchanged (bit-parity
+preserved; only the transfer granularity changes) — see the G8 section
+below for the implementation that landed and its measurement.
 
 | Path | ms/frame | note |
 |---|---|---|
@@ -242,3 +244,71 @@ Row-level: SplitQKVAttn 1,828 -> 89 ms (hoist + threading), SplitFfwd
 blocks + the four swin row kinds stay on the CPU per G6's opt-in finding).
 Check counts: pre-post 454, vit 662 (incl. the 256-code decode8 sweep),
 split-swin 34,272, parallel 2,479, eval 615,365 — all at -O2 and -O0.
+
+## G8 — the batched swin seam (28/10/2026)
+
+Gap 1 of the 28/10 brief: eliminate the per-window transfer thrash so the
+swin rows measure faster than the CPU kernels — or leave them opt-in with
+the measurement as evidence. The seam that landed is **batched, chunked
+calls** (the brief's "batched/offset-dispatch" named the two options; the
+batched form subsumes the offset form and was measured better):
+
+`swin_block`'s window loop is factored into one body
+(`run_window_batch`) parameterised by the window extent. The per-window
+path (extent 1, the published G4/G6 behaviour) is byte-identical to
+before; a new chunked path runs one `swin_mlp` + one `swin_attention`
+call per `kSwinBatchWindows` (32) windows, so each site-projected stage
+(the expand/hidden projection and the QKV projection) becomes ONE
+executor call per chunk — 2 calls per 32 windows instead of 2 per window.
+Every stage is row/window independent (the projections are k-ordered
+row-wise matmuls; the store, activation and skip rules are elementwise;
+the attention's window loop is per window), so the chunked results are
+bit-identical to the per-window results by construction — and the tests
+memcmp them over the window-count matrix {1, 2, 16, 32, 33, 92}, both
+head families (single-head null-mid and multi-head grouped-mid), both
+residual paths, zero and non-trivial corpora and both acc modes
+(5,772,726 checks at -O2 and -O0, including the executor call-shape
+contract: chunk-shaped calls, never per-window).
+
+The chunk work rides in the `SwinProjectionSite` (`batch_work` +
+`batch_capacity`, sized by `swin_batch_work_needed`/
+`swin_site_scratch_needed`): a null buffer or any capacity shortfall
+keeps the per-window path exactly as before, and the plain `SwinLayer`
+row (previously CPU-only) is wired like the other three rows.
+
+**Measured (RTX 4070 Ti SUPER, 64x72 frame, kSmall plan, 8 CPU threads,
+4 frames, mean ms/frame):**
+
+| Path | ms/frame | vs cpu-mt | arena high-water |
+|---|---|---|---|
+| cpu-mt (all rows on CPU) | 8,301 | 1.00x | 185 MiB |
+| G7 config (swin rows CPU, vit+split GPU) | 7,770 | 1.07x | 185 MiB |
+| G8 batched, K = 8 windows/chunk | 7,199 | 1.15x | 225 MiB |
+| **G8 batched, K = 32 (landed)** | **6,850** | **1.21x** | 345 MiB |
+| G8 batched, K = 64 | fails (arena) | — | >512 MiB |
+
+The executor call count per frame collapses from ~5,000 (per-window, G6)
+to 427 (32-window chunks). GPU-side totals at K = 32: 497 ms kernel,
+315 ms staging upload, 1,348 ms download, 39 ms decode per frame — the
+download is now data-volume bound (the products are ~1.2 GB/frame; the
+per-call overhead is gone), which is the honest remaining ceiling on this
+seam. K = 8 pays per-call thrash again (upload 610 ms/frame); K = 64
+doubles the per-row scratch and outgrows a 512 MiB arena, so K = 32 is
+the measured balance.
+
+**Decision:** the swin GPU rows measure faster than the CPU rows
+(6,850 vs 8,301 ms/frame; and faster than the previous best measured
+configuration, 7,770), with byte-identical artefacts, so
+`EvalContext::swin_gpu` now defaults to TRUE whenever a projection
+executor is attached. The demo's `--cpu-swin` keeps the G6/G7
+configuration for A/B measurement and `--gpu-swin` forces the seam on.
+
+**Costs and boundaries, stated plainly:** the batched scratch raises the
+caller's arena requirement — the demo's high-water grows 185 -> 345 MiB
+(its arena bound is now 512 MiB; the chunk work is per-row transient,
+about 14 MB at C = 96). The complete-network CPU-vs-GPU gate now runs
+three ways (CPU, `--gpu --cpu-swin`, `--gpu --gpu-swin`) and requires
+byte-identical artefacts plus routing evidence (the executor call count
+must strictly increase with the swin rows routed: 61 -> 427 in the gate).
+Speed numbers are real measurements; with synthetic weight presets the
+OUTPUT is arbitrary — no image-quality or vendor-parity claim is made.

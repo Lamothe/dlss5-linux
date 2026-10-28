@@ -183,12 +183,16 @@ struct EvalContext {
     // the deterministic reference. The kernels' post chains always run on
     // the CPU, so executor results flow through the reference arithmetic.
     const ProjectionExecutor* projection = nullptr;
-    // G6: the swin rows' per-window projections are WIREABLE but measure a
-    // regression through the per-call seam (in/out transfer thrash at
-    // 64-token windows: 14,418 vs 12,380 ms/frame end-to-end), so their GPU
-    // site is opt-in until a batched/offset-dispatch seam exists. The vit
-    // and split rows (hoisted, few large calls) stay on GPU by default.
-    bool swin_gpu = false;
+    // The swin rows' batched projection seam (the G8 chunked path: one
+    // executor call per kSwinBatchWindows windows instead of per 64-token
+    // window). Measured faster than the CPU rows on the dev host (6,850 vs
+    // 8,301 ms/frame end-to-end; NATIVE-PERFORMANCE.md G8) with byte-identical
+    // artefacts, so the swin rows default ON whenever a projection executor
+    // is attached. `false` (the demo's --cpu-swin) keeps the G6/G7 measured
+    // configuration (swin rows on the CPU kernels) for A/B measurement. The
+    // batched scratch raises the caller's arena requirement (about 345 MiB
+    // high-water for the 64x72 small plan; see NATIVE-PERFORMANCE.md G8).
+    bool swin_gpu = true;
 };
 
 // ---- vocabulary ---------------------------------------------------------------------------------
@@ -910,6 +914,31 @@ inline void swin_shifts(const LayerSpec& spec, int& shift_rows,
     shift_cols = spec.shift_x;
 }
 
+// The swin rows' projection-site scratch (the G8 batched seam): swin_linear's
+// dense input and products for one batched chunk plus swin_block's chunk
+// work, carved from one caller-provided buffer in the order
+// swin_site_scratch_needed declares. Sized for the largest chunk
+// (kSwinBatchWindows windows = kSwinBatchWindows * kWindowTokens rows); the
+// eval's expand matrix is always [4C, C] (swin_fetch/swin_shape_params), so
+// the products region covers 4 * channels rows per token.
+inline std::size_t swin_site_count(int channels, int heads) {
+    return swin_site_scratch_needed(kSwinBatchWindows * kWindowTokens,
+                                    channels, 4 * channels, heads);
+}
+
+inline void swin_site_carve(float* base, int channels, int heads,
+                            SwinProjectionSite& site) {
+    const std::size_t rows = static_cast<std::size_t>(kSwinBatchWindows)
+        * kWindowTokens;
+    site.input_dense = base;
+    site.input_capacity = rows * static_cast<std::size_t>(channels);
+    site.products = base + site.input_capacity;
+    site.products_capacity = rows * static_cast<std::size_t>(4 * channels);
+    site.batch_work = site.products + site.products_capacity;
+    site.batch_capacity = swin_batch_work_needed(
+        kSwinBatchWindows * kWindowTokens, channels, 4 * channels, heads);
+}
+
 }  // namespace eval_detail
 
 // ---- the layer bindings --------------------------------------------------------------------------
@@ -964,12 +993,10 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
     const bool gpu_projection =
         ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
         && ctx.swin_gpu;
-    // The swin windows are always kWindowTokens (64) rows (zero-padded), so
-    // the largest site calls are fixed: [64, C] in, [64, 4C] out.
-    const std::size_t site_input = std::size_t{64} * channels;
-    const std::size_t site_products = std::size_t{256} * channels;
+    // The G8 batched seam's site scratch: one chunk's swin_linear buffers
+    // plus swin_block's chunk work (swin_site_count).
     const std::size_t site_scratch =
-        gpu_projection ? site_input + site_products : 0;
+        gpu_projection ? swin_site_count(channels, heads) : 0;
     const std::size_t work_count = static_cast<std::size_t>(kStoredLiftValues)
         + map + map + frame_count + swin_decoded_floats(channels, heads, fetch)
         + block_needed + site_scratch;
@@ -988,10 +1015,7 @@ inline Status eval_pre_block(EvalContext& ctx, const LayerSpec& spec,
     SwinProjectionSite swsite;
     if (gpu_projection) {
         swsite.ex = ctx.projection;
-        swsite.input_dense = block_scratch + block_needed;
-        swsite.products = swsite.input_dense + site_input;
-        swsite.input_capacity = site_input;
-        swsite.products_capacity = site_products;
+        swin_site_carve(block_scratch + block_needed, channels, heads, swsite);
     }
     SwinSiteOverlay overlay;
     build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,
@@ -1138,11 +1162,9 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         const bool gpu_projection =
             ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
             && ctx.swin_gpu;
-        // Fixed per-window sizing: the swin windows are always 64 rows.
-        const std::size_t site_input = std::size_t{64} * channels;
-        const std::size_t site_products = std::size_t{256} * channels;
+        // The G8 batched seam's site scratch (swin_site_count).
         const std::size_t site_scratch =
-            gpu_projection ? site_input + site_products : 0;
+            gpu_projection ? swin_site_count(channels, heads) : 0;
         const std::size_t work_count = decoded_count
             + static_cast<std::size_t>(2 * channels) * channels  // resample
             + map + pooled + block_needed + site_scratch;
@@ -1157,10 +1179,8 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         SwinProjectionSite swsite;
         if (gpu_projection) {
             swsite.ex = ctx.projection;
-            swsite.input_dense = ds_scratch + map + pooled + block_needed;
-            swsite.products = swsite.input_dense + site_input;
-            swsite.input_capacity = site_input;
-            swsite.products_capacity = site_products;
+            swin_site_carve(ds_scratch + map + pooled + block_needed,
+                            channels, heads, swsite);
         }
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
@@ -1245,11 +1265,9 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         const bool gpu_projection =
             ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
             && ctx.swin_gpu;
-        // Fixed per-window sizing: the swin windows are always 64 rows.
-        const std::size_t site_input = std::size_t{64} * channels;
-        const std::size_t site_products = std::size_t{256} * channels;
+        // The G8 batched seam's site scratch (swin_site_count).
         const std::size_t site_scratch =
-            gpu_projection ? site_input + site_products : 0;
+            gpu_projection ? swin_site_count(channels, heads) : 0;
         const std::size_t work_count = decoded_count
             + static_cast<std::size_t>(channels) * 2 * channels  // resample
             + static_cast<std::size_t>(channels)                 // gain copy
@@ -1266,11 +1284,9 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         SwinProjectionSite swsite;
         if (gpu_projection) {
             swsite.ex = ctx.projection;
-            swsite.input_dense =
-                up_scratch + blend_count + projected_count + block_needed;
-            swsite.products = swsite.input_dense + site_input;
-            swsite.input_capacity = site_input;
-            swsite.products_capacity = site_products;
+            swin_site_carve(up_scratch + blend_count + projected_count
+                                + block_needed,
+                            channels, heads, swsite);
         }
         status = swin_decode(fetch, channels, heads, decoded, decoded_count,
                              mid_storage, params);
@@ -1318,10 +1334,22 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         * static_cast<std::size_t>(x.rows) * static_cast<std::size_t>(x.cols);
     const std::size_t block_needed = swin_block_scratch_needed(
         x, false, true, shift_rows, shift_cols, shape);
-    const std::size_t work_count = decoded_count + block_needed;
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
+        && ctx.swin_gpu;
+    // The G8 batched seam's site scratch (swin_site_count).
+    const std::size_t site_scratch =
+        gpu_projection ? swin_site_count(channels, heads) : 0;
+    const std::size_t work_count = decoded_count + block_needed + site_scratch;
     status = row_begin(ctx, spec, map, 0, work_count, blocks);
     if (status != Status::kOk) {
         return status;
+    }
+    SwinProjectionSite swsite;
+    if (gpu_projection) {
+        swsite.ex = ctx.projection;
+        swin_site_carve(blocks.work + decoded_count + block_needed, channels,
+                        heads, swsite);
     }
     status = swin_decode(fetch, channels, heads, blocks.work, decoded_count,
                          mid_storage, params);
@@ -1331,7 +1359,8 @@ inline Status eval_swin_layer(EvalContext& ctx, const LayerSpec& spec,
         return status;
     }
     status = swin_layer_plain(x, shift_rows, shift_cols, params, blocks.main,
-                              map, blocks.work + decoded_count, block_needed);
+                              map, blocks.work + decoded_count, block_needed,
+                              gpu_projection ? &swsite : nullptr);
     if (status != Status::kOk) {
         row_abort(ctx, spec);
         return status;
@@ -2629,11 +2658,9 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     const bool gpu_projection =
         ctx.projection != nullptr && ctx.projection->matmul_f32 != nullptr
         && ctx.swin_gpu;
-    // Fixed per-window sizing: the swin windows are always 64 rows.
-    const std::size_t site_input = std::size_t{64} * channels;
-    const std::size_t site_products = std::size_t{256} * channels;
+    // The G8 batched seam's site scratch (swin_site_count).
     const std::size_t site_scratch =
-        gpu_projection ? site_input + site_products : 0;
+        gpu_projection ? swin_site_count(channels, heads) : 0;
     const std::size_t work_count = map + map + frame_count + frame_count
         + frame_count + swin_decoded_floats(channels, heads, fetch)
         + block_needed + site_scratch;
@@ -2652,10 +2679,7 @@ inline Status eval_post_block(EvalContext& ctx, const LayerSpec& spec,
     SwinProjectionSite swsite;
     if (gpu_projection) {
         swsite.ex = ctx.projection;
-        swsite.input_dense = block_scratch + block_needed;
-        swsite.products = swsite.input_dense + site_input;
-        swsite.input_capacity = site_input;
-        swsite.products_capacity = site_products;
+        swin_site_carve(block_scratch + block_needed, channels, heads, swsite);
     }
     SwinSiteOverlay overlay;
     build_swin_overlay(ctx.weights, spec.block, spec.layer, channels, 1,

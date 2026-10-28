@@ -1100,6 +1100,7 @@ struct VulkanProjectionSite {
     std::uint32_t* spirv = nullptr;
     std::size_t spirv_words = 0;
     std::vector<float> decoded;
+    std::uint64_t calls = 0;       // executor entries (routing evidence)
     double decode_ms = 0.0;
     double kernel_ms = 0.0;
     double upload_ms = 0.0;
@@ -1132,6 +1133,7 @@ inline Status vulkan_projection_matmul_f32(void* ctx, const float* in,
     if (tokens < 1 || c_in < 1 || rows < 1) {
         return Status::kInvalidDimensions;
     }
+    ++site->calls;
     if (tokens > 65535 || rows > 65535 * 128
         || static_cast<std::uint64_t>(tokens) * rows > UINT32_MAX
         || static_cast<std::uint64_t>(tokens) * c_in > UINT32_MAX
@@ -1203,6 +1205,7 @@ inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
     if (tokens < 1 || c_in < 1 || w.rows < 1 || w.cols != c_in) {
         return Status::kInvalidDimensions;
     }
+    ++site->calls;
     if (tokens > 65535 || w.rows > 65535 * 128
         || static_cast<std::uint64_t>(tokens)
                    * static_cast<std::uint64_t>(w.rows)

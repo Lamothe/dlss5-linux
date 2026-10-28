@@ -193,7 +193,9 @@ The body follows the pinned `swin_block` exactly:
 entry: `x` doubles as the MLP residual and therefore must hold f16-exact
 values. The reference chunks windows only for scheduling
 (`_CHUNK_ELEMENTS`); windows are arithmetically independent, so this
-implementation processes them one at a time with no observable difference.
+implementation processes them in batches — one window at a time on the CPU
+paths, or one `kSwinBatchWindows`-window chunk per staged call on the G8
+batched site path (below) — with no observable difference.
 
 ## Validation and write contract
 
@@ -206,8 +208,16 @@ first write); the weight operand grids and value classes (including the
 head-scale row's magnitude bound); the `x` value scan (finite) and the `x_wide`
 value scan (finite and f16-exact); and finally the output and scratch
 capacities. On any error `wide_dst`, `acc_dst` and `scratch` are all untouched.
+One scoped exception (the projection site's surface, unchanged by G8): with a
+site attached, the site's own per-call checks (a null executor, null
+gather/scatter buffers or undersized ones) report `kInvalidBuffer` from the
+first window batch — after the scratch's window token batches have been
+written — while `wide_dst` and `acc_dst` stay untouched.
 
-Every staged call in the composition is then guaranteed `kOk`: the validated
+Every staged call in the composition is then guaranteed `kOk` on the CPU
+paths (and, with a site whose executor is set and whose buffers cover the
+calls, on the site paths — the executor's own failures surface as its
+documented `Status`): the validated
 operand classes keep every intermediate within float32 range (e4m3 operands and
 values bound each product; the activations are clamped-polynomial times the
 input and re-stored on the e4m3 grid; the residual products are at most
@@ -230,9 +240,12 @@ the bound is this implementation's accepted-domain restriction (the reference's
 
 ## Explicit choices and disclosed limitations
 
-- The composition passes each window through the staged entries one at a time;
-  the reference's chunking (`per_window`) is scheduling only and this
-  implementation does not reproduce it (no observable difference).
+- The composition passes each window through the staged entries one at a
+  time on the CPU paths; the reference's chunking (`per_window`) is
+  scheduling only and this implementation does not reproduce it (no
+  observable difference). The G8 batched site path below processes windows
+  in chunks of `kSwinBatchWindows` per staged call — likewise
+  arithmetically invisible.
 - The map outputs are float32; `wide` is one binary16 rounding of `acc`. The
   reference returns torch tensors whose `wide` is "the f16-exact output before
   its final e4m3 rounding"; `q8(wide)` (the layer output) and the 2x2 pooling
@@ -252,6 +265,57 @@ the bound is this implementation's accepted-domain restriction (the reference's
 - No weight loading, runtime binding, GPU execution or capture is involved;
   the weights are caller-provided operands. Original synthetic values in the
   tests only.
+- Disclosed mid-run rejection class (pre-existing, unchanged by G8): an
+  accepted finite `x` with magnitude near the float32 limit and a large f16
+  `mlp_scale` can overflow `residual * scale` to +/-inf in
+  `swin_mlp_row_tail`; on the `heads == 1` path the unrounded skip then
+  fails the attention's finite-skip scan mid-run (scratch written, outputs
+  untouched), while `heads > 1` accepts the same input (its skip is the
+  stored e4m3 form, finite). The class is not reachable from the e4m3
+  operand domains validated at entry; it is recorded rather than claimed
+  away.
+
+## The G8 batched chunk seam (28/10/2026)
+
+The two site-projected stages (the MLP expand/hidden projection and the
+attention QKV projection — both `swin_linear` calls) are row-independent
+k-ordered matrix products, so a chunk of windows computes exactly the
+per-window results in ONE `swin_mlp` and ONE `swin_attention` call. The
+seam exploits that: when the `SwinProjectionSite` carries chunk-sized
+buffers, `swin_block` runs one window batch per
+`kSwinBatchWindows` (32) windows and the executor sees chunk-sized calls
+(2 calls per 32 windows instead of 2 per window — the per-call
+upload/dispatch/download thrash that made the per-window G6 wiring
+measure a regression is gone; measured in
+[NATIVE-PERFORMANCE.md](NATIVE-PERFORMANCE.md) G8). Both paths share one
+`run_window_batch` body and differ only in the batch extent.
+
+The chunk scratch is caller-owned and carried by the site:
+
+- `swin_batch_work_needed(rows, channels, expand_rows, heads)` — the
+  `batch_work` region, tightly packed: `y` (rows x channels), `y_q`
+  (rows x channels), the MLP hidden (rows x expand_rows) and the attention
+  scratch (rows x 3C + 4 x rows x C + 2 x heads x kBiasTable).
+- `swin_site_scratch_needed(rows, channels, expand_rows, heads)` — the
+  full site scratch: `swin_linear`'s dense input (rows x channels) and
+  products (rows x max(expand_rows, 3C)) plus the chunk work above.
+  Callers size for `rows = kSwinBatchWindows * kWindowTokens`, the largest
+  possible chunk (the eval's `swin_site_count`/`swin_site_carve` do exactly
+  this).
+
+Gating, stated exactly: the chunked path runs only when the site sets an
+executor with `matmul_f32`, a non-null `batch_work`, and
+input/products/batch capacities covering the largest chunk
+(`min(kSwinBatchWindows, window_total) * 64` rows). Any capacity shortfall
+or a null `matmul_f32` keeps the per-window path exactly as before (the
+G4/G6 behaviour, including its per-call fallbacks: an executor envelope
+rejection or a padded weight keeps that call on the CPU kernel). A site
+with a null executor or null gather/scatter buffers is the G4 rejection
+class — `kInvalidBuffer` from the first `swin_linear` call in both paths —
+not a fallback. Results are bit-identical across chunked, per-window and
+no-site runs (the tests memcmp them across the window-count matrix
+{1, 2, 16, 32, 33, 92}, both head families, both residual paths and both
+acc modes).
 
 ## Test evidence (26/10/2026)
 
@@ -322,6 +386,23 @@ directly) and the deliberately write-only staged out-params
 (`front_h`/`front_w`, the pass grids), now annotated in the header. The full
 output of an earlier PASS review round was lost to a context-rotation
 truncation; this fresh review covered the same criteria before commit.
+
+**G8 (28/10/2026):** the batched chunk seam's tests add, through a counting
+CPU executor honouring the `ProjectionExecutor` product contract:
+chunked-vs-per-window-vs-no-site bit-identity across the window-count
+matrix {1, 2, 16, 32, 33, 92} (both head families incl. the multi-head
+grouped-mid path, both residual paths, zero and non-trivial corpora, both
+acc modes), the executor call-shape contract (chunk-shaped calls, one
+expand + one QKV per chunk; the per-window path at 2 x windows calls),
+every capacity/shape fallback predicate (per-window preserved), the
+null-executor and null-gather rejection classes (the G4 ordering),
+the padded-weight CPU fallback, `swin_layer_plain`'s site threading,
+sentinel-checked rejection with a full batched site, determinism and
+zero-allocation accounting. Suite total: 5,772,726 checks at -O2 and
+again at -O0 (both `-ffp-contract=off`); the sanitiser skip is the same
+recorded toolchain gap. An independent read-only review of the G8 diff
+returned **PASS** (7 findings: two documentation-staleness items, three
+nits and two disclosures) — all addressed in this change set.
 
 ## What this does NOT establish
 

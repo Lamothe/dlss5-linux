@@ -53,6 +53,7 @@ struct Options {
     unsigned seed = 20261028u;
     int frames = 4;
     const char* gpu_spirv = nullptr;  // non-null: the G2 GPU projection backend
+    int gpu_swin = -1;  // -1 = EvalContext default; 1/0 force the swin rows
     int reset_at = 2;  // -1 = never; otherwise reset BEFORE this frame index
     bool profile = false;
     int threads = 1;  // the serial reference; 0 = hardware concurrency
@@ -72,7 +73,9 @@ void usage() {
         "  --threads N        parallel threads (default 1 = the serial\n"
         "                     reference; 0 = hardware concurrency)\n"
         "  --gpu SPV          run the vit projection rows through the Vulkan\n"
-        "                     backend (compiled shader; CPU post chains)\n",
+        "                     backend (compiled shader; CPU post chains)\n"
+        "  --gpu-swin         force the swin rows' batched GPU seam on\n"
+        "  --cpu-swin         force the swin rows onto the CPU kernels\n",
         kFrameW, kFrameH);
 }
 
@@ -241,6 +244,10 @@ int main(int argc, char** argv) {
                          "(rebuild with -DDLSS5_DEMO_VULKAN -lvulkan)\n");
             return 2;
 #endif
+        } else if (std::strcmp(a, "--gpu-swin") == 0) {
+            opt.gpu_swin = 1;
+        } else if (std::strcmp(a, "--cpu-swin") == 0) {
+            opt.gpu_swin = 0;
         } else if (std::strcmp(a, "--reset-at") == 0) {
             const char* v = need();
             if (v == nullptr || !parse_int(v, opt.reset_at)) {
@@ -351,8 +358,12 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // The evaluator arena (the tool owns the allocation).
-    const std::size_t arena_floats = 1u << 26;  // 256 MiB, as the suites use
+    // The evaluator arena (the tool owns the allocation). 512 MiB: the G8
+    // batched swin seam's per-row chunk scratch (up to ~14 MB transient per
+    // swin row at C = 96) raises the demo's observed high-water from ~185 MiB
+    // (CPU rows) to ~345 MiB; the allocation is anonymous and the RSS tracks
+    // the high-water, not this bound.
+    const std::size_t arena_floats = 1u << 27;
     float* arena =
         static_cast<float*>(std::malloc(arena_floats * sizeof(float)));
     if (arena == nullptr) {
@@ -412,6 +423,9 @@ int main(int argc, char** argv) {
 #if DLSS5_DEMO_HAS_VULKAN
     context.projection = opt.gpu_spirv != nullptr ? &gpu_executor : nullptr;
 #endif
+    if (opt.gpu_swin >= 0) {
+        context.swin_gpu = opt.gpu_swin != 0;
+    }
     status = dlss5_nr::eval_reset(context);
     if (status != Status::kOk) {
         std::fprintf(stderr, "eval_reset failed: %d\n",
@@ -604,8 +618,9 @@ int main(int argc, char** argv) {
     }
 #if DLSS5_DEMO_HAS_VULKAN
     if (opt.gpu_spirv != nullptr) {
-        std::printf("gpu totals: kernel %.3f ms, decode %.3f ms, "
+        std::printf("gpu totals: %llu calls, kernel %.3f ms, decode %.3f ms, "
                     "staging upload %.3f ms, download %.3f ms\n",
+                    static_cast<unsigned long long>(gpu_site.calls),
                     gpu_site.kernel_ms, gpu_site.decode_ms,
                     gpu_site.upload_ms, gpu_site.download_ms);
         dlss5_nr::vulkan_weight_cache_destroy(gpu_device, gpu_cache);

@@ -156,6 +156,21 @@ record store recycles pointers and forces hash-mismatch re-uploads, which
 is why the full residency benefit needs stable record storage (G6) — see
 NATIVE-PERFORMANCE.md.
 
+## G8 — the batched swin seam's executor surface (28/10/2026)
+
+The swin rows' projections now reach this executor CHUNK-SIZED: one call
+per kSwinBatchWindows (32) windows instead of one per 64-token window
+(the G6 per-window wiring measured a regression through per-call staging
+thrash; the batching is implemented in native-swin-block.hpp and measured
+in NATIVE-PERFORMANCE.md G8). From this header's side the only changes:
+`VulkanProjectionSite` counts its `calls` (the routing evidence printed by
+the demo's "gpu totals" line and asserted by the runner gate), and the
+complete-network gate runs three ways — CPU reference, `--gpu --cpu-swin`
+and `--gpu --gpu-swin` — requiring byte-identical artefacts for both GPU
+runs and strictly more executor calls with the swin rows routed
+(measured: 61 -> 427 per frame). The matmul, weight cache, fault seams
+and parity contracts above are unchanged.
+
 ## Provenance
 
 No proprietary code, payload, capture or binary is used or redistributed;

@@ -95,6 +95,49 @@ inline Status swin_block_pairings(const FeatureBatchView& x,
     return Status::kOk;
 }
 
+// ---- the G8 batched seam's scratch (chunked site projections) ------------------------------------
+// The swin windows are arithmetically independent and the two site-projected
+// stages (the MLP expand/hidden projection and the attention QKV projection)
+// are row-independent matrix products, so a chunk of kSwinBatchWindows
+// windows computes exactly the per-window results in ONE swin_mlp and ONE
+// swin_attention call — one executor call per stage per chunk instead of one
+// per 64-token window (the per-call staging thrash that made the per-window
+// GPU seam measure a regression; see NATIVE-PERFORMANCE.md G6). The chunk
+// work is carried by the SwinProjectionSite's `batch_work` buffer: a null
+// buffer or any capacity below the formulas below keeps the per-window path
+// exactly as before.
+inline constexpr int kSwinBatchWindows = 32;  // windows per batched chunk
+
+// The chunk work (tightly packed, in order): y (rows * channels), y_q
+// (rows * channels), the MLP hidden (rows * expand_rows) and the attention
+// scratch (rows * 3 * channels + 4 * rows * channels + 2 * heads * kBiasTable).
+inline std::size_t swin_batch_work_needed(int rows, int channels,
+                                          int expand_rows, int heads) {
+    const std::size_t r = static_cast<std::size_t>(rows);
+    return r * static_cast<std::size_t>(channels)       // y
+        + r * static_cast<std::size_t>(channels)        // y_q
+        + r * static_cast<std::size_t>(expand_rows)     // the MLP hidden
+        + r * (static_cast<std::size_t>(3) * channels)  // the qkv accumulator
+        + 4 * r * static_cast<std::size_t>(channels)    // q, k, v, context
+        + 2 * static_cast<std::size_t>(heads) * kBiasTable;
+}
+
+// The full site scratch for one chunk: swin_linear's dense input and
+// products (products cover max(expand_rows, 3 * channels) rows per token —
+// the expand and QKV projections' larger height) plus the chunk work above.
+// Callers size for rows = kSwinBatchWindows * kWindowTokens, the largest
+// possible chunk; the last chunk of a row is never larger.
+inline std::size_t swin_site_scratch_needed(int rows, int channels,
+                                            int expand_rows, int heads) {
+    const std::size_t r = static_cast<std::size_t>(rows);
+    const std::size_t expand = static_cast<std::size_t>(expand_rows);
+    const std::size_t qkv = static_cast<std::size_t>(3) * channels;
+    const std::size_t product_rows = expand > qkv ? expand : qkv;
+    return r * static_cast<std::size_t>(channels)  // swin_linear's dense input
+        + r * product_rows                         // swin_linear's products
+        + swin_batch_work_needed(rows, channels, expand_rows, heads);
+}
+
 // ---- the block body (`swin_block`) ---------------------------------------------------------------------
 // One block on the channels-first map `x [C, rows, cols]`, exactly as the
 // reference's `swin_block`:
@@ -126,11 +169,18 @@ inline Status swin_block_pairings(const FeatureBatchView& x,
 //   (only when acc_dst is null).
 // Validation (nulls, dimensions, strides, pairings, value classes, capacities)
 // completes before the first write: on any error `wide_dst`, `acc_dst` and
-// `scratch` are all untouched. The buffers must not overlap each other or the
-// input maps (caller discipline, never rejected).
+// `scratch` are all untouched. One scoped exception (the G4 site surface,
+// unchanged here): with a projection site attached, the site's own per-call
+// checks (a null executor, null gather/scatter buffers or undersized ones)
+// report kInvalidBuffer from the first window batch — after the scratch's
+// window token batches have been written — while `wide_dst` and `acc_dst`
+// stay untouched. The buffers must not overlap each other or the input maps
+// (caller discipline, never rejected).
 //
 // The reference chunks windows only for scheduling; windows are arithmetically
-// independent, so this implementation processes them one at a time with no
+// independent, so this implementation processes them in batches — one window
+// at a time on the CPU paths, or one kSwinBatchWindows-window chunk per
+// swin_mlp/swin_attention call on the G8 batched site path — with no
 // observable difference.
 inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wide,
                          int shift_rows, int shift_cols,
@@ -331,8 +381,10 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
     if (scratch_capacity < needed) {
         return Status::kInvalidBuffer;
     }
-    // All validation is complete: every staged call below is guaranteed kOk and
-    // wide_dst, acc_dst and scratch are written.
+    // All validation is complete: every staged call below is guaranteed kOk on
+    // the CPU paths (and wide_dst, acc_dst and scratch are written). With a
+    // site attached the site's per-call rejection class above can still report
+    // kInvalidBuffer from the first window batch, as documented.
     for (int c = 0; c < channels; ++c) {
         const float* plane = x.data + static_cast<std::size_t>(c)
             * static_cast<std::size_t>(x.plane_stride);
@@ -383,77 +435,143 @@ inline Status swin_block(const FeatureBatchView& x, const FeatureBatchView* x_wi
         }
     }
     const long long window_total = windows;
-    for (long long w = 0; w < window_total; ++w) {
-        MatrixView x_window;
-        x_window.data = tokens_q + static_cast<std::size_t>(w)
+    // One window batch: the MLP -> stored-result -> attention chain over
+    // `rows` tokens starting at window `w0`. Shared verbatim by the per-window
+    // loop and the G8 chunked loop below, so the two paths differ only in the
+    // batch extent (every stage is row/window independent, hence
+    // bit-identical across extents).
+    const auto run_window_batch = [&](long long w0, int windows_in_batch,
+                                      float* y_dst, float* y_q_dst,
+                                      float* mlp_dst, float* attn_dst,
+                                      std::size_t attn_capacity) -> Status {
+        const int rows = windows_in_batch * kWindowTokens;
+        MatrixView x_batch;
+        x_batch.data = tokens_q + static_cast<std::size_t>(w0)
             * static_cast<std::size_t>(q_tokens.window_stride);
-        x_window.rows = kWindowTokens;
-        x_window.cols = channels;
-        x_window.row_stride = q_tokens.token_stride;
-        MatrixView residual_window = x_window;
-        residual_window.data = r_tokens.data + static_cast<std::size_t>(w)
+        x_batch.rows = rows;
+        x_batch.cols = channels;
+        x_batch.row_stride = q_tokens.token_stride;
+        MatrixView residual_batch = x_batch;
+        residual_batch.data = r_tokens.data + static_cast<std::size_t>(w0)
             * static_cast<std::size_t>(r_tokens.window_stride);
-        residual_window.row_stride = r_tokens.token_stride;
+        residual_batch.row_stride = r_tokens.token_stride;
         MutableMatrixView y_view;
-        y_view.data = y_buffer;
-        y_view.rows = kWindowTokens;
+        y_view.data = y_dst;
+        y_view.rows = rows;
         y_view.cols = channels;
         y_view.row_stride = channels;
         MutableMatrixView mlp_scratch_view;
-        mlp_scratch_view.data = mlp_scratch;
-        mlp_scratch_view.rows = kWindowTokens;
+        mlp_scratch_view.data = mlp_dst;
+        mlp_scratch_view.rows = rows;
         mlp_scratch_view.cols = params.expand.rows;
         mlp_scratch_view.row_stride = params.expand.rows;
         {
-            const Status status = swin_mlp(x_window, params.expand, params.mid,
+            const Status status = swin_mlp(x_batch, params.expand, params.mid,
                                            params.heads, params.contract,
-                                           residual_window, params.mlp_scale,
+                                           residual_batch, params.mlp_scale,
                                            &y_view,
-                                           static_cast<std::size_t>(
-                                               kWindowTokens) * channels,
+                                           static_cast<std::size_t>(rows)
+                                               * channels,
                                            &mlp_scratch_view,
-                                           static_cast<std::size_t>(
-                                               kWindowTokens)
+                                           static_cast<std::size_t>(rows)
                                                * params.expand.rows,
                                            params.site, site);
             if (status != Status::kOk) {
                 return status;
             }
         }
-        const std::size_t window_floats =
-            static_cast<std::size_t>(kWindowTokens) * channels;
-        for (std::size_t i = 0; i < window_floats; ++i) {
-            y_q_buffer[i] = swin_store(y_buffer[i]);
+        const std::size_t batch_floats =
+            static_cast<std::size_t>(rows) * channels;
+        for (std::size_t i = 0; i < batch_floats; ++i) {
+            y_q_dst[i] = swin_store(y_dst[i]);
         }
         MatrixView y_q_view;
-        y_q_view.data = y_q_buffer;
-        y_q_view.rows = kWindowTokens;
+        y_q_view.data = y_q_dst;
+        y_q_view.rows = rows;
         y_q_view.cols = channels;
         y_q_view.row_stride = channels;
         MatrixView skip_view;
-        skip_view.data = params.heads == 1 ? y_buffer : y_q_buffer;
-        skip_view.rows = kWindowTokens;
+        skip_view.data = params.heads == 1 ? y_dst : y_q_dst;
+        skip_view.rows = rows;
         skip_view.cols = channels;
         skip_view.row_stride = channels;
-        MutableMatrixView out_window;
-        out_window.data = tokens_out + static_cast<std::size_t>(w)
+        MutableMatrixView out_view;
+        out_view.data = tokens_out + static_cast<std::size_t>(w0)
             * static_cast<std::size_t>(kWindowTokens)
             * static_cast<std::size_t>(channels);
-        out_window.rows = kWindowTokens;
-        out_window.cols = channels;
-        out_window.row_stride = channels;
-        {
-            const Status status = swin_attention(y_q_view, params.qkv,
-                                                 params.head_scale,
-                                                 params.exp_bias, skip_view,
-                                                 params.attn_scale,
-                                                 params.out_proj, &out_window,
-                                                 window_floats, attn_scratch,
-                                                 attn_needed,
-                                                 params.site != nullptr
-                                                     ? params.site->int4_qkv
+        out_view.rows = rows;
+        out_view.cols = channels;
+        out_view.row_stride = channels;
+        return swin_attention(y_q_view, params.qkv, params.head_scale,
+                              params.exp_bias, skip_view, params.attn_scale,
+                              params.out_proj, &out_view, batch_floats,
+                              attn_dst, attn_capacity,
+                              params.site != nullptr ? params.site->int4_qkv
                                                      : nullptr,
-                                                 site);
+                              site);
+    };
+    // The G8 chunked path: one batch per kSwinBatchWindows windows when the
+    // site provides chunk-sized buffers (executor, dense input, products and
+    // batch work). Any CAPACITY shortfall (or a null matmul_f32) keeps the
+    // per-window path below exactly as before (its per-call site checks still
+    // apply). A site with a null executor or null gather/scatter buffers is
+    // the G4 rejection class — kInvalidBuffer from the first swin_linear call
+    // in BOTH paths (a caller invariant, pinned by the tests), not a fallback.
+    const long long chunk_windows = window_total < kSwinBatchWindows
+        ? window_total : kSwinBatchWindows;
+    const int chunk_rows = static_cast<int>(chunk_windows * kWindowTokens);
+    const std::size_t chunk_products =
+        static_cast<std::size_t>(chunk_rows)
+        * static_cast<std::size_t>(params.expand.rows);
+    const std::size_t chunk_qkv_products =
+        static_cast<std::size_t>(chunk_rows)
+        * static_cast<std::size_t>(3) * channels;
+    const std::size_t chunk_product_capacity =
+        chunk_products > chunk_qkv_products ? chunk_products
+                                            : chunk_qkv_products;
+    const bool batched = site != nullptr && site->ex != nullptr
+        && site->ex->matmul_f32 != nullptr && site->batch_work != nullptr
+        && site->input_capacity
+               >= static_cast<std::size_t>(chunk_rows) * channels
+        && site->products_capacity >= chunk_product_capacity
+        && site->batch_capacity >= swin_batch_work_needed(
+               chunk_rows, channels, params.expand.rows, params.heads);
+    if (batched) {
+        float* const work = site->batch_work;
+        float* const work_y = work;
+        float* const work_y_q = work_y
+            + static_cast<std::size_t>(chunk_rows) * channels;
+        float* const work_mlp = work_y_q
+            + static_cast<std::size_t>(chunk_rows) * channels;
+        float* const work_attn = work_mlp
+            + static_cast<std::size_t>(chunk_rows) * params.expand.rows;
+        for (long long w0 = 0; w0 < window_total; w0 += kSwinBatchWindows) {
+            const long long left = window_total - w0;
+            const int windows_in_batch = static_cast<int>(
+                left < kSwinBatchWindows ? left : kSwinBatchWindows);
+            const int rows = windows_in_batch * kWindowTokens;
+            const std::size_t attn_capacity =
+                static_cast<std::size_t>(rows)
+                    * (static_cast<std::size_t>(3) * channels)
+                + 4 * static_cast<std::size_t>(rows) * channels
+                + 2 * static_cast<std::size_t>(params.exp_bias.rows) * kBiasTable;
+            const Status status = run_window_batch(w0, windows_in_batch,
+                                                   work_y, work_y_q, work_mlp,
+                                                   work_attn, attn_capacity);
+            if (status != Status::kOk) {
+                return status;
+            }
+        }
+    } else {
+        for (long long w = 0; w < window_total; ++w) {
+            const std::size_t attn_capacity =
+                static_cast<std::size_t>(kWindowTokens)
+                    * (static_cast<std::size_t>(3) * channels)
+                + 4 * static_cast<std::size_t>(kWindowTokens) * channels
+                + 2 * static_cast<std::size_t>(params.exp_bias.rows) * kBiasTable;
+            const Status status = run_window_batch(w, 1, y_buffer, y_q_buffer,
+                                                   mlp_scratch, attn_scratch,
+                                                   attn_capacity);
             if (status != Status::kOk) {
                 return status;
             }

@@ -20,11 +20,21 @@
 // mid-path width bound with their accepting and rejecting edges;
 // sentinel-checked untouched outputs and scratch on every validation
 // rejection class; determinism and zero-allocation accounting.
+// The G8 batched chunk seam: chunked vs per-window vs no-site bit-identity
+// across the window-count matrix {1, 2, 16, 32, 33, 92} (both head families,
+// both residual paths, zero and non-trivial corpora, the acc modes), the
+// executor call-shape contract (one expand + one QKV call per
+// kSwinBatchWindows-window chunk, chunk-sized, versus one per window), every
+// capacity/shape fallback predicate keeping the per-window path, the
+// null-executor rejection class (the G4 site ordering) and the
+// swin_layer_plain site threading — all through a counting CPU executor that
+// honours the ProjectionExecutor product contract.
 // See vr/NATIVE-SWIN-BLOCK.md.
 
-#include "native-swin-block.hpp"
+#include "native-swin-resample.hpp"  // swin_block_scratch_needed + the layer entries
 
 #include <assert.h>
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +42,7 @@
 #include <string.h>
 
 #include <atomic>
+#include <limits>
 #include <new>
 
 static std::atomic<unsigned long long> g_allocations{0};
@@ -1202,6 +1213,565 @@ static void check_negatives(void) {
 
 // ---- determinism and zero allocation -----------------------------------------------------------------
 
+// ---- the G8 batched chunk seam -------------------------------------------------------------------
+// The chunked path (one swin_mlp/swin_attention call per kSwinBatchWindows
+// windows when the site carries chunk-sized batch work) must be bit-identical
+// to the per-window path stage for stage, and the executor must see
+// CHUNK-SIZED calls — the whole point of the seam: no per-window transfer
+// thrash. A counting CPU executor stands in for the GPU backend: it honours
+// the documented ProjectionExecutor contract (row-wise k-ordered float32
+// accumulation from +0.0, bit-identical to the CPU kernel) and records every
+// call's shape.
+
+struct CountingExecutor {
+    static constexpr int kMaxCalls = 8192;
+    long long calls = 0;
+    int tokens[kMaxCalls];
+    int c_in[kMaxCalls];
+    int rows[kMaxCalls];
+    bool overflow = false;
+};
+
+static Status counting_matmul_f32(void* engine, const float* in, int tokens,
+                                  int c_in, const float* weights, int rows,
+                                  float* out) {
+    auto* ctx = static_cast<CountingExecutor*>(engine);
+    if (ctx->calls < CountingExecutor::kMaxCalls) {
+        ctx->tokens[ctx->calls] = tokens;
+        ctx->c_in[ctx->calls] = c_in;
+        ctx->rows[ctx->calls] = rows;
+    } else {
+        ctx->overflow = true;
+    }
+    ++ctx->calls;
+    for (int t = 0; t < tokens; ++t) {
+        for (int n = 0; n < rows; ++n) {
+            float sum = 0.0f;
+            for (int c = 0; c < c_in; ++c) {
+                sum += in[static_cast<std::size_t>(t) * c_in + c]
+                    * weights[static_cast<std::size_t>(n) * c_in + c];
+            }
+            out[static_cast<std::size_t>(t) * rows + n] = sum;
+        }
+    }
+    return Status::kOk;
+}
+
+// The three site shapes for one config: exact chunk-sized input/products and
+// the swin_batch_work_needed chunk region (the swin_site_scratch_needed
+// order). `chunk_rows` is the largest chunk the map can produce. The executor
+// record lives in the handle so each site keeps its own engine; the
+// gather/scatter/batch buffers below are shared statics — build and use one
+// site at a time.
+struct BatchSite {
+    static constexpr std::size_t kMaxChunkRows =
+        static_cast<std::size_t>(dlss5_nr::kSwinBatchWindows)
+        * dlss5_nr::kWindowTokens;
+    static float in_dense[kMaxChunkRows * 64];
+    static float products[kMaxChunkRows * 192];
+    static float work[1 << 21];
+    dlss5_nr::ProjectionExecutor ex;
+
+    void build(dlss5_nr::SwinProjectionSite& site, CountingExecutor& engine,
+               int chunk_rows, int channels, int expand_rows, int heads) {
+        site = dlss5_nr::SwinProjectionSite{};
+        ex = dlss5_nr::ProjectionExecutor{};
+        ex.ctx = &engine;
+        ex.matmul_f32 = &counting_matmul_f32;
+        site.ex = &ex;
+        site.input_dense = in_dense;
+        site.input_capacity = static_cast<std::size_t>(chunk_rows) * channels;
+        site.products = products;
+        const std::size_t expand = static_cast<std::size_t>(expand_rows);
+        const std::size_t qkv = static_cast<std::size_t>(3) * channels;
+        site.products_capacity = static_cast<std::size_t>(chunk_rows)
+            * (expand > qkv ? expand : qkv);
+        site.batch_work = work;
+        site.batch_capacity = dlss5_nr::swin_batch_work_needed(
+            chunk_rows, channels, expand_rows, heads);
+    }
+};
+
+float BatchSite::in_dense[BatchSite::kMaxChunkRows * 64];
+float BatchSite::products[BatchSite::kMaxChunkRows * 192];
+float BatchSite::work[1 << 21];
+
+static void check_batched_seam(void) {
+    using dlss5_nr::swin_block;
+    using dlss5_nr::swin_core;
+    using dlss5_nr::swin_layer_plain;
+    using dlss5_nr::SwinProjectionSite;
+    // Window-count matrix around the chunk boundary (windows = 1, 2, 16 with
+    // the shifted 4x4 grid, 32 = one exact chunk, 33 = chunk + tail, and
+    // 92 = three chunks + tail at shift (-1, -1)), both residual paths, zero
+    // and non-trivial weights, both head families, and the acc-destination
+    // modes.
+    const int rows[] = {8, 8, 24, 8, 8, 8};
+    const int cols[] = {8, 16, 24, 256, 264, 360};
+    const int shift_r[] = {0, 0, -1, 0, 0, -1};
+    const int shift_c[] = {0, 0, -1, 0, 0, -1};
+    const int heads_cfg[] = {1, 1, 2, 1, 1, 1};
+    const long long windows_cfg[] = {1, 2, 16, 32, 33, 92};
+    static float x_buf[1 << 18];
+    static float xw_buf[1 << 18];
+    static float wide_cpu[1 << 18];
+    static float wide_gpu[1 << 18];
+    static float wide_pw[1 << 18];
+    static float acc_cpu[1 << 18];
+    static float acc_gpu[1 << 18];
+    static float acc_pw[1 << 18];
+    static float scratch[1 << 21];
+    for (int cfg = 0; cfg < 6; ++cfg) {
+        for (int path = 0; path < 2; ++path) {
+            for (int corpus = 0; corpus < 2; ++corpus) {
+                const int channels = heads_cfg[cfg] == 1 ? fixture::kChannels
+                                                        : fixture::kWideChannels;
+                const int heads = heads_cfg[cfg];
+                // The single-head fixture keeps expand.rows = kHidden; the
+                // multi-head grouped-mid fixture is built inline below.
+                fixture::BlockFixture f;
+                f.zero_init();
+                static MatrixView mid_view;
+                static float mid_buf[fixture::kWideChannels * 8];
+                static float expand_buf[16 * fixture::kWideChannels];
+                static float contract_buf[fixture::kWideChannels
+                    * fixture::kWideChannels];
+                static float mlp_scale_buf[fixture::kWideChannels];
+                static float qkv_buf[3 * fixture::kWideChannels
+                    * fixture::kWideChannels];
+                static float head_scale_buf[2];
+                static float exp_bias_buf[2 * dlss5_nr::kBiasTable];
+                static float attn_scale_buf[fixture::kWideChannels];
+                static float out_proj_buf[fixture::kWideChannels
+                    * fixture::kWideChannels];
+                SwinBlockParams params = f.params;
+                int expand_rows = fixture::kHidden;
+                if (heads == 2) {
+                    for (std::size_t p = 0; p < sizeof mid_buf
+                            / sizeof mid_buf[0]; ++p) {
+                        mid_buf[p] = 0.0f;
+                    }
+                    memset(expand_buf, 0, sizeof expand_buf);
+                    memset(contract_buf, 0, sizeof contract_buf);
+                    memset(qkv_buf, 0, sizeof qkv_buf);
+                    memset(out_proj_buf, 0, sizeof out_proj_buf);
+                    memset(exp_bias_buf, 0, sizeof exp_bias_buf);
+                    for (int c = 0; c < fixture::kWideChannels; ++c) {
+                        mlp_scale_buf[c] = 1.0f;
+                        attn_scale_buf[c] = 1.0f;
+                    }
+                    head_scale_buf[0] = 1.0f;
+                    head_scale_buf[1] = 1.0f;
+                    mid_view = make_view(mid_buf, fixture::kWideChannels, 8, 8);
+                    params.mid = &mid_view;
+                    params.heads = 2;
+                    params.expand = make_view(expand_buf, 16,
+                        fixture::kWideChannels, fixture::kWideChannels);
+                    params.contract = make_view(contract_buf,
+                        fixture::kWideChannels, fixture::kWideChannels,
+                        fixture::kWideChannels);
+                    params.mlp_scale = make_view(mlp_scale_buf, 1,
+                        fixture::kWideChannels, fixture::kWideChannels);
+                    params.qkv = make_view(qkv_buf, 3 * fixture::kWideChannels,
+                        fixture::kWideChannels, fixture::kWideChannels);
+                    params.head_scale = make_view(head_scale_buf, 1, 2, 2);
+                    params.exp_bias = make_view(exp_bias_buf, 2,
+                        dlss5_nr::kBiasTable, dlss5_nr::kBiasTable);
+                    params.attn_scale = make_view(attn_scale_buf, 1,
+                        fixture::kWideChannels, fixture::kWideChannels);
+                    params.out_proj = make_view(out_proj_buf,
+                        fixture::kWideChannels, fixture::kWideChannels,
+                        fixture::kWideChannels);
+                    expand_rows = 16;
+                    if (corpus == 1) {
+                        for (std::size_t p = 0; p < sizeof mid_buf
+                                / sizeof mid_buf[0]; ++p) {
+                            mid_buf[p] = dlss5_nr::e4m3(rnd_f16() - 1.5f);
+                        }
+                        for (std::size_t p = 0; p < sizeof expand_buf
+                                / sizeof expand_buf[0]; ++p) {
+                            expand_buf[p] = dlss5_nr::e4m3(rnd_f16() - 1.5f);
+                        }
+                        for (std::size_t p = 0; p < sizeof contract_buf
+                                / sizeof contract_buf[0]; ++p) {
+                            contract_buf[p] = dlss5_nr::e4m3(rnd_f16() - 1.5f);
+                        }
+                        for (std::size_t p = 0; p < sizeof qkv_buf
+                                / sizeof qkv_buf[0]; ++p) {
+                            qkv_buf[p] = dlss5_nr::e4m3(rnd_f16() - 1.5f);
+                        }
+                        for (std::size_t p = 0; p < sizeof out_proj_buf
+                                / sizeof out_proj_buf[0]; ++p) {
+                            out_proj_buf[p] = dlss5_nr::e4m3(rnd_f16() - 1.5f);
+                        }
+                        for (int c = 0; c < fixture::kWideChannels; ++c) {
+                            mlp_scale_buf[c] = rnd_f16();
+                            attn_scale_buf[c] = rnd_f16();
+                        }
+                        for (std::size_t p = 0; p < sizeof exp_bias_buf
+                                / sizeof exp_bias_buf[0]; ++p) {
+                            exp_bias_buf[p] = rnd_f16();
+                        }
+                    }
+                } else if (corpus == 1) {
+                    fill_random_weights(&f);
+                }
+                const std::size_t map_count =
+                    static_cast<std::size_t>(channels) * rows[cfg] * cols[cfg];
+                for (std::size_t p = 0; p < map_count; ++p) {
+                    x_buf[p] = rnd_f16();
+                    xw_buf[p] = rnd_f16();
+                }
+                const FeatureBatchView x_v = make_batch(x_buf, channels,
+                    rows[cfg], cols[cfg],
+                    static_cast<std::ptrdiff_t>(rows[cfg]) * cols[cfg],
+                    cols[cfg]);
+                const FeatureBatchView xw_v = make_batch(xw_buf, channels,
+                    rows[cfg], cols[cfg],
+                    static_cast<std::ptrdiff_t>(rows[cfg]) * cols[cfg],
+                    cols[cfg]);
+                const FeatureBatchView* wide_arg = path == 0 ? nullptr : &xw_v;
+                const std::size_t scratch_need = swin_block_scratch_needed(
+                    x_v, path != 0, true, shift_r[cfg], shift_c[cfg], params);
+                CHECK(scratch_need > 0);
+                int wr = 0, fr = 0, wc = 0, fc = 0;
+                CHECK(dlss5_nr::swin_window_grid(rows[cfg], shift_r[cfg], &wr,
+                                                 &fr) == Status::kOk);
+                CHECK(dlss5_nr::swin_window_grid(cols[cfg], shift_c[cfg], &wc,
+                                                 &fc) == Status::kOk);
+                const long long windows =
+                    static_cast<long long>(wr) * wc;
+                CHECK(windows == windows_cfg[cfg]);
+                const long long chunk_windows =
+                    windows < dlss5_nr::kSwinBatchWindows
+                        ? windows : dlss5_nr::kSwinBatchWindows;
+                const int chunk_rows = static_cast<int>(
+                    chunk_windows * dlss5_nr::kWindowTokens);
+                // (1) the CPU reference (no site: the per-window kernels).
+                CHECK(swin_block(x_v, wide_arg, shift_r[cfg], shift_c[cfg],
+                    params, wide_cpu, map_count, acc_cpu, map_count, scratch,
+                    scratch_need) == Status::kOk);
+                // (2) the chunked seam: batch work present and exact.
+                CountingExecutor engine;
+                SwinProjectionSite site;
+                BatchSite batch;
+                batch.build(site, engine, chunk_rows, channels,
+                            expand_rows, heads);
+                CHECK(swin_block(x_v, wide_arg, shift_r[cfg], shift_c[cfg],
+                    params, wide_gpu, map_count, acc_gpu, map_count, scratch,
+                    scratch_need, &site) == Status::kOk);
+                for (std::size_t p = 0; p < map_count; ++p) {
+                    CHECK(memcmp(&wide_cpu[p], &wide_gpu[p], sizeof(float))
+                          == 0);
+                    CHECK(memcmp(&acc_cpu[p], &acc_gpu[p], sizeof(float)) == 0);
+                }
+                // The executor saw one expand + one QKV call per chunk, each
+                // chunk-sized — no per-window calls.
+                long long chunks = (windows + dlss5_nr::kSwinBatchWindows - 1)
+                    / dlss5_nr::kSwinBatchWindows;
+                long long expect_calls = 2 * chunks;
+                CHECK(!engine.overflow);
+                CHECK(engine.calls == expect_calls);
+                long long w0 = 0;
+                for (long long k = 0; k < expect_calls
+                        && k < CountingExecutor::kMaxCalls; k += 2) {
+                    const long long left = windows - w0;
+                    const long long wc_batch =
+                        left < dlss5_nr::kSwinBatchWindows
+                            ? left : dlss5_nr::kSwinBatchWindows;
+                    const int t = static_cast<int>(
+                        wc_batch * dlss5_nr::kWindowTokens);
+                    CHECK(engine.tokens[k] == t);
+                    CHECK(engine.c_in[k] == channels);
+                    CHECK(engine.rows[k] == expand_rows);
+                    CHECK(engine.tokens[k + 1] == t);
+                    CHECK(engine.c_in[k + 1] == channels);
+                    CHECK(engine.rows[k + 1] == 3 * channels);
+                    w0 += wc_batch;
+                }
+                // (3) the per-window seam (site without batch work): the
+                // pre-G8 wiring, one expand + one QKV call PER WINDOW, and
+                // the same bit-exact results.
+                CountingExecutor engine_pw;
+                SwinProjectionSite site_pw;
+                BatchSite batch_pw;
+                batch_pw.build(site_pw, engine_pw, chunk_rows, channels,
+                               expand_rows, heads);
+                site_pw.batch_work = nullptr;
+                site_pw.batch_capacity = 0;
+                CHECK(swin_block(x_v, wide_arg, shift_r[cfg], shift_c[cfg],
+                    params, wide_pw, map_count, acc_pw, map_count, scratch,
+                    scratch_need, &site_pw) == Status::kOk);
+                for (std::size_t p = 0; p < map_count; ++p) {
+                    CHECK(memcmp(&wide_cpu[p], &wide_pw[p], sizeof(float)) == 0);
+                    CHECK(memcmp(&acc_cpu[p], &acc_pw[p], sizeof(float)) == 0);
+                }
+                CHECK(!engine_pw.overflow);
+                CHECK(engine_pw.calls == 2 * windows);
+                for (long long k = 0; k < 2 * windows
+                        && k < CountingExecutor::kMaxCalls; ++k) {
+                    CHECK(engine_pw.tokens[k]
+                          == dlss5_nr::kWindowTokens);
+                    CHECK(engine_pw.c_in[k] == channels);
+                    CHECK(engine_pw.rows[k]
+                          == ((k % 2) == 0 ? expand_rows : 3 * channels));
+                }
+            }
+        }
+    }
+    // The swin_core form (x doubles as the f16 residual) is the same body:
+    // one small chunked-vs-CPU equivalence pin.
+    {
+        fixture::BlockFixture f;
+        f.zero_init();
+        fill_random_weights(&f);
+        const int channels = fixture::kChannels;
+        static float x[fixture::kChannels * 8 * 360];
+        static float wide_a[fixture::kChannels * 8 * 360];
+        static float wide_b[fixture::kChannels * 8 * 360];
+        static float acc_a[fixture::kChannels * 8 * 360];
+        static float acc_b[fixture::kChannels * 8 * 360];
+        const std::size_t map_count = std::size_t{channels} * 8 * 360;
+        for (std::size_t p = 0; p < map_count; ++p) {
+            x[p] = rnd_f16();
+        }
+        const FeatureBatchView x_v = make_batch(x, channels, 8, 360,
+            static_cast<std::ptrdiff_t>(8) * 360, 360);
+        const std::size_t need = swin_block_scratch_needed(x_v, true, true, -1,
+            -1, f.params);
+        CHECK(swin_core(x_v, -1, -1, f.params, wide_a, map_count, acc_a,
+            map_count, scratch, need) == Status::kOk);
+        CountingExecutor engine;
+        SwinProjectionSite site;
+        BatchSite batch;
+        batch.build(site, engine, static_cast<int>(
+            BatchSite::kMaxChunkRows), channels, fixture::kHidden, 1);
+        CHECK(swin_core(x_v, -1, -1, f.params, wide_b, map_count, acc_b,
+            map_count, scratch, need, &site) == Status::kOk);
+        for (std::size_t p = 0; p < map_count; ++p) {
+            CHECK(memcmp(&wide_a[p], &wide_b[p], sizeof(float)) == 0);
+            CHECK(memcmp(&acc_a[p], &acc_b[p], sizeof(float)) == 0);
+        }
+        CHECK(engine.calls == 2 * 3);  // 92 windows at shift (-1, -1): 3 chunks
+    }
+    // The fallback predicates: every capacity/shape shortfall keeps the
+    // per-window path (bit-identical results, per-window call shapes), and a
+    // site without an executor keeps the CPU kernels (no executor calls).
+    {
+        fixture::BlockFixture f;
+        f.zero_init();
+        fill_random_weights(&f);
+        const int channels = fixture::kChannels;
+        const int rows = 8;
+        const int cols = 264;
+        const std::size_t map_count = std::size_t{channels} * rows * cols;
+        static float x[1 << 18];
+        static float wide_ref[1 << 18];
+        static float wide_try[1 << 18];
+        for (std::size_t p = 0; p < map_count; ++p) {
+            x[p] = rnd_f16();
+        }
+        const FeatureBatchView x_v = make_batch(x, channels, rows, cols,
+            static_cast<std::ptrdiff_t>(rows) * cols, cols);
+        const std::size_t need = swin_block_scratch_needed(x_v, false, true, 0,
+            0, f.params);
+        CHECK(swin_block(x_v, nullptr, 0, 0, f.params, wide_ref, map_count,
+            nullptr, 0, scratch, need) == Status::kOk);
+        const int chunk_rows = static_cast<int>(BatchSite::kMaxChunkRows);
+        const std::size_t batch_need = dlss5_nr::swin_batch_work_needed(
+            chunk_rows, channels, fixture::kHidden, 1);
+        const std::size_t input_need =
+            static_cast<std::size_t>(chunk_rows) * channels;
+        const std::size_t expand = static_cast<std::size_t>(fixture::kHidden);
+        const std::size_t qkv = static_cast<std::size_t>(3) * channels;
+        const std::size_t product_need = static_cast<std::size_t>(chunk_rows)
+            * (expand > qkv ? expand : qkv);
+        for (int pred = 0; pred < 8; ++pred) {
+            CountingExecutor engine;
+            SwinProjectionSite site;
+            BatchSite batch;
+            batch.build(site, engine, chunk_rows, channels,
+                        fixture::kHidden, 1);
+            // Pred 7 swaps in padded-stride expand AND qkv matrices (the G4
+            // padded-weight CPU fallback: swin_linear runs its CPU kernel for
+            // those projections).
+            static float expand_pad[fixture::kHidden * (fixture::kChannels + 2)];
+            for (int r = 0; r < fixture::kHidden; ++r) {
+                for (int c = 0; c < fixture::kChannels; ++c) {
+                    expand_pad[r * (fixture::kChannels + 2) + c]
+                        = f.expand[r * fixture::kChannels + c];
+                }
+                expand_pad[r * (fixture::kChannels + 2) + fixture::kChannels]
+                    = 2.0f;
+                expand_pad[r * (fixture::kChannels + 2) + fixture::kChannels
+                    + 1] = -2.0f;
+            }
+            static float qkv_pad[3 * fixture::kChannels
+                * (fixture::kChannels + 2)];
+            for (int r = 0; r < 3 * fixture::kChannels; ++r) {
+                for (int c = 0; c < fixture::kChannels; ++c) {
+                    qkv_pad[r * (fixture::kChannels + 2) + c]
+                        = f.qkv[r * fixture::kChannels + c];
+                }
+                qkv_pad[r * (fixture::kChannels + 2) + fixture::kChannels]
+                    = 2.0f;
+                qkv_pad[r * (fixture::kChannels + 2) + fixture::kChannels
+                    + 1] = -2.0f;
+            }
+            SwinBlockParams padded = f.params;
+            padded.expand = make_view(expand_pad, fixture::kHidden,
+                fixture::kChannels, fixture::kChannels + 2);
+            padded.qkv = make_view(qkv_pad, 3 * fixture::kChannels,
+                fixture::kChannels, fixture::kChannels + 2);
+            const SwinBlockParams& run_params =
+                pred == 7 ? padded : f.params;
+            switch (pred) {
+                case 0: site.batch_work = nullptr; break;
+                case 1: site.batch_capacity = batch_need - 1; break;
+                case 2: site.input_capacity = input_need - 1; break;
+                case 3: site.products_capacity = product_need - 1; break;
+                case 4: site.ex = nullptr; break;
+                case 5: {
+                    static dlss5_nr::ProjectionExecutor no_f32;
+                    no_f32 = dlss5_nr::ProjectionExecutor{};
+                    site.ex = &no_f32;
+                    break;
+                }
+                case 6: site.input_dense = nullptr; break;
+                default: break;
+            }
+            fill_sentinel(wide_try, 1 << 18);
+            const Status status = swin_block(x_v, nullptr, 0, 0, run_params,
+                wide_try, map_count, nullptr, 0, scratch, need, &site);
+            if (pred == 4 || pred == 6) {
+                // A set site with a null executor or a null gather buffer is
+                // INVALID (the G4 site ordering, identical in both paths),
+                // not a fallback: no output writes at all.
+                CHECK(status == Status::kInvalidBuffer);
+                CHECK(all_sentinel(wide_try, 1 << 18));
+                CHECK(engine.calls == 0);
+                continue;
+            }
+            CHECK(status == Status::kOk);
+            for (std::size_t p = 0; p < map_count; ++p) {
+                CHECK(memcmp(&wide_ref[p], &wide_try[p], sizeof(float)) == 0);
+            }
+            if (pred < 4) {
+                // The per-window seam: 33 windows * two 64-token calls.
+                CHECK(!engine.overflow);
+                CHECK(engine.calls == 2 * 33);
+                CHECK(engine.tokens[0] == dlss5_nr::kWindowTokens);
+            } else {
+                // matmul_f32 == null, or a padded weight: the CPU kernels,
+                // no executor calls (the G4 fallbacks).
+                CHECK(engine.calls == 0);
+            }
+        }
+    }
+    // Sentinel-checked rejection with a full batched site: the block's
+    // validation contract is unchanged by the seam (no write at all).
+    {
+        fixture::BlockFixture f;
+        f.zero_init();
+        const int channels = fixture::kChannels;
+        static float x[1 << 18];
+        static float wide_try[1 << 18];
+        const std::size_t map_count = std::size_t{channels} * 8 * 16;
+        for (std::size_t p = 0; p < map_count; ++p) {
+            x[p] = 1.0f;
+        }
+        x[map_count / 2] = std::numeric_limits<float>::infinity();
+        const FeatureBatchView x_v = make_batch(x, channels, 8, 16,
+            static_cast<std::ptrdiff_t>(8) * 16, 16);
+        const std::size_t need = swin_block_scratch_needed(x_v, false, true, 0,
+            0, f.params);
+        CountingExecutor engine;
+        SwinProjectionSite site;
+        BatchSite batch;
+        batch.build(site, engine, static_cast<int>(
+            BatchSite::kMaxChunkRows), channels, fixture::kHidden, 1);
+        fill_sentinel(wide_try, 1 << 18);
+        fill_sentinel(scratch, 1 << 21);
+        CHECK(swin_block(x_v, nullptr, 0, 0, f.params, wide_try, map_count,
+            nullptr, 0, scratch, need, &site) == Status::kInvalidValues);
+        CHECK(all_sentinel(wide_try, 1 << 18));
+        CHECK(all_sentinel(scratch, 1 << 21));
+        CHECK(engine.calls == 0);
+    }
+    // swin_layer_plain threads the site like the other layer entries: the
+    // chunked run equals the CPU run bit for bit (and the default keeps the
+    // CPU kernels).
+    {
+        fixture::BlockFixture f;
+        f.zero_init();
+        fill_random_weights(&f);
+        const int channels = fixture::kChannels;
+        static float x[fixture::kChannels * 8 * 264];
+        static float out_a[fixture::kChannels * 8 * 264];
+        static float out_b[fixture::kChannels * 8 * 264];
+        const std::size_t map_count = std::size_t{channels} * 8 * 264;
+        for (std::size_t p = 0; p < map_count; ++p) {
+            x[p] = rnd_f16();
+        }
+        const FeatureBatchView x_v = make_batch(x, channels, 8, 264,
+            static_cast<std::ptrdiff_t>(8) * 264, 264);
+        const std::size_t need = swin_block_scratch_needed(x_v, false, true, 0,
+            0, f.params);
+        CHECK(swin_layer_plain(x_v, 0, 0, f.params, out_a, map_count, scratch,
+            need) == Status::kOk);
+        CountingExecutor engine;
+        SwinProjectionSite site;
+        BatchSite batch;
+        batch.build(site, engine, static_cast<int>(
+            BatchSite::kMaxChunkRows), channels, fixture::kHidden, 1);
+        CHECK(swin_layer_plain(x_v, 0, 0, f.params, out_b, map_count, scratch,
+            need, &site) == Status::kOk);
+        for (std::size_t p = 0; p < map_count; ++p) {
+            CHECK(memcmp(&out_a[p], &out_b[p], sizeof(float)) == 0);
+        }
+        CHECK(engine.calls == 2 * 2);  // 33 windows: 32 + 1 chunks
+    }
+    // Determinism and zero-allocation accounting across the chunked path.
+    {
+        fixture::BlockFixture f;
+        f.zero_init();
+        fill_random_weights(&f);
+        const int channels = fixture::kChannels;
+        static float x[fixture::kChannels * 8 * 360];
+        static float xw[fixture::kChannels * 8 * 360];
+        static float wide_a[fixture::kChannels * 8 * 360];
+        static float wide_b[fixture::kChannels * 8 * 360];
+        static float acc_a[fixture::kChannels * 8 * 360];
+        static float acc_b[fixture::kChannels * 8 * 360];
+        const std::size_t map_count = std::size_t{channels} * 8 * 360;
+        for (std::size_t p = 0; p < map_count; ++p) {
+            x[p] = rnd_f16();
+            xw[p] = rnd_f16();
+        }
+        const FeatureBatchView x_v = make_batch(x, channels, 8, 360,
+            static_cast<std::ptrdiff_t>(8) * 360, 360);
+        const FeatureBatchView xw_v = make_batch(xw, channels, 8, 360,
+            static_cast<std::ptrdiff_t>(8) * 360, 360);
+        const std::size_t need = swin_block_scratch_needed(x_v, true, true, 0,
+            0, f.params);
+        CountingExecutor engine;
+        SwinProjectionSite site;
+        BatchSite batch;
+        batch.build(site, engine, static_cast<int>(
+            BatchSite::kMaxChunkRows), channels, fixture::kHidden, 1);
+        const unsigned long long before = g_allocations.load();
+        CHECK(swin_block(x_v, &xw_v, 0, 0, f.params, wide_a, map_count, acc_a,
+            map_count, scratch, need, &site) == Status::kOk);
+        CHECK(swin_block(x_v, &xw_v, 0, 0, f.params, wide_b, map_count, acc_b,
+            map_count, scratch, need, &site) == Status::kOk);
+        CHECK(g_allocations.load() == before);
+        for (std::size_t p = 0; p < map_count; ++p) {
+            CHECK(memcmp(&wide_a[p], &wide_b[p], sizeof(float)) == 0);
+            CHECK(memcmp(&acc_a[p], &acc_b[p], sizeof(float)) == 0);
+        }
+    }
+}
+
 static void check_determinism_and_allocations(void) {
     using dlss5_nr::swin_block;
     fixture::BlockFixture f;
@@ -1256,6 +1826,7 @@ int main(void) {
     check_closed_forms();
     check_equivalence();
     check_negatives();
+    check_batched_seam();
     check_determinism_and_allocations();
     printf("native-swin-block-test: %lld checks passed\n", g_checks);
     return 0;

@@ -487,18 +487,23 @@ inline Status swin_upsample_blend(const MatrixView& project,
 // buffer layout). Scratch is swin_block's (swin_block_scratch_needed(x, false,
 // true, shifts, params); no acc destination is passed, so the block stages its
 // acc map inside the scratch). The block's validation and write contract
-// surface unchanged (on any error `out_dst` and `scratch` are untouched).
+// surface unchanged (on any error `out_dst` and `scratch` are untouched). The
+// optional site threads swin_block's projection seam (and its G8 batched
+// chunk path) exactly as the other layer entries; the default keeps the CPU
+// kernels.
 inline Status swin_layer_plain(const FeatureBatchView& x,
                                int shift_rows, int shift_cols,
                                const SwinBlockParams& params,
                                float* out_dst, std::size_t out_count,
-                               float* scratch, std::size_t scratch_capacity) {
+                               float* scratch, std::size_t scratch_capacity,
+                               const SwinProjectionSite* site = nullptr) {
     const std::size_t map_count = static_cast<std::size_t>(x.channels)
         * static_cast<std::size_t>(x.rows) * static_cast<std::size_t>(x.cols);
     {
         const Status status = swin_block(x, nullptr, shift_rows, shift_cols,
                                          params, out_dst, out_count,
-                                         nullptr, 0, scratch, scratch_capacity);
+                                         nullptr, 0, scratch, scratch_capacity,
+                                         site);
         if (status != Status::kOk) {
             return status;
         }
