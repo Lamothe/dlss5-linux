@@ -14,6 +14,8 @@
 // binaries are used or produced; no runtime/capture probes are performed.
 #include <chrono>
 #include <cstdio>
+#include <fstream>
+#include <vector>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -24,6 +26,15 @@
 #include "native-graph-plan.hpp"
 #include "native-history.hpp"
 #include "native-io.hpp"
+// The GPU backend is opt-in at BUILD time (the Vulkan runner compiles the
+// demo with -DDLSS5_DEMO_VULKAN and links -lvulkan); the default build is
+// CPU-only and Vulkan-free, so --gpu reports a clear message there.
+#if defined(DLSS5_DEMO_VULKAN)
+#  include "native-vulkan.hpp"
+#  define DLSS5_DEMO_HAS_VULKAN DLSS5_NR_HAS_VULKAN
+#else
+#  define DLSS5_DEMO_HAS_VULKAN 0
+#endif
 #include "native-parallel.hpp"
 
 namespace {
@@ -41,6 +52,7 @@ struct Options {
     const char* synthetic = "checker";
     unsigned seed = 20261028u;
     int frames = 4;
+    const char* gpu_spirv = nullptr;  // non-null: the G2 GPU projection backend
     int reset_at = 2;  // -1 = never; otherwise reset BEFORE this frame index
     bool profile = false;
     int threads = 1;  // the serial reference; 0 = hardware concurrency
@@ -58,7 +70,9 @@ void usage() {
         "  --reset-at K       temporal reset before frame K (default: 2; -1 = never)\n"
         "  --profile          print the per-kind wall-time breakdown of the run\n"
         "  --threads N        parallel threads (default 1 = the serial\n"
-        "                     reference; 0 = hardware concurrency)\n",
+        "                     reference; 0 = hardware concurrency)\n"
+        "  --gpu SPV          run the vit projection rows through the Vulkan\n"
+        "                     backend (compiled shader; CPU post chains)\n",
         kFrameW, kFrameH);
 }
 
@@ -215,6 +229,18 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
+        } else if (std::strcmp(a, "--gpu") == 0) {
+            if (i + 1 >= argc) {
+                std::fprintf(stderr, "--gpu needs a SPIR-V path\n");
+                return 2;
+            }
+            opt.gpu_spirv = argv[++i];
+#if !DLSS5_DEMO_HAS_VULKAN
+            std::fprintf(stderr,
+                         "--gpu: this build has no Vulkan support "
+                         "(rebuild with -DDLSS5_DEMO_VULKAN -lvulkan)\n");
+            return 2;
+#endif
         } else if (std::strcmp(a, "--reset-at") == 0) {
             const char* v = need();
             if (v == nullptr || !parse_int(v, opt.reset_at)) {
@@ -334,10 +360,55 @@ int main(int argc, char** argv) {
         std::free(image_storage);
         return 1;
     }
+#if DLSS5_DEMO_HAS_VULKAN
+    dlss5_nr::VulkanDevice gpu_device;
+    dlss5_nr::VulkanProjectionSite gpu_site;
+    dlss5_nr::ProjectionExecutor gpu_executor;
+    std::vector<std::uint32_t> gpu_spirv_words;
+    if (opt.gpu_spirv != nullptr) {
+        bool opened = false;
+        status = dlss5_nr::vulkan_open(gpu_device, opened);
+        if (status != Status::kOk || !opened) {
+            std::fprintf(stderr, "--gpu: no compute-capable Vulkan device\n");
+            std::free(arena);
+            std::free(image_storage);
+            return 1;
+        }
+        std::ifstream spv_file(opt.gpu_spirv, std::ios::binary | std::ios::ate);
+        bool spv_ok = spv_file.good();
+        std::streamsize spv_bytes =
+            spv_ok ? static_cast<std::streamsize>(spv_file.tellg()) : 0;
+        spv_ok = spv_ok && spv_bytes > 0 && spv_bytes % 4 == 0;
+        if (spv_ok) {
+            spv_file.seekg(0);
+            gpu_spirv_words.resize(static_cast<std::size_t>(spv_bytes) / 4);
+            spv_file.read(reinterpret_cast<char*>(gpu_spirv_words.data()),
+                          spv_bytes);
+            spv_ok = spv_file.good();
+        }
+        if (!spv_ok) {
+            std::fprintf(stderr, "--gpu: cannot read SPIR-V from %s\n",
+                         opt.gpu_spirv);
+            dlss5_nr::vulkan_close(gpu_device);
+            std::free(arena);
+            std::free(image_storage);
+            return 1;
+        }
+        gpu_site.device = &gpu_device;
+        gpu_site.spirv = gpu_spirv_words.data();
+        gpu_site.spirv_words = gpu_spirv_words.size();
+        gpu_executor = dlss5_nr::vulkan_projection_executor(&gpu_site);
+        std::printf("gpu backend: %s\n", gpu_device.name);
+    }
+#endif
+
     static dlss5_nr::EvalContext context;
     context.weights = &weights;
     context.scratch = arena;
     context.scratch_capacity = arena_floats;
+#if DLSS5_DEMO_HAS_VULKAN
+    context.projection = opt.gpu_spirv != nullptr ? &gpu_executor : nullptr;
+#endif
     status = dlss5_nr::eval_reset(context);
     if (status != Status::kOk) {
         std::fprintf(stderr, "eval_reset failed: %d\n",
@@ -528,6 +599,16 @@ int main(int argc, char** argv) {
                         frame, frame - 1, delta, delta_crop);
         }
     }
+#if DLSS5_DEMO_HAS_VULKAN
+    if (opt.gpu_spirv != nullptr) {
+        std::printf("gpu totals: kernel %.3f ms, decode %.3f ms, "
+                    "staging upload %.3f ms, download %.3f ms\n",
+                    gpu_site.kernel_ms, gpu_site.decode_ms,
+                    gpu_site.upload_ms, gpu_site.download_ms);
+        dlss5_nr::vulkan_projection_close(gpu_site);
+        dlss5_nr::vulkan_close(gpu_device);
+    }
+#endif
     std::printf(
         "total: %.2f ms for %d frames (mean %.2f ms/frame); "
         "arena high-water %zu floats (%.1f MiB)\n",

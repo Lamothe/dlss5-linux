@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "native-pre-post.hpp"
+#include "native-vit.hpp"
 
 #if defined(__linux__) && !defined(DLSS5_NR_NO_VULKAN)
 #define DLSS5_NR_HAS_VULKAN 1
@@ -657,6 +658,109 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
         }
     }
     return Status::kOk;
+}
+
+// ---- the projection executor (the G2 eval-dispatch backend) ---------------------------------------
+
+// Binds a VulkanMatmul as a ProjectionExecutor for the eval dispatch's vit
+// projection rows. The e4m3 codes are decoded host-side (exact in float32)
+// per call; G4 weight residency replaces this with persistent buffers.
+struct VulkanProjectionSite {
+    VulkanDevice* device = nullptr;
+    VulkanMatmul matmul;         // grow-only: resized to cover row shapes
+    std::uint32_t* spirv = nullptr;
+    std::size_t spirv_words = 0;
+    std::vector<float> decoded;
+    double decode_ms = 0.0;
+    double kernel_ms = 0.0;
+    double upload_ms = 0.0;
+    double download_ms = 0.0;
+};
+
+inline void vulkan_projection_close(VulkanProjectionSite& site) {
+    if (site.device != nullptr) {
+        vulkan_matmul_destroy(*site.device, site.matmul);
+    }
+    site = VulkanProjectionSite{};
+}
+
+inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
+                                       int c_in, const E4m3Matrix& w,
+                                       float* out) {
+    auto* site = static_cast<VulkanProjectionSite*>(ctx);
+    if (site == nullptr || site->device == nullptr || site->spirv == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (in == nullptr || w.bits == nullptr || out == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (tokens < 1 || c_in < 1 || w.rows < 1 || w.cols != c_in) {
+        return Status::kInvalidDimensions;
+    }
+    if (tokens > 65535 || w.rows > 65535 * 128
+        || static_cast<std::uint64_t>(tokens)
+                   * static_cast<std::uint64_t>(w.rows)
+               > UINT32_MAX
+        || static_cast<std::uint64_t>(tokens)
+                   * static_cast<std::uint64_t>(c_in)
+               > UINT32_MAX
+        || static_cast<std::uint64_t>(w.rows)
+                   * static_cast<std::uint64_t>(c_in)
+               > UINT32_MAX) {
+        return Status::kInvalidDimensions;
+    }
+    // Grow-only coverage: the plan's row shapes stabilise after a few
+    // resizes; the buffers never shrink.
+    if (site->matmul.pipeline == VK_NULL_HANDLE
+        || tokens > site->matmul.max_tokens || c_in > site->matmul.max_c_in
+        || w.rows > site->matmul.max_rows) {
+        // Grow-only: never shrink, so alternating row shapes (expand
+        // 1024->4096 / contract 4096->1024) settle after at most one
+        // rebuild per dimension and stop rebuilding. The old maxima are
+        // read before the destroy zeroes them.
+        int max_tokens = site->matmul.max_tokens > tokens
+            ? site->matmul.max_tokens : tokens;
+        int max_c_in = site->matmul.max_c_in > c_in ? site->matmul.max_c_in
+                                                    : c_in;
+        int max_rows = site->matmul.max_rows > w.rows ? site->matmul.max_rows
+                                                      : w.rows;
+        if (max_tokens < 4096) { max_tokens = 4096; }
+        if (max_c_in < 1024) { max_c_in = 1024; }
+        if (max_rows < 1024) { max_rows = 1024; }
+        vulkan_matmul_destroy(*site->device, site->matmul);
+        const Status st = vulkan_matmul_create(*site->device, site->matmul,
+                                               site->spirv, site->spirv_words,
+                                               max_tokens, max_c_in, max_rows);
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
+    const std::size_t count = static_cast<std::size_t>(w.rows)
+        * static_cast<std::size_t>(c_in);
+    const auto d0 = std::chrono::steady_clock::now();
+    site->decoded.resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        site->decoded[i] = e4m3_from_bits(w.bits[i]);
+    }
+    const auto d1 = std::chrono::steady_clock::now();
+    site->decode_ms +=
+        std::chrono::duration<double, std::milli>(d1 - d0).count();
+    VulkanMatmulTiming timing;
+    const Status st = vulkan_matmul_run(*site->device, site->matmul, in,
+                                        tokens, c_in, site->decoded.data(),
+                                        w.rows, out, timing);
+    site->kernel_ms += timing.kernel_ms;
+    site->upload_ms += timing.upload_ms;
+    site->download_ms += timing.download_ms;
+    return st;
+}
+
+inline ProjectionExecutor vulkan_projection_executor(VulkanProjectionSite*
+                                                         site) {
+    ProjectionExecutor ex;
+    ex.ctx = site;
+    ex.matmul = &vulkan_projection_matmul;
+    return ex;
 }
 
 #endif  // DLSS5_NR_HAS_VULKAN

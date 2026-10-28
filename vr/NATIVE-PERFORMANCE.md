@@ -100,3 +100,14 @@ Next GPU slices: wire the projection into the eval dispatch as an optional
 backend (CPU reference intact), then the split/attention and swin families,
 weight residency, and end-to-end per-frame GPU timing against the CPU
 baselines above.
+
+## G2 — the eval-dispatch GPU backend (30/10/2026)
+
+The optional ProjectionExecutor seam (CPU reference intact and default):
+the vit rows' raw projections run on the GPU; all post chains and rows stay
+on the CPU. Complete-network artefacts are byte-identical (the runner's G2
+gate; it also asserts the GPU actually ran). 71 checks at -O2/-O0.
+End-to-end at 8 CPU threads: **16,303 -> 14,242 ms/frame (1.14x)** — the
+GPU row cost is staging-dominated (kernel 223 ms vs decode+staging 509 ms
+per frame), which G3 weight residency removes. G1's per-kernel result
+stands (622x vs cpu-1t on the projection).

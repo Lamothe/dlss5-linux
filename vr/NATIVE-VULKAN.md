@@ -51,6 +51,33 @@ staging transfers measured separately — a later slice keeps the weights
 resident (they are static per run) so only the output download remains in
 the frame path.
 
+## G2 — the eval-dispatch GPU backend (30/10/2026)
+
+The eval dispatch accepts an optional `ProjectionExecutor`
+(`EvalContext::projection`): the vit projection rows'
+raw projection (`out[t][n] = sum_k in[t][k] * w[n][k]`) runs through the
+executor — the Vulkan backend above — while ALL post chains
+(`vit_ffn_expand_post` / `vit_residual_post` / `vit_qkv_post`) and every
+other row remain the CPU reference's operations. Null (the default) keeps
+the pure CPU path. Wired rows: VitFfnExpand, VitFfnContract/VitProjection
+and VitQKV (three projections assembled into the reference's interleaved
+layout).
+
+**Complete-network parity: byte-identical.** The runner's G2 gate runs the
+whole network twice through image_evaluation — CPU reference and --gpu —
+and requires identical artefacts (bit-identical where every intermediate is
+in the fp32 normal range; the denormal tolerance above applies). The gate
+also asserts the GPU actually ran (no silent CPU fallback). Per-row seam
+tests cover the three rows independently (71 checks at -O2/-O0).
+
+**Measured end-to-end (RTX 4070 Ti SUPER; 64x72 frame, kSmall plan, 8 CPU
+threads):** 16,303 ms/frame CPU vs **14,242 ms/frame GPU-backend = 1.14x**.
+The GPU row cost per frame: kernel 223 ms, e4m3 decode 323 ms, staging
+upload 135 ms, download 51 ms — per-call staging dominates (G3 weight
+residency removes the decode+upload of the static weights). The remaining
+frame time is the CPU rows (split/swin families) and the pre/post blocks;
+the GPU families grow one slice at a time.
+
 ## Provenance
 
 No proprietary code, payload, capture or binary is used or redistributed;

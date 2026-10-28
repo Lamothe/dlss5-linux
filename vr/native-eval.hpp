@@ -178,6 +178,11 @@ struct EvalContext {
     // The temporal history colour for the pre block's lift (slots 7..9);
     // null keeps the documented single-frame stub (current-colour copy).
     const FrameView* history = nullptr;
+    // Optional raw-projection executor for the vit projection rows (the
+    // G2 GPU backend in native-vulkan.hpp). Null keeps the CPU kernel —
+    // the deterministic reference. The kernels' post chains always run on
+    // the CPU, so executor results flow through the reference arithmetic.
+    const ProjectionExecutor* projection = nullptr;
 };
 
 // ---- vocabulary ---------------------------------------------------------------------------------
@@ -2089,7 +2094,11 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                 * static_cast<std::size_t>(spec.c_in);
             const std::size_t out_count = tokens
                 * static_cast<std::size_t>(spec.c_out);
-            status = row_begin(ctx, spec, out_count, 0, in_count + out_count,
+            const bool gpu_projection =
+                ctx.projection != nullptr && ctx.projection->matmul != nullptr;
+            status = row_begin(ctx, spec, out_count, 0,
+                               in_count + out_count
+                                   + (gpu_projection ? out_count : 0),
                                blocks);
             if (status != Status::kOk) {
                 return status;
@@ -2097,7 +2106,24 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             float* in_tokens = blocks.work;
             float* out_tokens = in_tokens + in_count;
             status = eval_planar_to_tokens(x, in_tokens, in_count);
-            if (status == Status::kOk) {
+            if (status == Status::kOk && gpu_projection) {
+                // G2: the raw projection runs through the executor; the
+                // post chain (vit_ffn_expand_post) is the CPU reference's.
+                float* products = out_tokens + out_count;
+                status = ctx.projection->matmul(
+                    ctx.projection->ctx, in_tokens, static_cast<int>(tokens),
+                    spec.c_in, E4m3Matrix{codes, spec.c_out, spec.c_in},
+                    products);
+                if (status == Status::kOk) {
+                    for (std::size_t i = 0; i < out_count; ++i) {
+                        out_tokens[i] = vit_ffn_expand_post(
+                            products[i],
+                            out.stash.hidden != nullptr
+                                ? &out.stash.hidden[i]
+                                : nullptr);
+                    }
+                }
+            } else if (status == Status::kOk) {
                 status = vit_ffn_expand(in_tokens, static_cast<int>(tokens),
                                         spec.c_in, spec.c_out,
                                         E4m3Matrix{codes, spec.c_out, spec.c_in},
@@ -2152,28 +2178,50 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                 * static_cast<std::size_t>(spec.c_in);
             const std::size_t out_count = tokens
                 * static_cast<std::size_t>(spec.c_out);
+            const bool gpu_projection =
+                ctx.projection != nullptr && ctx.projection->matmul != nullptr;
             status = row_begin(ctx, spec, out_count, 0,
-                               in_count + out_count + out_count, blocks);
+                               in_count + out_count + out_count
+                                   + (gpu_projection ? out_count : 0),
+                               blocks);
             if (status != Status::kOk) {
                 return status;
             }
             float* in_tokens = blocks.work;
             float* skip_tokens = in_tokens + in_count;
             float* out_tokens = skip_tokens + out_count;
+            float* stash_dest = contract_stash_dest(
+                ctx.weights, spec.block, spec.layer, out.stash);
             status = eval_planar_to_tokens(x, in_tokens, in_count);
             if (status == Status::kOk) {
                 status = eval_planar_to_tokens(skip, skip_tokens, out_count);
             }
-            if (status == Status::kOk) {
+            if (status == Status::kOk && gpu_projection) {
+                float* products = out_tokens + out_count;
+                status = ctx.projection->matmul(
+                    ctx.projection->ctx, in_tokens, static_cast<int>(tokens),
+                    spec.c_in, E4m3Matrix{codes, spec.c_out, spec.c_in},
+                    products);
+                if (status == Status::kOk) {
+                    for (std::size_t t = 0; t < tokens; ++t) {
+                        for (int n = 0; n < spec.c_out; ++n) {
+                            const std::size_t i =
+                                t * static_cast<std::size_t>(spec.c_out)
+                                + static_cast<std::size_t>(n);
+                            out_tokens[i] = vit_residual_post(
+                                products[i], skip_tokens[i], gain[n],
+                                stash_dest != nullptr ? &stash_dest[i]
+                                                      : nullptr);
+                        }
+                    }
+                }
+            } else if (status == Status::kOk) {
                 status = vit_residual_linear(in_tokens, skip_tokens,
                                              static_cast<int>(tokens), spec.c_in,
                                              spec.c_out,
                                              E4m3Matrix{codes, spec.c_out,
                                                         spec.c_in},
-                                             gain, out_tokens,
-                                             contract_stash_dest(
-                                                 ctx.weights, spec.block,
-                                                 spec.layer, out.stash));
+                                             gain, out_tokens, stash_dest);
             }
             if (status == Status::kOk) {
                 status = eval_tokens_to_planar(out_tokens, out_count,
@@ -2225,7 +2273,11 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
                 * static_cast<std::size_t>(channels);
             const std::size_t out_count = tokens * 3u
                 * static_cast<std::size_t>(channels);
-            status = row_begin(ctx, spec, out_count, 0, in_count + out_count,
+            const bool gpu_projection =
+                ctx.projection != nullptr && ctx.projection->matmul != nullptr;
+            status = row_begin(ctx, spec, out_count, 0,
+                               in_count + out_count
+                                   + (gpu_projection ? out_count : 0),
                                blocks);
             if (status != Status::kOk) {
                 return status;
@@ -2233,7 +2285,50 @@ inline Status eval_vit(EvalContext& ctx, const LayerSpec& spec,
             float* in_tokens = blocks.work;
             float* out_tokens = in_tokens + in_count;
             status = eval_planar_to_tokens(x, in_tokens, in_count);
-            if (status == Status::kOk) {
+            if (status == Status::kOk && gpu_projection) {
+                // G2: the three raw projections run through the executor
+                // into contiguous [tokens, channels] buffers; the assembly
+                // into the reference's interleaved [t*3C+r] layout then
+                // vit_qkv_post are the CPU reference's operations.
+                float* raw_q = out_tokens + out_count;
+                float* raw_k = raw_q + tokens
+                    * static_cast<std::size_t>(channels);
+                float* raw_v = raw_k + tokens
+                    * static_cast<std::size_t>(channels);
+                status = ctx.projection->matmul(
+                    ctx.projection->ctx, in_tokens, static_cast<int>(tokens),
+                    channels, E4m3Matrix{q_codes, channels, channels}, raw_q);
+                if (status == Status::kOk) {
+                    status = ctx.projection->matmul(
+                        ctx.projection->ctx, in_tokens,
+                        static_cast<int>(tokens), channels,
+                        E4m3Matrix{k_codes, channels, channels}, raw_k);
+                }
+                if (status == Status::kOk) {
+                    status = ctx.projection->matmul(
+                        ctx.projection->ctx, in_tokens,
+                        static_cast<int>(tokens), channels,
+                        E4m3Matrix{v_codes, channels, channels}, raw_v);
+                }
+                if (status == Status::kOk) {
+                    for (std::size_t t = 0; t < tokens; ++t) {
+                        for (int r = 0; r < 3 * channels; ++r) {
+                            const float* src = r < channels ? raw_q
+                                            : r < 2 * channels ? raw_k
+                                                               : raw_v;
+                            out_tokens[t * 3u
+                                           * static_cast<std::size_t>(channels)
+                                       + static_cast<std::size_t>(r)]
+                                = src[t * static_cast<std::size_t>(channels)
+                                      + static_cast<std::size_t>(
+                                            r % channels)];
+                        }
+                    }
+                    status = vit_qkv_post(
+                        out_tokens, static_cast<int>(tokens), channels,
+                        temperature, out_tokens);
+                }
+            } else if (status == Status::kOk) {
                 status = vit_qkv(in_tokens, static_cast<int>(tokens), channels,
                                  E4m3Matrix{q_codes, channels, channels},
                                  E4m3Matrix{k_codes, channels, channels},

@@ -330,6 +330,121 @@ int main(int argc, char** argv) {
             timing.kernel_ms > 0.0 ? cpu_ms / timing.kernel_ms : 0.0);
     }
 
+    // ---- G2: the executor + shared post chain == the CPU kernels ---------
+    {
+        // The eval dispatch's GPU rows run: executor raw projection -> the
+        // shared post chain (vit_ffn_expand_post / vit_residual_post /
+        // vit_qkv_post). This must equal the CPU kernels bit-for-bit — the
+        // complete-network byte-identity is gated by the runner's demo
+        // smoke (CPU run vs --gpu run, cmp artefacts).
+        VulkanProjectionSite site;
+        site.device = &device;
+        site.spirv = spirv.data();
+        site.spirv_words = spirv.size();
+        ProjectionExecutor ex = vulkan_projection_executor(&site);
+
+        static std::uint8_t codes[24 * 32];
+        static E4m3Matrix m;
+        for (int i = 0; i < 24 * 32; ++i) {
+            codes[i] = static_cast<std::uint8_t>(12 + (i * 7) % 17);
+        }
+        m.bits = codes;
+        m.rows = 24;
+        m.cols = 32;
+        static float in[13 * 32];
+        static float skip[13 * 24];
+        static float gain[24];
+        for (int i = 0; i < 13 * 32; ++i) {
+            in[i] = static_cast<float>((i * 7) % 31) / 8.0f - 2.0f;
+        }
+        for (int i = 0; i < 13 * 24; ++i) {
+            skip[i] = static_cast<float>((i * 5) % 15) / 8.0f - 1.0f;
+        }
+        for (int i = 0; i < 24; ++i) {
+            gain[i] = static_cast<float>((i % 15)) / 8.0f - 1.0f;
+        }
+
+        // VitFfnExpand seam.
+        static float cpu_ffn[13 * 24];
+        static float gpu_ffn[13 * 24];
+        CHECK(vit_ffn_expand(in, 13, 32, 24, m, cpu_ffn) == Status::kOk);
+        {
+            static float products[13 * 24];
+            CHECK(ex.matmul(ex.ctx, in, 13, 32, m, products) == Status::kOk);
+            for (int i = 0; i < 13 * 24; ++i) {
+                gpu_ffn[i] = vit_ffn_expand_post(products[i], nullptr);
+            }
+        }
+        CHECK(std::memcmp(cpu_ffn, gpu_ffn, sizeof(cpu_ffn)) == 0);
+
+        // VitFfnContract/VitProjection seam.
+        static float cpu_res[13 * 24];
+        static float gpu_res[13 * 24];
+        CHECK(vit_residual_linear(in, skip, 13, 32, 24, m, gain, cpu_res)
+              == Status::kOk);
+        {
+            static float products[13 * 24];
+            CHECK(ex.matmul(ex.ctx, in, 13, 32, m, products) == Status::kOk);
+            for (int tt = 0; tt < 13; ++tt) {
+                for (int n = 0; n < 24; ++n) {
+                    const int i = tt * 24 + n;
+                    gpu_res[i] = vit_residual_post(products[i], skip[i],
+                                                   gain[n], nullptr);
+                }
+            }
+        }
+        CHECK(std::memcmp(cpu_res, gpu_res, sizeof(cpu_res)) == 0);
+
+        // VitQKV seam (three projections + the assembly + vit_qkv_post).
+        static std::uint8_t qcodes[32 * 32];
+        static std::uint8_t kcodes[32 * 32];
+        static std::uint8_t vcodes[32 * 32];
+        for (int i = 0; i < 32 * 32; ++i) {
+            qcodes[i] = static_cast<std::uint8_t>(12 + (i * 7) % 17);
+            kcodes[i] = static_cast<std::uint8_t>(12 + (i * 11) % 17);
+            vcodes[i] = static_cast<std::uint8_t>(12 + (i * 13) % 17);
+        }
+        static E4m3Matrix qm, km, vm;
+        qm.bits = qcodes; qm.rows = 32; qm.cols = 32;
+        km.bits = kcodes; km.rows = 32; km.cols = 32;
+        vm.bits = vcodes; vm.rows = 32; vm.cols = 32;
+        static float in32[13 * 32];
+        for (int i = 0; i < 13 * 32; ++i) {
+            in32[i] = static_cast<float>((i * 3) % 15) / 8.0f - 1.0f;
+        }
+        float temperature[1] = {0.25f};
+        static float cpu_qkv[13 * 3 * 32];
+        static float gpu_qkv[13 * 3 * 32];
+        CHECK(vit_qkv(in32, 13, 32, qm, km, vm, temperature, cpu_qkv)
+              == Status::kOk);
+        {
+            static float raw_q[13 * 32];
+            static float raw_k[13 * 32];
+            static float raw_v[13 * 32];
+            CHECK(ex.matmul(ex.ctx, in32, 13, 32, qm, raw_q) == Status::kOk);
+            CHECK(ex.matmul(ex.ctx, in32, 13, 32, km, raw_k) == Status::kOk);
+            CHECK(ex.matmul(ex.ctx, in32, 13, 32, vm, raw_v) == Status::kOk);
+            for (int tt = 0; tt < 13; ++tt) {
+                for (int r = 0; r < 3 * 32; ++r) {
+                    const float* src = r < 32 ? raw_q
+                                       : r < 64 ? raw_k : raw_v;
+                    gpu_qkv[tt * 3 * 32 + r] =
+                        src[tt * 32 + (r % 32)];
+                }
+            }
+            CHECK(vit_qkv_post(gpu_qkv, 13, 32, temperature, gpu_qkv)
+                  == Status::kOk);
+        }
+        CHECK(std::memcmp(cpu_qkv, gpu_qkv, sizeof(cpu_qkv)) == 0);
+
+        // The executor rejects out-of-envelope shapes without touching out.
+        static float small_out[4] = {-777.0f, -777.0f, -777.0f, -777.0f};
+        CHECK(ex.matmul(ex.ctx, in, 70000, 32, m, small_out)
+              == Status::kInvalidDimensions);
+        CHECK(small_out[0] == -777.0f);
+        vulkan_projection_close(site);
+    }
+
     vulkan_matmul_destroy(device, matmul);
     vulkan_close(device);
     std::printf("native-vulkan: %lld checks passed\n", g_checks);

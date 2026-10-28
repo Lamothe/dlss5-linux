@@ -54,4 +54,31 @@ if [[ "$sanitised" -eq 0 ]]; then
     tail -n 2 "$temp/sanitised-build.log" >&2
 fi
 
+# ---- G2: complete-network CPU-vs-GPU parity (the demo smoke) -------------
+# The full network runs twice through image_evaluation — the CPU reference
+# and the --gpu projection backend (raw projections on the GPU; all post
+# chains and rows stay the CPU reference) — and the artefacts must be
+# byte-identical (bit-identical when every intermediate is in the fp32
+# normal range). This is the frame-level parity gate; the seam tests above
+# cover the rows. The gate asserts the GPU actually RAN (no silent CPU
+# fallback) and honours the same no-device SKIP as the suite.
+"${CXX}" "${COMMON[@]}" -O2 -DDLSS5_DEMO_VULKAN "$ROOT/vr/demo-native.cpp" \
+    -o "$temp/demo" -lvulkan
+mkdir -p "$temp/cpu" "$temp/gpu"
+"$temp/demo" --out "$temp/cpu" --frames 1 --reset-at -1 --threads 8 >/dev/null
+if ! "$temp/demo" --out "$temp/gpu" --frames 1 --reset-at -1 --threads 8 \
+        --gpu "$SPIRV" > "$temp/gpu-run.log" 2>&1; then
+    if grep -q "no compute-capable Vulkan device" "$temp/gpu-run.log"; then
+        echo "native-vulkan: SKIP (no Vulkan device for the G2 gate)"
+        echo "native-vulkan: suite passed"
+        exit 0
+    fi
+    cat "$temp/gpu-run.log" >&2
+    exit 1
+fi
+grep "gpu totals:" "$temp/gpu-run.log"  # the GPU must have actually run
+cmp "$temp/cpu/after.ppm" "$temp/gpu/after.ppm"
+cmp "$temp/cpu/before.ppm" "$temp/gpu/before.ppm"
+echo "native-vulkan: G2 complete-network parity OK (artefacts byte-identical)"
+
 echo "native-vulkan: suite passed"

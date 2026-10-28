@@ -354,6 +354,44 @@ inline Status vit_attention(const float* qkv, int tokens, int channels,
     return Status::kOk;
 }
 
+// ---- projection executors --------------------------------------------------------------------------
+
+// An external raw-projection executor: out[t*rows+n] = sum_k in[t*c_in+k] *
+// w[n][k], bit-identical to matmul_e4m3's element order on normal-range
+// intermediates (the Vulkan backend's documented tolerance applies). The
+// kernels' post chains stay on the CPU, so executor results flow through the
+// reference arithmetic unchanged. Null keeps the CPU kernel (the reference).
+struct ProjectionExecutor {
+    void* ctx = nullptr;
+    Status (*matmul)(void* ctx, const float* in, int tokens, int c_in,
+                     const E4m3Matrix& w, float* out) = nullptr;
+};
+
+// ---- shared post chains ----------------------------------------------------------------------------
+
+// The per-element post chains, shared by the CPU kernels' inner loops and by
+// any external projection executor (e.g. the Vulkan backend in
+// native-vulkan.hpp): identical operations in identical order, so an
+// executor's results flow through exactly the reference arithmetic.
+inline float vit_ffn_expand_post(float product, float* stash_slot) {
+    const float hidden = ffn_activation(product);
+    if (stash_slot != nullptr) {
+        *stash_slot = hidden;
+    }
+    return e4m3(vit_f16(hidden));
+}
+
+inline float vit_residual_post(float product, float skip_value,
+                               float gain_value, float* stash_slot) {
+    // The binary16 value is the pinned's stash (`int4.side`); the store
+    // rounds it to e4m3. The gain takes its own binary16 hop first.
+    const float value = vit_f16(product + vit_f16(gain_value) * skip_value);
+    if (stash_slot != nullptr) {
+        *stash_slot = value;
+    }
+    return e4m3(value);
+}
+
 // ---- the layer kinds ------------------------------------------------------------------------------
 
 // VitFfnExpand: 1024 -> 4096 with the cubic activation, no residual.
@@ -384,11 +422,10 @@ inline Status vit_ffn_expand(const float* in, int tokens, int c_in, int c_out,
             for (int k = 0; k < c_in; ++k) {
                 acc += row[k] * e4m3_from_bits(w[k]);
             }
-            const float hidden = ffn_activation(acc);
-            if (stash != nullptr) {
-                stash[static_cast<std::size_t>(t) * c_out + n] = hidden;
-            }
-            dst[n] = e4m3(vit_f16(hidden));
+            dst[n] = vit_ffn_expand_post(
+                acc, stash != nullptr
+                         ? &stash[static_cast<std::size_t>(t) * c_out + n]
+                         : nullptr);
         }
     });
     return Status::kOk;
@@ -421,13 +458,11 @@ inline Status vit_residual_linear(const float* in, const float* skip, int tokens
             for (int k = 0; k < c_in; ++k) {
                 acc += row[k] * e4m3_from_bits(w[k]);
             }
-            // The binary16 value is the pinned's stash (`int4.side`); the
-            // store rounds it to e4m3.
-            const float value = vit_f16(acc + vit_f16(gain[n]) * skip_row[n]);
-            if (stash != nullptr) {
-                stash[static_cast<std::size_t>(t) * c_out + n] = value;
-            }
-            dst[n] = e4m3(value);
+            dst[n] = vit_residual_post(
+                acc, skip_row[n], gain[n],
+                stash != nullptr
+                    ? &stash[static_cast<std::size_t>(t) * c_out + n]
+                    : nullptr);
         }
     });
     return Status::kOk;

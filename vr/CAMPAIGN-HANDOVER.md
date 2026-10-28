@@ -240,3 +240,23 @@ timestamp-family preference, VkResult propagation, runner leftovers).
 Next: the optional GPU backend in the eval dispatch (CPU reference intact),
 then the split/attention + swin GPU families and end-to-end GPU frame
 timings.
+
+## Performance phase G2: the eval-dispatch GPU backend (30/10/2026)
+
+Published: the optional ProjectionExecutor seam in native-eval.hpp (the
+vit rows' raw projections on the GPU; post chains and all other rows stay
+the CPU reference, null keeps the pure CPU path), the VulkanProjectionSite
+(grow-only coverage, per-call decode+staging), demo `--gpu` (build with
+-DDLSS5_DEMO_VULKAN; the default build stays CPU-only and Vulkan-free),
+71 checks at -O2/-O0 including the three per-row seams, and the runner's
+G2 gate (complete network CPU vs --gpu, byte-identical artefacts, GPU-run
+asserted). End-to-end: **16,303 -> 14,242 ms/frame at 8 threads (1.14x)**;
+GPU row cost is staging-dominated (kernel 223 ms vs decode+staging 509 ms).
+Independent review raised 9 findings, all fixed (the CPU-only build break,
+the kVitQKV wiring that had silently not landed — the recurring silent
+patch-miss class, now asserted by grep count and the gate — the non-grow
+resize thrash, missing Vulkan closes, unchecked SPIR-V read, the SKIP
+contract, the silent-fallback gate, envelope/shader guards, comment
+scoping). Next: G3 weight residency (persistent weight buffers; removes
+the per-call decode+upload), then the split/attention + swin GPU families,
+then the end-to-end GPU frame timings.
