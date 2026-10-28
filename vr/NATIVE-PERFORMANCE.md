@@ -198,3 +198,47 @@ gate byte-identical, 615,365-check eval suite green.
 | G5 (vit+split GPU, staging) | 12,380 | per-call weight staging |
 | G6 swin-wired (measured) | 14,418 | REGRESSION: per-window transfer thrash |
 | G6 default (swin on CPU) | 11,717 | stable store resident (decode 885->455 ms) |
+
+## G7 — CPU: branchless decode, bit-exact SIMD, split-QKV hoist, threading
+(28/10/2026)
+
+Four changes, all bit-exact on the CPU reference (verified by the suites at
+-O2/-O0 and the complete-network CPU-vs-GPU parity gate, byte-identical):
+
+1. **Branchless e4m3 decode** (native-pre-post.hpp): the ldexp/branch form
+   is replaced by exact bit construction (normal: sign | (e+120)<<23 |
+   m<<20; subnormal: bits((float)m) - (9<<23); signless canonical NaN).
+   Exhaustive: all 256 codes match two independently derived oracles.
+   Measured: 2.05x on the decode-bound matmul loops.
+2. **Bit-exact AVX2 dot8 matmul** (native-matmul-simd.hpp): eight output
+   rows per key-loop pass, each lane keeping the scalar key order (mul,
+   then add) — results bit-identical at any width. Runtime-gated
+   (__builtin_cpu_supports) with target attributes (no -march needed);
+   size-gated at c_in >= 256 (measured: 1.9x at 512, 1.8x at 1024; SLOWER
+   below 256, hence the gate). decode8 is swept exhaustively (all 256
+   codes) against e4m3_from_bits.
+3. **Split-QKV projection hoist** (native-eval.hpp): the row's per-token
+   projections become one batched [tokens, 512] x [1536, 512] matmul (the
+   kernel's existing products branch; the padded zero-input projection
+   through an e4m3 matrix is exactly +0). Bit-exact with the CPU fallback
+   (split_matmul, the split family's 2^29 token envelope); the executor
+   path carries the documented normal-range tolerance.
+4. **Threading the P2 serial remainder** (native-split-swin.hpp):
+   split_ffwd_proj's token loop and split_qkv_attn's window loop now run
+   parallel_for with a recorded failure status (the earlier serial loops
+   returned mid-flight). Bit-identical at any thread count — pinned by the
+   1-vs-{2,3,8,16}-thread memcmp parity tests in native-parallel-test.cpp
+   (NaN-poisoned outputs).
+
+Measured (RTX 4070 Ti SUPER, 8 CPU threads, 64x72 frame, kSmall):
+
+| Path | ms/frame | vs cpu-1t (37,700) | vs cpu-mt (16,303) |
+|---|---|---|---|
+| G6 default | 11,717 | 3.22x | 1.39x |
+| G7 | 7,855 | 4.80x | 2.08x |
+
+Row-level: SplitQKVAttn 1,828 -> 89 ms (hoist + threading), SplitFfwd
+199 -> 73 ms. The remaining CPU profile is the swin family (79%: pre/post
+blocks + the four swin row kinds stay on the CPU per G6's opt-in finding).
+Check counts: pre-post 454, vit 662 (incl. the 256-code decode8 sweep),
+split-swin 34,272, parallel 2,479, eval 615,365 — all at -O2 and -O0.

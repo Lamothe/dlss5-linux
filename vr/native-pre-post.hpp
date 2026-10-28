@@ -87,22 +87,33 @@ inline std::uint8_t e4m3_bits(float value) {
 // Decode an e4m3 code to its float32 value (0x7f and 0xff decode to the canonical
 // quiet NaN).
 inline float e4m3_from_bits(std::uint8_t raw) {
-    const bool negative = (raw & 0x80u) != 0u;
-    const unsigned e = (raw >> 3) & 0xfu;
-    const unsigned m = raw & 7u;
-    if (e == 0xfu && m == 7u) {
+    // Bit-exact construction (no ldexp/branches on the value paths): e4m3 is
+    // sign + 4 exponent bits (bias 7) + 3 mantissa bits, e=15/m=7 the sole
+    // NaN. Normal codes (e >= 1): (8+m) * 2^(e-10) = 1.m * 2^(e-7) -> float
+    // exponent field e+120, mantissa m<<20. Subnormals (e == 0): m * 2^-9 =
+    // bits((float)m) - (9 << 23) for m >= 1; m == 0 is the sign-only zero.
+    // The test suite pins all 256 codes against two independently derived
+    // oracles (an ldexpf reference and the format formula in double), so
+    // the construction is exact by exhaustive check, not by appeal to a
+    // previous implementation.
+    static const std::uint32_t kSub[8] = {
+        0x00000000u, 0x3B000000u, 0x3B800000u, 0x3BC00000u,
+        0x3C000000u, 0x3C200000u, 0x3C400000u, 0x3C600000u};
+    const std::uint32_t s = static_cast<std::uint32_t>(raw & 0x80u) << 24;
+    const std::uint32_t e = (raw >> 3) & 0xFu;
+    const std::uint32_t m = raw & 7u;
+    if (e == 0xFu && m == 7u) {
         const std::uint32_t canonical = 0x7fc00000u;
         float nan_value = 0.0f;
         std::memcpy(&nan_value, &canonical, sizeof nan_value);
         return nan_value;
     }
-    float magnitude;
-    if (e == 0u) {
-        magnitude = std::ldexp(static_cast<float>(m), -9);  // subnormal: m * 2^-9
-    } else {
-        magnitude = std::ldexp(static_cast<float>(8u + m), static_cast<int>(e) - 10);
-    }
-    return negative ? -magnitude : magnitude;
+    const std::uint32_t bits = e == 0u
+        ? (kSub[m] | s)
+        : (s | ((e + 120u) << 23) | (m << 20));
+    float out;
+    std::memcpy(&out, &bits, sizeof out);
+    return out;
 }
 
 inline float e4m3(float value) { return e4m3_from_bits(e4m3_bits(value)); }

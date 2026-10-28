@@ -35,8 +35,10 @@
 #ifndef DLSS5_NR_NATIVE_SPLIT_SWIN_HPP
 #define DLSS5_NR_NATIVE_SPLIT_SWIN_HPP
 
+#include "native-matmul-simd.hpp"
 #include "native-vit.hpp"  // E4m3Matrix, Status; f16/e4m3/f16_from_double via its includes
 
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -201,10 +203,26 @@ inline Status split_matmul(const float* in, long long tokens, int c_in,
         || weight.rows < 1 || weight.rows > kSplitQkvOut || weight.cols != c_in) {
         return Status::kInvalidDimensions;
     }
+    // Long keys only (see native-matmul-simd.hpp): the AVX2 dot8 keeps each
+    // output's key-ordered accumulation exactly (bit-identical).
+    const bool simd = matmul_simd_available() && c_in >= 256;
     for (long long t = 0; t < tokens; ++t) {
         const float* row = in + t * c_in;
         float* dst = out + t * weight.rows;
-        for (int n = 0; n < weight.rows; ++n) {
+        int n = 0;
+#if defined(__x86_64__) || defined(__i386__)
+        if (simd) {
+            const std::uint8_t* wrows[8];
+            for (; n + 8 <= weight.rows; n += 8) {
+                for (int i = 0; i < 8; ++i) {
+                    wrows[i] = weight.bits
+                        + static_cast<std::size_t>(n + i) * c_in;
+                }
+                e4m3_dot8(row, c_in, wrows, dst + n);
+            }
+        }
+#endif
+        for (; n < weight.rows; ++n) {
             const std::uint8_t* w = weight.bits + static_cast<std::size_t>(n) * c_in;
             float acc = 0.0f;
             for (int k = 0; k < c_in; ++k) {
@@ -414,7 +432,15 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
             return st;
         }
     }
-    for (long long t = 0; t < tokens; ++t) {
+    // Token-parallel with a recorded failure status (the earlier serial
+    // loop could return mid-flight): tokens are independent and every
+    // element keeps its exact arithmetic, so any thread count is
+    // bit-identical to the serial reference.
+    std::atomic<int> fail{static_cast<int>(Status::kOk)};
+    parallel_for(0LL, tokens, [&](long long t) {
+        if (fail.load(std::memory_order_relaxed) != 0) {
+            return;
+        }
         float value[kSplitMaxChannels];
         Status status = Status::kOk;
         if (site != nullptr) {
@@ -430,7 +456,8 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
                 value);
         }
         if (status != Status::kOk) {
-            return status;
+            fail.store(static_cast<int>(status), std::memory_order_relaxed);
+            return;
         }
         float* dst = out + t * c_out;
         for (int j = 0; j < c_out; ++j) {
@@ -441,8 +468,8 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
             }
             dst[j] = e4m3(value[j]);
         }
-    }
-    return Status::kOk;
+    });
+    return static_cast<Status>(fail.load(std::memory_order_relaxed));
 }
 
 // SplitProj: the stored projection of the attention map; the residual is the
@@ -680,8 +707,17 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
     const int left = -shift_x * kSplitTile;
     const int window_rows = (rows + top + kSplitWindow - 1) / kSplitWindow;
     const int window_cols = (cols + left + kSplitWindow - 1) / kSplitWindow;
-    for (int wr = 0; wr < window_rows; ++wr) {
-        for (int wc = 0; wc < window_cols; ++wc) {
+    // Window-parallel with a recorded failure status (the earlier serial
+    // loops could return mid-flight): windows write disjoint output tokens
+    // and share read-only inputs, so any thread count is bit-identical.
+    std::atomic<int> fail{static_cast<int>(Status::kOk)};
+    parallel_for(0, window_rows * window_cols, [&](int wi) {
+        if (fail.load(std::memory_order_relaxed) != 0) {
+            return;
+        }
+        const int wr = wi / window_cols;
+        const int wc = wi % window_cols;
+        {
             std::uint8_t q_code[kSplitTokensPerWindow][kSplitHeadDim];
             std::uint8_t k_code[kSplitTokensPerWindow][kSplitHeadDim];
             std::uint8_t v_code[kSplitTokensPerWindow][kSplitHeadDim];
@@ -731,7 +767,9 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
                         const Status status = split_matmul(token, 1, kSplitChannels,
                                                            head_rows, projected);
                         if (status != Status::kOk) {
-                            return status;
+                            fail.store(static_cast<int>(status),
+                                       std::memory_order_relaxed);
+                            return;
                         }
                         for (int n = 0; n < 3 * kSplitHeadDim; ++n) {
                             projected[n] = f16(projected[n]);
@@ -794,8 +832,8 @@ inline Status split_qkv_attn(const float* in, int rows, int cols,
                 }
             }
         }
-    }
-    return Status::kOk;
+    });
+    return static_cast<Status>(fail.load(std::memory_order_relaxed));
 }
 
 }  // namespace dlss5_nr

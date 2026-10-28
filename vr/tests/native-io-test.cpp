@@ -134,13 +134,13 @@ int main() {
         for (int i = 0; i < kPixels * 3; ++i) {
             src[i] = static_cast<std::uint8_t>((i * 73 + 19) & 0xFF);
         }
-        static float storage[3 * kRows * kCols + 16 * 3];
-        static dlss5_nr::HostFrame frame;
+        static float storage[3 * kRows * kCols];
         const Status st = dlss5_nr::frame_from_u8(
-            src, 3, kRows, kCols, storage,
-            sizeof(storage) / sizeof(storage[0]), frame);
+            src, 3 * kCols, kCols, kRows, storage,
+            sizeof(storage) / sizeof(storage[0]), kRows, kCols);
         CHECK(st == Status::kOk);
-        const Status st2 = dlss5_nr::frame_to_u8(frame, dst);
+        const Status st2 = dlss5_nr::frame_to_u8(storage, kRows, kCols, dst,
+                                                 3 * kCols, kCols, kRows);
         CHECK(st2 == Status::kOk);
         CHECK(std::memcmp(src, dst, sizeof(src)) == 0);
     }

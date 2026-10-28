@@ -1568,8 +1568,11 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
     RowBlocks blocks;
     const std::size_t qkv_map = tokens
         * static_cast<std::size_t>(kSplitQkvOut);
+    // The hoisted QKV projection (below, non-int4 only) needs products + a
+    // zero padded projection; the int4 mode has its own codes/scratch.
     const std::size_t work = 2 * map
         + static_cast<std::size_t>(kSplitHeads) * kBiasTable
+        + (site == nullptr ? qkv_map + kSplitQkvOut : 0)
         + (site != nullptr ? map + qkv_map + kSplitQkvOut : 0);
     status = row_begin(ctx, spec, map, 0, work, blocks);
     if (status != Status::kOk) {
@@ -1578,6 +1581,8 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
     float* in_tokens = blocks.work;
     float* out_tokens = in_tokens + map;
     float* bias = out_tokens + map;
+    float* hoist_products = nullptr;
+    float* hoist_padded = nullptr;
     float* codes = nullptr;
     float* products = nullptr;
     float* padded = nullptr;
@@ -1585,6 +1590,10 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
         codes = bias + static_cast<std::size_t>(kSplitHeads) * kBiasTable;
         products = codes + map;
         padded = products + qkv_map;
+    } else {
+        hoist_products = bias
+            + static_cast<std::size_t>(kSplitHeads) * kBiasTable;
+        hoist_padded = hoist_products + qkv_map;
     }
     status = eval_planar_to_tokens(x, in_tokens, map);
     if (status == Status::kOk) {
@@ -1623,11 +1632,37 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
             }
         }
     }
+    if (status == Status::kOk && site == nullptr) {
+        // Hoisted QKV projection: one batched [tokens, 512] x [1536, 512]
+        // matmul replaces the kernel's per-token projections (the same row
+        // dots in the same key order; the kernel's products branch applies
+        // the same f16 round to each product). The padded tokens' zero-input
+        // projection through the e4m3 matrix is exactly +0. Bit-exact with
+        // the CPU fallback; the executor path takes the Vulkan backend's
+        // documented normal-range tolerance (the same convention as the vit
+        // rows' hoisted projections). The fallback uses split_matmul (the
+        // split family's 2^29 token envelope, wider than matmul_e4m3).
+        const E4m3Matrix qkv{qkv_codes, kSplitQkvOut, kSplitChannels};
+        if (ctx.projection != nullptr && ctx.projection->matmul != nullptr) {
+            status = ctx.projection->matmul(
+                ctx.projection->ctx, in_tokens,
+                static_cast<int>(tokens), kSplitChannels, qkv, hoist_products);
+        } else {
+            status = split_matmul(in_tokens,
+                                  static_cast<long long>(tokens),
+                                  kSplitChannels, qkv, hoist_products);
+        }
+        if (status == Status::kOk) {
+            for (std::size_t i = 0; i < kSplitQkvOut; ++i) {
+                hoist_padded[i] = 0.0f;
+            }
+        }
+    }
     if (status == Status::kOk) {
         const SplitQkvWeight weight{E4m3Matrix{qkv_codes, kSplitQkvOut,
                                                kSplitChannels}, bias, gain,
-                                    site != nullptr ? products : nullptr,
-                                    site != nullptr ? padded : nullptr};
+                                    site != nullptr ? products : hoist_products,
+                                    site != nullptr ? padded : hoist_padded};
         status = split_qkv_attn(in_tokens, x.rows, x.cols, spec.shift_x,
                                 spec.shift_y, weight, out_tokens);
     }

@@ -41,7 +41,85 @@ static void fill_bytes(void* dst, std::size_t n, unsigned char value) {
 #define CHECK_CLOSE(got, want, tol) \
     check_close((got), (want), (tol), #got " ~= " #want, __LINE__)
 
+#if defined(__x86_64__) || defined(__i386__)
+// The AVX return type needs AVX ABI in this TU; keep the call in a
+// target-attributed helper so the runner's flags stay unchanged.
+__attribute__((target("avx2")))
+static void decode8_store(const std::uint8_t* const* ptrs, float* out) {
+    _mm256_storeu_ps(out, dlss5_nr::simd_detail::decode8(
+        ptrs[0], ptrs[1], ptrs[2], ptrs[3],
+        ptrs[4], ptrs[5], ptrs[6], ptrs[7]));
+}
+#endif
+
 int main(void) {
+    // ---- decode8 exhaustive: all 256 codes against e4m3_from_bits --------
+#if defined(__x86_64__) || defined(__i386__)
+    if (dlss5_nr::matmul_simd_available()) {
+        for (int base = 0; base < 256; base += 8) {
+            std::uint8_t codes[8];
+            const std::uint8_t* ptrs[8];
+            for (int i = 0; i < 8; ++i) {
+                codes[i] = static_cast<std::uint8_t>(base + i);
+                ptrs[i] = &codes[i];
+            }
+            float lanes[8];
+            decode8_store(ptrs, lanes);
+            for (int i = 0; i < 8; ++i) {
+                const float want = dlss5_nr::e4m3_from_bits(codes[i]);
+                std::uint32_t a = 0;
+                std::uint32_t b = 0;
+                std::memcpy(&a, &lanes[i], sizeof a);
+                std::memcpy(&b, &want, sizeof b);
+                CHECK(a == b);
+            }
+        }
+    }
+#endif
+
+    // ---- SIMD vs scalar: bit-exact on the long-key path ---------------------
+    // c_in >= 256 takes the AVX2 dot8 kernel when available; every output
+    // must equal an independently accumulated scalar dot product bit for
+    // bit (each lane keeps the scalar key order). Rows 8..17 exercise the
+    // multiple, the tail and the scalar-only widths.
+    {
+        constexpr int kIn = 512;
+        constexpr int kRows = 17;
+        constexpr int kTokens = 3;
+        static std::uint8_t wbits[kRows * kIn];
+        static float in[kTokens * kIn];
+        static float out[kTokens * kRows];
+        static float ref[kTokens * kRows];
+        std::uint32_t r = 0x2468ace0u;
+        auto nrand = [&r]() {
+            r = r * 1664525u + 1013904223u;
+            return r;
+        };
+        for (int i = 0; i < kRows * kIn; ++i) {
+            wbits[i] = static_cast<std::uint8_t>(nrand() & 0xFFu);
+        }
+        for (int i = 0; i < kTokens * kIn; ++i) {
+            in[i] = static_cast<float>(static_cast<int>(nrand() % 512u) - 256)
+                / 256.0f;
+        }
+        const dlss5_nr::E4m3Matrix weight{wbits, kRows, kIn};
+        CHECK(matmul_e4m3(in, kTokens, kIn, weight, out) == Status::kOk);
+        for (int t = 0; t < kTokens; ++t) {
+            for (int n = 0; n < kRows; ++n) {
+                float acc = 0.0f;
+                for (int k = 0; k < kIn; ++k) {
+                    acc += in[t * kIn + k]
+                        * dlss5_nr::e4m3_from_bits(wbits[n * kIn + k]);
+                }
+                ref[t * kRows + n] = acc;
+            }
+        }
+        // The scalar reference runs the identical arithmetic in the
+        // identical order (with -ffp-contract=off), so the SIMD results must
+        // match it bit for bit.
+        CHECK(std::memcmp(out, ref, sizeof out) == 0);
+    }
+
     // ---- approximate_exp anchors (y = round((x*slope+offset)*1024), clamp,
     // mantissa -> ldexp). Every anchor derived by hand:
     //   x = 0:   y = 1750, mantissa 726, exponent -4, fraction 22/64

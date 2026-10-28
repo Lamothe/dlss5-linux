@@ -27,6 +27,7 @@
 #define VR_NATIVE_VIT_HPP
 
 #include "native-blend.hpp"      // f16 helpers (via native-input-lift) + Status
+#include "native-matmul-simd.hpp"
 #include "native-parallel.hpp"
 #include "native-pre-post.hpp"   // e4m3 rounding
 
@@ -81,11 +82,27 @@ inline Status matmul_e4m3(const float* in, int tokens, int c_in,
     }
     // Token-parallel (native-parallel.hpp): each token's output rows keep
     // the single-threaded key-ordered accumulation exactly, so any thread
-    // count is bit-identical to the serial reference.
+    // count is bit-identical to the serial reference. The AVX2 dot8 path
+    // (native-matmul-simd.hpp) keeps that per-lane order exactly too; it is
+    // only used for long keys (gather-bound below ~256).
+    const bool simd = matmul_simd_available() && c_in >= 256;
     parallel_for(0, tokens, [&](int t) {
         const float* row = in + static_cast<std::size_t>(t) * c_in;
         float* dst = out + static_cast<std::size_t>(t) * weight.rows;
-        for (int n = 0; n < weight.rows; ++n) {
+        int n = 0;
+#if defined(__x86_64__) || defined(__i386__)
+        if (simd) {
+            const std::uint8_t* wrows[8];
+            for (; n + 8 <= weight.rows; n += 8) {
+                for (int i = 0; i < 8; ++i) {
+                    wrows[i] = weight.bits
+                        + static_cast<std::size_t>(n + i) * c_in;
+                }
+                e4m3_dot8(row, c_in, wrows, dst + n);
+            }
+        }
+#endif
+        for (; n < weight.rows; ++n) {
             const std::uint8_t* w = weight.bits + static_cast<std::size_t>(n) * c_in;
             float acc = 0.0f;
             for (int k = 0; k < c_in; ++k) {

@@ -108,6 +108,92 @@ static SplitQkvWeight attn_weight() {
 }
 
 int main(void) {
+    // ---- SIMD vs scalar: bit-exact on the long-key path ---------------------
+    // split_matmul takes the AVX2 dot8 kernel for c_in >= 256 when
+    // available; the results must equal an independently accumulated scalar
+    // reference bit for bit (same arithmetic, same key order).
+    {
+        constexpr int kIn = 512;
+        constexpr int kRows = 9;
+        constexpr int kTokens = 2;
+        static std::uint8_t wbits[kRows * kIn];
+        static float in[kTokens * kIn];
+        static float out[kTokens * kRows];
+        static float ref[kTokens * kRows];
+        std::uint32_t r = 0x13579bdfu;
+        auto nrand = [&r]() {
+            r = r * 1664525u + 1013904223u;
+            return r;
+        };
+        for (int i = 0; i < kRows * kIn; ++i) {
+            wbits[i] = static_cast<std::uint8_t>(nrand() & 0xFFu);
+        }
+        for (int i = 0; i < kTokens * kIn; ++i) {
+            in[i] = static_cast<float>(static_cast<int>(nrand() % 512u) - 256)
+                / 256.0f;
+        }
+        const dlss5_nr::E4m3Matrix weight{wbits, kRows, kIn};
+        CHECK(split_matmul(in, kTokens, kIn, weight, out) == Status::kOk);
+        for (int t = 0; t < kTokens; ++t) {
+            for (int n = 0; n < kRows; ++n) {
+                float acc = 0.0f;
+                for (int k = 0; k < kIn; ++k) {
+                    acc += in[t * kIn + k]
+                        * dlss5_nr::e4m3_from_bits(wbits[n * kIn + k]);
+                }
+                ref[t * kRows + n] = acc;
+            }
+        }
+        CHECK(std::memcmp(out, ref, sizeof out) == 0);
+    }
+    // ---- threaded kernels are deterministic ------------------------------
+    // split_ffwd_proj and split_qkv_attn now run token/window-parallel with
+    // a recorded failure status: two identical runs must be bit-identical
+    // (the per-element arithmetic is unchanged by the threading).
+    {
+        constexpr int kRows = 8;
+        constexpr int kCols = 8;
+        constexpr long long kTokens = kRows * kCols;
+        static float in[kTokens * dlss5_nr::kSplitChannels];
+        static float resid[kTokens * dlss5_nr::kSplitChannels];
+        static float out_a[kTokens * dlss5_nr::kSplitChannels];
+        static float out_b[kTokens * dlss5_nr::kSplitChannels];
+        static std::uint8_t wbits[dlss5_nr::kSplitChannels
+                                  * dlss5_nr::kSplitChannels];
+        static float gain[dlss5_nr::kSplitChannels];
+        std::uint32_t r = 0x20261028u;
+        auto nrand = [&r]() {
+            r = r * 1664525u + 1013904223u;
+            return r;
+        };
+        for (auto* arr : {in, resid}) {
+            for (long long i = 0; i < kTokens * dlss5_nr::kSplitChannels; ++i) {
+                arr[i] = static_cast<float>(
+                             static_cast<int>(nrand() % 256u) - 128)
+                    / 128.0f;
+            }
+        }
+        for (std::size_t i = 0;
+             i < sizeof(wbits) / sizeof(wbits[0]); ++i) {
+            wbits[i] = static_cast<std::uint8_t>(nrand() & 0xFFu);
+        }
+        for (int i = 0; i < dlss5_nr::kSplitChannels; ++i) {
+            gain[i] = static_cast<float>(static_cast<int>(nrand() % 256u) - 128)
+                / 256.0f;
+        }
+        const dlss5_nr::SplitProjectionWeight w{
+            dlss5_nr::E4m3Matrix{wbits, dlss5_nr::kSplitChannels,
+                                 dlss5_nr::kSplitChannels},
+            gain};
+        CHECK(split_ffwd_proj(in, resid, kRows, kCols, w, out_a)
+              == Status::kOk);
+        CHECK(split_ffwd_proj(in, resid, kRows, kCols, w, out_b)
+              == Status::kOk);
+        CHECK(std::memcmp(out_a, out_b,
+                          sizeof(float) * kTokens
+                              * dlss5_nr::kSplitChannels) == 0);
+    }
+
     // ---- split_fma_half anchors (exact product and sum in binary64, one
     // rounding to float16):
     //   2 * 3 + 1 = 7.

@@ -344,3 +344,29 @@ HIGH scratch-sizing defect, the DemoStore double-free risk from the
 implicit copy, three comment staleness items), all fixed and reverified.
 Next: G7 the offset-dispatch window seam, then CPU SIMD (item 3 of
 Michael's brief), then sustained-operation hardening (item 4).
+
+## Performance phase G7: CPU decode + SIMD + split-QKV hoist + threading
+(28/10/2026)
+
+All bit-exact on the CPU reference. Branchless e4m3 decode (2.05x,
+exhaustive 256-code verification against independent oracles); a
+bit-exact AVX2 dot8 matmul (lanes keep the scalar key order; size-gated at
+c_in >= 256 where measured 1.9x; SLOWER below, hence the gate; decode8
+swept exhaustively); the split-QKV projection hoisted to one batched
+matmul (bit-exact CPU fallback via split_matmul's wider envelope; the
+executor path carries the documented tolerance); the P2 serial remainder
+(split_ffwd_proj tokens, split_qkv_attn windows) threaded with recorded
+failure status and 1-vs-{2,3,8,16}-thread memcmp parity tests.
+
+Measured: 7,855 ms/frame end-to-end (4.80x vs cpu-1t, 2.08x vs cpu-mt;
+from G6's 11,717). SplitQKVAttn row: 1,828 -> 89 ms. The swin family is
+now 79% of the CPU profile (CPU-side per G6's opt-in finding). Parity gate
+byte-identical; eval 615,365 checks green. Review: 6 findings (the
+medium ones: the hoist's bit-exact claim did not hold on the executor path
+-- comment scoped + fallback widened; the threading claim was untested --
+cross-thread memcmp parity added), all fixed and reverified.
+
+Next: item (4) of Michael's brief -- sustained-operation and stability
+hardening of the GPU path (long runs, memory stability, device-loss
+behaviour documented honestly); then the swin rows' batched/offset-dispatch
+window seam (G6's recorded fix) if hardening holds.

@@ -150,3 +150,17 @@ Exact next action: (1) re-run the four regressions against `18a8a9a` and record 
 Runnable native Linux demo completed (under supervision `446027da7cb64b579d43c5ac134e5c46`, unchanged): `vr/demo-native.cpp`, `vr/native-demo-support.hpp`, `vr/tests/native-demo-test.cpp` (351 checks at -O2/-O0), `vr/test-native-demo.sh` (tests + a bounded one-frame smoke with exact artefact sizes), `README-demo.md`, `vr/NATIVE-DEMO.md` (MIT attribution retained). The demo runs the complete 76-row small plan through `image_evaluation` with deterministic synthetic presets (zero/seeded, per-key record slots), writes before/after/contact PPMs, demonstrates the temporal carrier with a mid-stream reset and prints per-frame CPU timings + arena high-water (the CPU baseline for the GPU stage). Independent review raised 14 findings, all fixed (the store aliasing, temporal_init axes, the FP16-store two-pass, CLI argument validation, NATIVE-DEMO.md, and comment/doc drift). Integration facts found and documented: the network's final map holds 8-bit-grid values while the carrier requires binary16-exact content (the demo models the FP16 output-texture store via `round_frame_to_f16`), and the temporal signal lands mostly outside the read-back crop (the demo prints crop and padded-map deltas).
 
 Exact next action: none in the native tree — the assignment's slices and the demo are complete. Remaining named boundaries (documented, outside this deliverable): the learned-weight file preparation (`.fix`/`.mu`/`.aq` tables — the declared host boundary), the temporal counter's network consumer (the documented proprietary-route boundary), and the GPU stage (later work). Suggested optional follow-ups if the campaign continues: a second demo preset honestly deriving a visible structured transformation through weight authoring, and per-frame output artefacts for the temporal sequence.
+
+## Latest continuation (28/10/2026, performance stage G7)
+
+Published: G7 -- CPU branchless e4m3 decode (2.05x), a bit-exact AVX2
+dot8 matmul (size-gated at c_in >= 256), the split-QKV projection hoist
+(one batched matmul; 1,828 -> 89 ms on that row) and the P2 serial
+remainder threaded (split_ffwd_proj tokens, split_qkv_attn windows) with
+cross-thread memcmp parity tests. All bit-exact on the CPU reference;
+7,855 ms/frame end-to-end (4.80x vs cpu-1t). Review 6 findings fixed
+including the executor-tolerance scoping of the hoist claim and the
+missing threading tests. Next action: item (4) of Michael's brief --
+sustained-operation and stability hardening of the GPU path (long runs,
+memory stability, device-loss behaviour documented honestly), then the
+swin rows' batched window seam if hardening holds.

@@ -15,6 +15,8 @@
 #include <vector>
 
 #include "native-parallel.hpp"
+#include "native-split-swin.hpp"
+#include "native-swin-attention.hpp"  // kBiasTable
 #include "native-swin-linear.hpp"
 #include "native-vit.hpp"
 
@@ -295,5 +297,99 @@ int main() {
 
     set_parallel_threads(1);
     std::printf("native-parallel: %lld checks passed\n", g_checks);
+    // ---- split_ffwd_proj parity across thread counts ----------------------
+    // The token loop is parallel_for'd with a recorded failure status; the
+    // 1-thread reference and every multi-thread run must agree bit for bit.
+    {
+        constexpr int kRows = 24;
+        constexpr int kCols = 24;
+        constexpr long long kTokens = kRows * kCols;
+        static float in[kTokens * dlss5_nr::kSplitChannels];
+        static float resid[kTokens * dlss5_nr::kSplitChannels];
+        static std::uint8_t codes[dlss5_nr::kSplitChannels
+                                  * dlss5_nr::kSplitChannels];
+        static float gain[dlss5_nr::kSplitChannels];
+        for (long long i = 0; i < kTokens * dlss5_nr::kSplitChannels; ++i) {
+            in[i] = static_cast<float>((i * 17) % 64) / 32.0f - 1.0f;
+            resid[i] = static_cast<float>((i * 11) % 64) / 32.0f - 1.0f;
+        }
+        for (std::size_t i = 0;
+             i < sizeof(codes) / sizeof(codes[0]); ++i) {
+            codes[i] = static_cast<std::uint8_t>((i * 29u) & 0xFFu);
+        }
+        for (int i = 0; i < dlss5_nr::kSplitChannels; ++i) {
+            gain[i] = static_cast<float>((i % 32) - 16) / 32.0f;
+        }
+        const dlss5_nr::SplitProjectionWeight w{
+            dlss5_nr::E4m3Matrix{codes, dlss5_nr::kSplitChannels,
+                                 dlss5_nr::kSplitChannels},
+            gain};
+        static float ref[kTokens * dlss5_nr::kSplitChannels];
+        set_parallel_threads(1);
+        CHECK(split_ffwd_proj(in, resid, kRows, kCols, w, ref)
+              == Status::kOk);
+        for (int threads : {2, 3, 8, 16}) {
+            set_parallel_threads(threads);
+            static float other[kTokens * dlss5_nr::kSplitChannels];
+            for (std::size_t i = 0;
+                 i < sizeof(other) / sizeof(other[0]); ++i) {
+                other[i] = __builtin_nanf("");
+            }
+            CHECK(split_ffwd_proj(in, resid, kRows, kCols, w, other)
+                  == Status::kOk);
+            CHECK(std::memcmp(ref, other,
+                              sizeof(float) * kTokens
+                                  * dlss5_nr::kSplitChannels) == 0);
+        }
+    }
+
+    // ---- split_qkv_attn parity across thread counts -----------------------
+    // The window loop is parallel_for'd the same way; windows write disjoint
+    // output tokens. A 24x24 map has 3x3 windows.
+    {
+        constexpr int kRows = 24;
+        constexpr int kCols = 24;
+        constexpr long long kTokens = kRows * kCols;
+        static float in[kTokens * dlss5_nr::kSplitChannels];
+        static std::uint8_t qkv_codes[dlss5_nr::kSplitQkvOut
+                                      * dlss5_nr::kSplitChannels];
+        static float bias[dlss5_nr::kSplitHeads * dlss5_nr::kBiasTable];
+        static float gain[dlss5_nr::kSplitHeads];
+        for (long long i = 0; i < kTokens * dlss5_nr::kSplitChannels; ++i) {
+            in[i] = static_cast<float>((i * 13) % 64) / 32.0f - 1.0f;
+        }
+        for (std::size_t i = 0;
+             i < sizeof(qkv_codes) / sizeof(qkv_codes[0]); ++i) {
+            qkv_codes[i] = static_cast<std::uint8_t>((i * 31u) & 0xFFu);
+        }
+        for (int i = 0;
+             i < dlss5_nr::kSplitHeads * dlss5_nr::kBiasTable; ++i) {
+            bias[i] = static_cast<float>((i % 64) - 32) / 64.0f;
+        }
+        for (int i = 0; i < dlss5_nr::kSplitHeads; ++i) {
+            gain[i] = static_cast<float>((i % 16) - 8) / 16.0f;
+        }
+        const dlss5_nr::SplitQkvWeight w{
+            dlss5_nr::E4m3Matrix{qkv_codes, dlss5_nr::kSplitQkvOut,
+                                 dlss5_nr::kSplitChannels},
+            bias, gain, nullptr, nullptr};
+        static float ref[kTokens * dlss5_nr::kSplitChannels];
+        set_parallel_threads(1);
+        CHECK(split_qkv_attn(in, kRows, kCols, 0, 0, w, ref) == Status::kOk);
+        for (int threads : {2, 3, 8, 16}) {
+            set_parallel_threads(threads);
+            static float other[kTokens * dlss5_nr::kSplitChannels];
+            for (std::size_t i = 0;
+                 i < sizeof(other) / sizeof(other[0]); ++i) {
+                other[i] = __builtin_nanf("");
+            }
+            CHECK(split_qkv_attn(in, kRows, kCols, 0, 0, w, other)
+                  == Status::kOk);
+            CHECK(std::memcmp(ref, other,
+                              sizeof(float) * kTokens
+                                  * dlss5_nr::kSplitChannels) == 0);
+        }
+    }
+
     return 0;
 }

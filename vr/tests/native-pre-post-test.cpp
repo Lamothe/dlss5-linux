@@ -439,6 +439,38 @@ static void check_allocation_discipline(void) {
 }
 
 int main(void) {
+    // ---- exhaustive decode: all 256 codes against the format definition ----
+    // Derived independently here (double arithmetic is exact on these
+    // ranges): e=15/m=7 -> the canonical NaN; e=0 -> m * 2^-9 (signed);
+    // else (8+m) * 2^(e-10) (signed). The bit patterns must match exactly.
+    {
+        for (int raw = 0; raw < 256; ++raw) {
+            const std::uint8_t code = static_cast<std::uint8_t>(raw);
+            const float got = dlss5_nr::e4m3_from_bits(code);
+            std::uint32_t got_bits = 0;
+            std::memcpy(&got_bits, &got, sizeof got_bits);
+            const bool negative = (raw & 0x80) != 0;
+            const int e = (raw >> 3) & 0xF;
+            const int m = raw & 7;
+            if (e == 0xF && m == 7) {
+                CHECK(got_bits == 0x7fc00000u);  // signless canonical NaN
+                continue;
+            }
+            double magnitude;
+            if (e == 0) {
+                magnitude = static_cast<double>(m) / 512.0;  // m * 2^-9
+            } else {
+                magnitude = static_cast<double>(8 + m)
+                    * std::ldexp(1.0, e - 10);
+            }
+            const double want = negative ? -magnitude : magnitude;
+            const float want_f = static_cast<float>(want);
+            std::uint32_t want_bits = 0;
+            std::memcpy(&want_bits, &want_f, sizeof want_bits);
+            CHECK(got_bits == want_bits);
+        }
+    }
+
     check_e4m3_literals();
     check_e4m3_sweep();
     check_pool_known_answers();
