@@ -301,3 +301,23 @@ narrowing now falls back to the CPU kernel; three comment overclaims; two
 test gaps). Next: G5 weight residency (persistent weight buffers; the
 prerequisite for wiring the swin rows AND for the split rows' many small
 calls), then the end-to-end per-frame GPU timings vs the CPU baselines.
+
+## Performance phase G5: weight residency (30/10/2026)
+
+VulkanWeightCache: persistent weight buffers, first-sight upload, verified
+hits skip staging and the e4m3 decode. Soundness: the pointer key is
+verified by a content hash (recycled per-call record storage delivers
+different content behind one pointer — the demo's store does exactly this),
+re-uploading in place on mismatch; a generation counter defeats VkBuffer
+handle reuse after the matmul's grow-only rebuild; exhaustion falls back to
+staging. 116 checks at -O2/-O0 including the mutated-key discriminator and
+the rebuild-rewrite test. Measured: 12,380 ms/frame end-to-end (1.32x vs
+cpu-mt 16,303; 1.15x vs G2's 14,242) — the demo's round-robin record store
+recycles pointers and forces hash-mismatch re-uploads, so the full
+residency benefit needs stable record storage (a G6 item along with the
+swin/split eval rows). Independent review raised 7 defects
+(2 HIGH: the e4m3 hit bypassing the stale-set rewrite; the unsound pointer
+key), all fixed and reverified. Next: G6 end-to-end per-frame GPU timings
+of the complete network vs the CPU baselines with the swin/split eval rows
+wired (the residency now makes their per-window calls viable), then the
+reported speedup summary.

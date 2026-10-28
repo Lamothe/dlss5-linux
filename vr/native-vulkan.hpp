@@ -352,6 +352,10 @@ struct VulkanMatmul {
     VkDescriptorSet set = VK_NULL_HANDLE;
     VkQueryPool queries = VK_NULL_HANDLE;
     VulkanBuffer in_dev, w_dev, out_dev, staging;
+    // Bumped on every create (the grow-only rebuild frees in_dev/out_dev);
+    // the weight cache's stale-set check compares generations, which VkBuffer
+    // handle values cannot defeat (handles are reusable after free).
+    std::uint32_t generation = 0;
     int max_tokens = 0;
     int max_c_in = 0;
     int max_rows = 0;
@@ -501,6 +505,7 @@ inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
                                     | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
                                 true)
                == Status::kOk;
+    ++out.generation;
     VkDescriptorBufferInfo infos[3]{};
     infos[0] = {out.in_dev.buffer, 0, in_bytes};
     infos[1] = {out.w_dev.buffer, 0, w_bytes};
@@ -536,6 +541,365 @@ inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
 // Runs out[t][n] = sum_k in[t][k] * w[n][k] with the CPU's exact element
 // order; `in`/`weights` are plain row-major float arrays (the weights are
 // the CPU's exact e4m3 decodes).
+// The resident-weight variant: `w_dev` is a persistent weight buffer (the
+// G5 weight cache) already holding the [rows, c_in] float32 matrix. Only
+// the input stages; the dispatch and download are the same as
+// vulkan_matmul_run, so results are bit-identical between the two.
+inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
+                                         const float* in, int tokens, int c_in,
+                                         const VulkanBuffer& w_dev, int rows,
+                                         float* out,
+                                         VulkanMatmulTiming& timing);
+
+// A small persistent weight cache keyed by the caller's weight pointer (the
+// EvalWeights record source): the FIRST sight of a key uploads its decoded
+// float matrix once; later runs reuse the buffer (no per-run staging).
+// Fixed capacity, linear search — the plan's matrix count is well under it.
+struct VulkanWeightCache {
+    static constexpr int kCapacity = 512;
+    struct Entry {
+        const void* key = nullptr;
+        int rows = 0;
+        int cols = 0;
+        VulkanBuffer buf;
+        VkDescriptorSet set = VK_NULL_HANDLE;
+        // The matmul in/out buffers the descriptor was written against; the
+        // matmul's grow-only rebuild rewrites the stale set at the next run.
+        VkBuffer written_in = VK_NULL_HANDLE;
+        VkBuffer written_out = VK_NULL_HANDLE;
+        std::uint32_t written_gen = 0;
+        // The content hash of the codes/floats this buffer holds: a pointer
+        // key alone is unsound when a provider recycles per-call storage, so
+        // every hit verifies the content and re-uploads on mismatch.
+        std::uint64_t hash = 0;
+    };
+    Entry entries[kCapacity];
+    int count = 0;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+
+    Status init(const VulkanDevice& d) {
+        if (pool != VK_NULL_HANDLE) {
+            return Status::kOk;
+        }
+        VkDescriptorPoolSize size{};
+        size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        size.descriptorCount = kCapacity;
+        VkDescriptorPoolCreateInfo pci{};
+        pci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pci.maxSets = kCapacity;
+        pci.poolSizeCount = 1;
+        pci.pPoolSizes = &size;
+        return vkCreateDescriptorPool(d.device, &pci, nullptr, &pool)
+                   == VK_SUCCESS
+            ? Status::kOk
+            : Status::kInvalidBuffer;
+    }
+
+    void destroy(const VulkanDevice& d) {
+        for (int i = 0; i < count; ++i) {
+            vulkan_buffer_destroy(d, entries[i].buf);
+        }
+        count = 0;
+        if (pool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(d.device, pool, nullptr);
+            pool = VK_NULL_HANDLE;
+        }
+    }
+};
+
+inline void vulkan_weight_cache_destroy(const VulkanDevice& d,
+                                        VulkanWeightCache& cache) {
+    cache.destroy(d);
+}
+
+// The cache key is the float matrix's data pointer with its shape; a key
+// whose shape changed re-uploads (the old buffer is reused in place).
+// Writes/rewrites the entry's descriptor against the matmul's current
+// in/out buffers (the grow-only rebuild makes old sets stale).
+// FNV-1a over the record bytes; word-wise would be faster but the byte form
+// is exact and the cost (a few ms per large record) is still far below the
+// staging path it replaces.
+inline std::uint64_t vulkan_weight_hash(const void* data, std::size_t bytes) {
+    const auto* p = static_cast<const std::uint8_t*>(data);
+    std::uint64_t h = 1469598103934665603ull;
+    for (std::size_t i = 0; i < bytes; ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+// Re-uploads an existing entry's buffer in place (same shape, new content).
+inline Status vulkan_weight_cache_update(const VulkanDevice& d,
+                                         VulkanWeightCache::Entry& e,
+                                         const float* weights,
+                                         std::uint64_t hash) {
+    const std::size_t bytes = static_cast<std::size_t>(e.rows)
+        * static_cast<std::size_t>(e.cols) * sizeof(float);
+    VulkanBuffer upload_staging;
+    const Status sc = vulkan_buffer_create(d, upload_staging, bytes,
+                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                           true);
+    if (sc != Status::kOk) {
+        return sc;
+    }
+    const Status up = vulkan_upload(d, upload_staging, e.buf, weights, bytes);
+    vulkan_buffer_destroy(d, upload_staging);
+    if (up == Status::kOk) {
+        e.hash = hash;
+    }
+    return up;
+}
+
+// The stale-set rewrite: the matmul's grow-only rebuild frees in_dev/out_dev
+// (and VkBuffer handles are reusable after free), so every hit rewrites the
+// entry's descriptor when the matmul's generation or buffers changed. The
+// generation check is the authoritative one.
+inline void vulkan_weight_cache_refresh(VulkanWeightCache::Entry& e,
+                                        const VulkanDevice& d,
+                                        const VulkanMatmul& m) {
+    if (e.written_gen == m.generation
+        && e.written_in == m.in_dev.buffer
+        && e.written_out == m.out_dev.buffer) {
+        return;
+    }
+    VkDescriptorBufferInfo infos[3]{};
+    infos[0] = {m.in_dev.buffer, 0, VK_WHOLE_SIZE};
+    infos[1] = {e.buf.buffer, 0, VK_WHOLE_SIZE};
+    infos[2] = {m.out_dev.buffer, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet writes[3]{};
+    for (std::uint32_t w = 0; w < 3; ++w) {
+        writes[w].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[w].dstSet = e.set;
+        writes[w].dstBinding = w;
+        writes[w].descriptorCount = 1;
+        writes[w].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[w].pBufferInfo = &infos[w];
+    }
+    vkUpdateDescriptorSets(d.device, 3, writes, 0, nullptr);
+    e.written_in = m.in_dev.buffer;
+    e.written_out = m.out_dev.buffer;
+    e.written_gen = m.generation;
+}
+
+inline Status vulkan_weight_cache_ensure(VulkanWeightCache& cache,
+                                         const VulkanDevice& d,
+                                         const VulkanMatmul& m,
+                                         const void* key,
+                                         const float* weights, int rows,
+                                         int cols, std::uint64_t content_hash,
+                                         VulkanWeightCache::Entry** out) {
+    for (int i = 0; i < cache.count; ++i) {
+        if (cache.entries[i].key == key && cache.entries[i].rows == rows
+            && cache.entries[i].cols == cols) {
+            *out = &cache.entries[i];
+            vulkan_weight_cache_refresh(cache.entries[i], d, m);
+            if (cache.entries[i].hash != content_hash) {
+                // The provider recycled the pointer for different content:
+                // re-upload in place (the decode still happened once).
+                return vulkan_weight_cache_update(d, cache.entries[i], weights,
+                                                  content_hash);
+            }
+            return Status::kOk;
+        }
+    }
+    if (key == nullptr || weights == nullptr || rows < 1 || cols < 1) {
+        return Status::kInvalidValues;
+    }
+    if (cache.count >= VulkanWeightCache::kCapacity) {
+        // The cache is an optimisation: exhaustion must not fail the frame.
+        return Status::kInvalidBuffer;  // callers fall back to staging
+    }
+    const Status init_st = cache.init(d);
+    if (init_st != Status::kOk) {
+        return init_st;
+    }
+    VulkanWeightCache::Entry& e = cache.entries[cache.count];
+    const std::size_t bytes = static_cast<std::size_t>(rows)
+        * static_cast<std::size_t>(cols) * sizeof(float);
+    const Status st = vulkan_buffer_create(d, e.buf, bytes,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
+            | VK_BUFFER_USAGE_TRANSFER_DST_BIT, false);
+    if (st != Status::kOk) {
+        return st;
+    }
+    // One staging buffer for the one-time upload; destroyed after (the
+    // resident path never stages weights again).
+    VulkanBuffer upload_staging;
+    const Status sc = vulkan_buffer_create(d, upload_staging, bytes,
+                                           VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                           true);
+    if (sc != Status::kOk) {
+        vulkan_buffer_destroy(d, e.buf);
+        return sc;
+    }
+    const Status up = vulkan_upload(d, upload_staging, e.buf, weights, bytes);
+    vulkan_buffer_destroy(d, upload_staging);
+    if (up != Status::kOk) {
+        vulkan_buffer_destroy(d, e.buf);
+        return up;
+    }
+    // The descriptor set against the matmul's current buffers.
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = cache.pool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &m.dsl;
+    if (vkAllocateDescriptorSets(d.device, &dsai, &e.set) != VK_SUCCESS) {
+        vulkan_buffer_destroy(d, e.buf);
+        return Status::kInvalidBuffer;
+    }
+    VkDescriptorBufferInfo infos[3]{};
+    infos[0] = {m.in_dev.buffer, 0, VK_WHOLE_SIZE};
+    infos[1] = {e.buf.buffer, 0, VK_WHOLE_SIZE};
+    infos[2] = {m.out_dev.buffer, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet writes[3]{};
+    for (std::uint32_t w = 0; w < 3; ++w) {
+        writes[w].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[w].dstSet = e.set;
+        writes[w].dstBinding = w;
+        writes[w].descriptorCount = 1;
+        writes[w].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[w].pBufferInfo = &infos[w];
+    }
+    vkUpdateDescriptorSets(d.device, 3, writes, 0, nullptr);
+    e.key = key;
+    e.rows = rows;
+    e.cols = cols;
+    e.written_in = m.in_dev.buffer;
+    e.written_out = m.out_dev.buffer;
+    e.hash = content_hash;
+    *out = &e;
+    ++cache.count;
+    return Status::kOk;
+}
+
+// The resident-weight variant: the entry's descriptor (holding the
+// persistent weight buffer) is bound instead of m.set; only the input
+// stages. The dispatch and download are identical to vulkan_matmul_run, so
+// the results are bit-identical between the two paths.
+inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
+                                         const float* in, int tokens, int c_in,
+                                         const VulkanWeightCache::Entry& e,
+                                         int rows, float* out,
+                                         VulkanMatmulTiming& timing) {
+    if (in == nullptr || out == nullptr || e.set == VK_NULL_HANDLE) {
+        return Status::kNullPointer;
+    }
+    if (tokens < 1 || c_in < 1 || rows < 1 || tokens > m.max_tokens
+        || c_in > m.max_c_in || rows > m.max_rows
+        || e.rows != rows || e.cols != c_in) {
+        return Status::kInvalidDimensions;
+    }
+    // The same dispatch-extent checks as vulkan_matmul_run.
+    if (tokens > 65535 || rows > 65535 * 128
+        || static_cast<std::uint64_t>(tokens)
+                   * static_cast<std::uint64_t>(rows)
+               > UINT32_MAX
+        || static_cast<std::uint64_t>(tokens)
+                   * static_cast<std::uint64_t>(c_in)
+               > UINT32_MAX
+        || static_cast<std::uint64_t>(rows)
+                   * static_cast<std::uint64_t>(c_in)
+               > UINT32_MAX) {
+        return Status::kInvalidDimensions;
+    }
+    timing = VulkanMatmulTiming{};
+    const std::size_t in_bytes = static_cast<std::size_t>(tokens)
+        * static_cast<std::size_t>(c_in) * sizeof(float);
+    const std::size_t out_bytes = static_cast<std::size_t>(tokens)
+        * static_cast<std::size_t>(rows) * sizeof(float);
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = vulkan_upload(d, m.staging, m.in_dev, in, in_bytes);
+        const auto t1 = std::chrono::steady_clock::now();
+        timing.upload_ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkCommandBufferAllocateInfo cai{};
+    cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cai.commandPool = d.pool;
+    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cai.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(d.device, &cai, &cmd) != VK_SUCCESS) {
+        return Status::kInvalidBuffer;
+    }
+    VkCommandBufferBeginInfo cbi{};
+    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &cbi) != VK_SUCCESS) {
+        vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+        return Status::kInvalidBuffer;
+    }
+    if (m.queries != VK_NULL_HANDLE) {
+        vkCmdResetQueryPool(cmd, m.queries, 0, 2);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m.queries,
+                            0);
+    }
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.layout, 0,
+                            1, &e.set, 0, nullptr);
+    const std::uint32_t push[3] = {static_cast<std::uint32_t>(tokens),
+                                   static_cast<std::uint32_t>(c_in),
+                                   static_cast<std::uint32_t>(rows)};
+    vkCmdPushConstants(cmd, m.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
+                       sizeof(push), push);
+    vkCmdDispatch(cmd, (push[2] + 127) / 128, push[0], 1);
+    if (m.queries != VK_NULL_HANDLE) {
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                            m.queries, 1);
+    }
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+        return Status::kInvalidBuffer;
+    }
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
+    bool submitted = false;
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        submitted = vkQueueSubmit(d.queue, 1, &si, VK_NULL_HANDLE)
+                    == VK_SUCCESS;
+        submitted = (vkQueueWaitIdle(d.queue) == VK_SUCCESS) && submitted;
+        const auto t1 = std::chrono::steady_clock::now();
+        timing.kernel_ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+    }
+    vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+    if (!submitted) {
+        return Status::kInvalidBuffer;
+    }
+    if (m.queries != VK_NULL_HANDLE && d.has_timestamps) {
+        std::uint64_t stamps[2] = {0, 0};
+        if (vkGetQueryPoolResults(d.device, m.queries, 0, 2, sizeof(stamps),
+                                  stamps, sizeof(stamps[0]),
+                                  VK_QUERY_RESULT_64_BIT)
+            == VK_SUCCESS) {
+            const double ticks = static_cast<double>(stamps[1] - stamps[0]);
+            timing.kernel_ms = ticks * static_cast<double>(d.timestamp_period)
+                / 1.0e6;
+        }
+    }
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        const Status st = vulkan_download(d, m.staging, m.out_dev, out,
+                                          out_bytes);
+        const auto t1 = std::chrono::steady_clock::now();
+        timing.download_ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
+    return Status::kOk;
+}
+
 inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
                                 const float* in, int tokens, int c_in,
                                 const float* weights, int rows, float* out,
@@ -667,6 +1031,10 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
 // per call; G4 weight residency replaces this with persistent buffers.
 struct VulkanProjectionSite {
     VulkanDevice* device = nullptr;
+    // G5 weight residency: with a cache set, the first sight of a weight
+    // key uploads it once and every later call binds the persistent buffer
+    // (no per-run staging). Null keeps the per-call staging path.
+    VulkanWeightCache* cache = nullptr;
     VulkanMatmul matmul;         // grow-only: resized to cover row shapes
     std::uint32_t* spirv = nullptr;
     std::size_t spirv_words = 0;
@@ -730,8 +1098,29 @@ inline Status vulkan_projection_matmul_f32(void* ctx, const float* in,
         }
     }
     VulkanMatmulTiming timing;
-    const Status st = vulkan_matmul_run(*site->device, site->matmul, in, tokens,
-                                        c_in, weights, rows, out, timing);
+    Status st = Status::kOk;
+    if (site->cache != nullptr) {
+        VulkanWeightCache::Entry* entry = nullptr;
+        const std::uint64_t w_hash = vulkan_weight_hash(
+            weights, static_cast<std::size_t>(rows) * c_in
+                         * sizeof(float));
+        st = vulkan_weight_cache_ensure(*site->cache, *site->device,
+                                       site->matmul, weights, weights, rows,
+                                       c_in, w_hash, &entry);
+        if (st == Status::kOk) {
+            st = vulkan_matmul_run_resident(*site->device, site->matmul, in,
+                                            tokens, c_in, *entry, rows, out,
+                                            timing);
+        } else {
+            // The cache is an optimisation (capacity or allocation): the
+            // staging path stays available and correct.
+            st = vulkan_matmul_run(*site->device, site->matmul, in, tokens,
+                                   c_in, weights, rows, out, timing);
+        }
+    } else {
+        st = vulkan_matmul_run(*site->device, site->matmul, in, tokens, c_in,
+                               weights, rows, out, timing);
+    }
     if (st == Status::kOk) {
         site->kernel_ms += timing.kernel_ms;
         site->upload_ms += timing.upload_ms;
@@ -791,20 +1180,88 @@ inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
             return st;
         }
     }
-    const std::size_t count = static_cast<std::size_t>(w.rows)
-        * static_cast<std::size_t>(c_in);
-    const auto d0 = std::chrono::steady_clock::now();
-    site->decoded.resize(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        site->decoded[i] = e4m3_from_bits(w.bits[i]);
-    }
-    const auto d1 = std::chrono::steady_clock::now();
-    site->decode_ms +=
-        std::chrono::duration<double, std::milli>(d1 - d0).count();
     VulkanMatmulTiming timing;
-    const Status st = vulkan_matmul_run(*site->device, site->matmul, in,
-                                        tokens, c_in, site->decoded.data(),
-                                        w.rows, out, timing);
+    Status st = Status::kOk;
+    // The cache key is the CODES pointer (the EvalWeights record source); on
+    // a hit the decode is skipped entirely (the resident buffer holds the
+    // decoded float matrix).
+    VulkanWeightCache::Entry* hit = nullptr;
+    if (site->cache != nullptr) {
+        for (int i = 0; i < site->cache->count; ++i) {
+            VulkanWeightCache::Entry& en = site->cache->entries[i];
+            if (en.key == w.bits && en.rows == w.rows && en.cols == w.cols) {
+                hit = &en;
+                break;
+            }
+        }
+    }
+    const std::size_t code_count = static_cast<std::size_t>(w.rows)
+        * static_cast<std::size_t>(c_in);
+    if (hit != nullptr) {
+        vulkan_weight_cache_refresh(*hit, *site->device, site->matmul);
+        // Verify the content: a recycled pointer key with different codes
+        // must not be served from the resident buffer.
+        const std::uint64_t code_hash = vulkan_weight_hash(w.bits, code_count);
+        if (hit->hash == code_hash) {
+            st = vulkan_matmul_run_resident(*site->device, site->matmul, in,
+                                            tokens, c_in, *hit, w.rows, out,
+                                            timing);
+        } else {
+            // Content changed behind the pointer: decode and re-upload.
+            const auto d0 = std::chrono::steady_clock::now();
+            site->decoded.resize(code_count);
+            for (std::size_t i = 0; i < code_count; ++i) {
+                site->decoded[i] = e4m3_from_bits(w.bits[i]);
+            }
+            const auto d1 = std::chrono::steady_clock::now();
+            site->decode_ms +=
+                std::chrono::duration<double, std::milli>(d1 - d0).count();
+            const Status up = vulkan_weight_cache_update(*site->device, *hit,
+                                                         site->decoded.data(),
+                                                         code_hash);
+            if (up == Status::kOk) {
+                st = vulkan_matmul_run_resident(*site->device, site->matmul,
+                                                in, tokens, c_in, *hit,
+                                                w.rows, out, timing);
+            } else {
+                st = up;
+            }
+        }
+    } else {
+        const std::size_t count = static_cast<std::size_t>(w.rows)
+            * static_cast<std::size_t>(c_in);
+        const auto d0 = std::chrono::steady_clock::now();
+        site->decoded.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            site->decoded[i] = e4m3_from_bits(w.bits[i]);
+        }
+        const auto d1 = std::chrono::steady_clock::now();
+        site->decode_ms +=
+            std::chrono::duration<double, std::milli>(d1 - d0).count();
+        if (site->cache != nullptr) {
+            VulkanWeightCache::Entry* entry = nullptr;
+            const std::uint64_t code_hash = vulkan_weight_hash(
+                w.bits, code_count);
+            st = vulkan_weight_cache_ensure(*site->cache, *site->device,
+                                           site->matmul, w.bits,
+                                           site->decoded.data(), w.rows,
+                                           w.cols, code_hash, &entry);
+            if (st == Status::kOk) {
+                st = vulkan_matmul_run_resident(*site->device, site->matmul,
+                                                in, tokens, c_in, *entry,
+                                                w.rows, out, timing);
+            } else {
+                // Cache exhaustion or allocation failure: the staging path.
+                st = vulkan_matmul_run(*site->device, site->matmul, in, tokens,
+                                       c_in, site->decoded.data(), w.rows, out,
+                                       timing);
+            }
+        } else {
+            st = vulkan_matmul_run(*site->device, site->matmul, in, tokens,
+                                   c_in, site->decoded.data(), w.rows, out,
+                                   timing);
+        }
+    }
     site->kernel_ms += timing.kernel_ms;
     site->upload_ms += timing.upload_ms;
     site->download_ms += timing.download_ms;

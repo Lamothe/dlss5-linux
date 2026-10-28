@@ -119,6 +119,43 @@ CPU kernel), the null-matmul_f32 fallback, the site/shape status ordering
 and the executor-envelope fallback (a shape rejection keeps the CPU kernel
 rather than narrowing swin_linear's accepted shapes).
 
+## G5 — weight residency (30/10/2026)
+
+VulkanWeightCache holds persistent weight buffers (512 entries): the first
+sight of a weight key uploads its decoded float matrix ONCE (transient
+staging, destroyed after) and later calls bind the persistent buffer — no
+per-run weight staging. The resident run (vulkan_matmul_run_resident) stages
+only the INPUT and shares the dispatch/download with the staging path, so
+the two are bit-identical (proven at -O2/-O0 for both weight kinds).
+
+**Soundness, stated precisely.** A pointer key ALONE is unsound: providers
+with recycled per-call storage (the demo's record store among them) deliver
+different content behind the same pointer. Every hit therefore verifies a
+content hash (FNV-1a over the record bytes) and re-uploads in place on
+mismatch — the resident buffer is never served stale. The hash costs a few
+milliseconds per large record (measured and reported below); providers with
+stable pointer-to-content mappings pay it once per hit anyway and never
+re-upload. The e4m3 path skips its decode entirely on a verified hit.
+
+Stale descriptor sets (the matmul's grow-only rebuild frees its in/out
+buffers; VkBuffer handles are reusable after free) are handled by a
+generation counter on VulkanMatmul — the authoritative check — with the
+handle comparison as a supplement. Cache exhaustion or allocation failure
+falls back to the staging path: the cache is an optimisation and must not
+fail a frame. The site/cache call contract is single-threaded (the eval
+rows run the executor calls outside the parallel kernels); wiring an
+executor inside a parallel_for is unsupported.
+
+116 checks at -O2/-O0: staging-vs-resident bit-identity for both weight
+kinds, the verified-hit decode skip (a mutated-recycled-key discriminator),
+the stale-set rebuild rewrite (a generation-triggering shape change between
+calls), the f32 hit path, the content-mismatch re-upload and the cache
+accounting. Measured (RTX 4070 Ti SUPER, 8 threads): 12,380 ms/frame end-to-end vs
+14,242 (G2 per-call staging) and 16,303 (CPU-mt); the demo's round-robin
+record store recycles pointers and forces hash-mismatch re-uploads, which
+is why the full residency benefit needs stable record storage (G6) — see
+NATIVE-PERFORMANCE.md.
+
 ## Provenance
 
 No proprietary code, payload, capture or binary is used or redistributed;

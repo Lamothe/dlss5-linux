@@ -661,6 +661,138 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // G5 weight residency: the resident path (first sight uploads
+            // once; later calls bind the persistent buffer) must be
+            // bit-identical to the per-call staging path, and the cache hit
+            // must skip the decode entirely.
+            {
+                static float r_in[256 * 1024];
+                static std::uint8_t r_codes[200 * 1024];
+                static float r_staging[256 * 200];
+                static float r_resident[256 * 200];
+                static float r_hit[256 * 200];
+                for (int i = 0; i < 256 * 1024; ++i) {
+                    r_in[i] = static_cast<float>((i * 13) % 200) / 50.0f
+                        - 2.0f;
+                }
+                for (int i = 0; i < 200 * 1024; ++i) {
+                    r_codes[i] = static_cast<std::uint8_t>((i * 11) % 200);
+                }
+                E4m3Matrix rw;
+                rw.bits = r_codes;
+                rw.rows = 200;
+                rw.cols = 1024;
+                VulkanProjectionSite site_staging;
+                site_staging.device = &device;
+                site_staging.spirv = spirv.data();
+                site_staging.spirv_words = spirv.size();
+                ProjectionExecutor ex_s = vulkan_projection_executor(
+                    &site_staging);
+                CHECK(ex_s.matmul(ex_s.ctx, r_in, 256, 1024, rw, r_staging)
+                      == Status::kOk);
+
+                VulkanWeightCache cache;
+                VulkanProjectionSite site_res;
+                site_res.device = &device;
+                site_res.spirv = spirv.data();
+                site_res.spirv_words = spirv.size();
+                site_res.cache = &cache;
+                ProjectionExecutor ex_r = vulkan_projection_executor(
+                    &site_res);
+                CHECK(ex_r.matmul(ex_r.ctx, r_in, 256, 1024, rw, r_resident)
+                      == Status::kOk);
+                CHECK(cache.count == 1);  // one key sight, one upload
+                // A second call is a cache hit (decode skipped) — same bytes.
+                CHECK(ex_r.matmul(ex_r.ctx, r_in, 256, 1024, rw, r_hit)
+                      == Status::kOk);
+                CHECK(cache.count == 1);
+                CHECK(std::memcmp(r_staging, r_resident, sizeof(r_staging))
+                      == 0);
+                CHECK(std::memcmp(r_staging, r_hit, sizeof(r_staging)) == 0);
+
+                // Discriminating: mutating the codes behind the SAME
+                // pointer must NOT be served from the resident buffer — the
+                // content hash catches the recycled key and re-uploads.
+                {
+                    static float m_out[256 * 200];
+                    for (int i = 0; i < 200 * 1024; ++i) {
+                        r_codes[i] = static_cast<std::uint8_t>(
+                            (i * 17 + 3) % 200);
+                    }
+                    static float m_expect[256 * 200];
+                    CHECK(ex_s.matmul(ex_s.ctx, r_in, 256, 1024, rw,
+                                      m_expect)
+                          == Status::kOk);
+                    CHECK(ex_r.matmul(ex_r.ctx, r_in, 256, 1024, rw, m_out)
+                          == Status::kOk);
+                    CHECK(std::memcmp(m_expect, m_out, sizeof(m_expect))
+                          == 0);  // not the stale resident content
+                    // Restore for the following checks.
+                    for (int i = 0; i < 200 * 1024; ++i) {
+                        r_codes[i] = static_cast<std::uint8_t>((i * 11) % 200);
+                    }
+                }
+
+                // The float-weight (swin) entry uses the same cache.
+                static float f_w[200 * 1024];
+                for (int i = 0; i < 200 * 1024; ++i) {
+                    f_w[i] = static_cast<float>((i * 7) % 100) / 25.0f
+                        - 2.0f;
+                }
+                static float f_staging[256 * 200];
+                static float f_resident[256 * 200];
+                CHECK(ex_s.matmul_f32(ex_s.ctx, r_in, 256, 1024, f_w, 200,
+                                      f_staging)
+                      == Status::kOk);
+                CHECK(ex_r.matmul_f32(ex_r.ctx, r_in, 256, 1024, f_w, 200,
+                                      f_resident)
+                      == Status::kOk);
+                CHECK(cache.count == 2);
+                CHECK(std::memcmp(f_staging, f_resident,
+                                  sizeof(f_staging))
+                      == 0);
+                static float f_hit[256 * 200];
+                CHECK(ex_r.matmul_f32(ex_r.ctx, r_in, 256, 1024, f_w, 200,
+                                      f_hit)
+                      == Status::kOk);
+                CHECK(cache.count == 2);
+                CHECK(std::memcmp(f_staging, f_hit, sizeof(f_staging)) == 0);
+                // The stale-set rewrite: a matmul rebuild between calls must
+                // rewrite the entry's descriptor (the generation check), or
+                // the next run binds freed buffers.
+                {
+                    static float grow_in[512 * 1024];
+                    for (int i = 0; i < 512 * 1024; ++i) {
+                        grow_in[i] = static_cast<float>((i * 5) % 60) / 16.0f
+                            - 1.5f;
+                    }
+                    static float grow_w[120 * 1024];
+                    for (int i = 0; i < 120 * 1024; ++i) {
+                        grow_w[i] = static_cast<float>((i * 7) % 50) / 16.0f
+                            - 1.5f;
+                    }
+                    static float grow_a[512 * 120];
+                    static float grow_b[512 * 120];
+                    // A bigger shape forces the grow-only rebuild.
+                    CHECK(ex_r.matmul_f32(ex_r.ctx, grow_in, 512, 1024,
+                                          grow_w, 120, grow_a)
+                          == Status::kOk);
+                    // Back to the cached f_w (added AFTER the rebuild):
+                    CHECK(ex_r.matmul_f32(ex_r.ctx, r_in, 256, 1024, f_w, 200,
+                                          grow_b)
+                          == Status::kOk);
+                    static float grow_ref[256 * 200];
+                    CHECK(ex_s.matmul_f32(ex_s.ctx, r_in, 256, 1024, f_w, 200,
+                                          grow_ref)
+                          == Status::kOk);
+                    CHECK(std::memcmp(grow_ref, grow_b,
+                                      sizeof(grow_ref))
+                          == 0);
+                }
+
+                vulkan_weight_cache_destroy(device, cache);
+            }
+
             // The site validates its buffer before use.
             {
                 SplitProjectionSite bad;

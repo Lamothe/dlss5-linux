@@ -363,6 +363,7 @@ int main(int argc, char** argv) {
 #if DLSS5_DEMO_HAS_VULKAN
     dlss5_nr::VulkanDevice gpu_device;
     dlss5_nr::VulkanProjectionSite gpu_site;
+    dlss5_nr::VulkanWeightCache gpu_cache;
     dlss5_nr::ProjectionExecutor gpu_executor;
     std::vector<std::uint32_t> gpu_spirv_words;
     if (opt.gpu_spirv != nullptr) {
@@ -397,8 +398,10 @@ int main(int argc, char** argv) {
         gpu_site.device = &gpu_device;
         gpu_site.spirv = gpu_spirv_words.data();
         gpu_site.spirv_words = gpu_spirv_words.size();
+        gpu_site.cache = &gpu_cache;
         gpu_executor = dlss5_nr::vulkan_projection_executor(&gpu_site);
-        std::printf("gpu backend: %s\n", gpu_device.name);
+        std::printf("gpu backend: %s (weight residency ON)\n",
+                    gpu_device.name);
     }
 #endif
 
@@ -605,6 +608,7 @@ int main(int argc, char** argv) {
                     "staging upload %.3f ms, download %.3f ms\n",
                     gpu_site.kernel_ms, gpu_site.decode_ms,
                     gpu_site.upload_ms, gpu_site.download_ms);
+        dlss5_nr::vulkan_weight_cache_destroy(gpu_device, gpu_cache);
         dlss5_nr::vulkan_projection_close(gpu_site);
         dlss5_nr::vulkan_close(gpu_device);
     }

@@ -130,3 +130,28 @@ defaults everywhere. Eval wiring is deliberately deferred to G5 weight
 residency: per-window GPU calls (16 tokens) would thrash under per-call
 staging. 95 checks at -O2/-O0. Measured G3 numbers stand; the complete
 network is unchanged by this slice.
+
+## G5 — weight residency (30/10/2026)
+
+Persistent weight buffers with content-hash verification (the pointer key
+alone is unsound for recycled per-call record storage). First sight uploads
+once; verified hits bind the resident buffer and skip the e4m3 decode.
+Measured (64x72, kSmall, 8 threads, RTX 4070 Ti SUPER):
+
+| Path | ms/frame | vs cpu-mt |
+|---|---|---|
+| cpu-mt reference | 16,303 | 1.00x |
+| G2 per-call staging | 14,242 | 1.14x |
+| G5 weight residency | 12,380 | 1.32x |
+
+GPU totals per frame (G5): kernel 723 ms, decode 885 ms (first-sight AND
+hash-mismatch re-decodes), staging upload 89 ms, download 177 ms. 116
+checks at -O2/-O0.
+
+Honest attribution: the demo's record store uses 16 round-robin slots that
+recycle per-call storage, so most fetches are content-hash MISMATCHES and
+re-decode/re-upload — the resident path therefore measures only 1.15x over
+G2's per-call staging here. The full residency benefit requires stable
+pointer-to-content record storage (a per-key record store); that is part of
+the G6 wiring slice along with the swin/split eval rows. A stable-key
+provider pays the hash per hit and never re-uploads.
