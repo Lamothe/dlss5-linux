@@ -474,3 +474,48 @@ temporal history/reset consumer (the second colour copy is still the
 single-frame stub), then live-input evaluation — recorded in
 NATIVE-PERFORMANCE.md's G8 section as the remaining performance-stage
 items.
+
+## Temporal history consumer slice (28/10/2026) — overnight phase 1
+
+The single-frame stub (the lift's second colour copy) is replaced as the
+temporal feed by the real history/reset consumer in the native path. New
+in native-io.hpp: `image_map_evaluation` (the extracted map-level core of
+`image_evaluation` — published behaviour unchanged), `frame_to_history`
+(the FP16 output-texture store: planar -> interleaved, binary16 round,
+stride-honouring, full-pass value validation) and `temporal_image_evaluation`
+(the frame step of the capture contract: optional DLSSNR.Reset first, the
+history feed ALWAYS the carrier's view — the zero map at start-up and
+after a reset, never the stub — the run, the store, the host read-back and
+the bit-exact commit with the counter advance). The demo's inline
+convert/round/commit block is deleted in favour of the consumer (its
+report now shows the frame's contract inputs).
+
+SEMANTIC CORRECTION (intended output change): at start-up and post-reset
+frames the old demo passed the stub (the current colour) to the lift; the
+capture contract says those frames behave as if history = 0, so the feed
+is now the carrier's zero map. The demo output changes at those frames
+accordingly; the state machine is exactly periodic across a reset (the
+demo's frame 1 and frame 3 float-deltas are identical), which is the
+contract's restart behaviour made visible.
+
+MEASURED CHECKS: native-io 2,351 at -O2 and -O0; demo smoke green; the
+complete-network G2/G8 gates byte-identical. The feed pin is
+discriminating (a frame-tagged layer gives each step a distinct map: the
+frame-2 feed must equal frame 1's commit, not output_{N-2} or the frame's
+own output); the counter literal [0,1,2,3,0,1,2,3] is pinned through the
+consumer; the reset ignores staged content (injectreset); every rejection
+class leaves out_host/store/carrier untouched (the reset-first form is
+documented and pinned).
+
+Independent read-only review: FAIL (3 findings + 4 nits) — all fixed and
+reverified: the commit's counter-exhaustion guard could fail AFTER the
+outputs were written (now hoisted to the step's entry; the reset cures
+exhaustion), frame_to_history read strided views without validation
+(bounds added before the scan), the feed pin was not discriminating (the
+tagged layer), the doubled extent could overflow (bounded), the result
+map's layout was not pinned (a padded result is now rejected rather than
+misread), a never-initialised carrier map failed only mid-run (rejected
+at the seam), and an overstated comment (scoped).
+
+Next: overnight phase 2 — live-input evaluation (sustained multi-frame
+feeding of the evaluator with measured throughput and no resource leaks).

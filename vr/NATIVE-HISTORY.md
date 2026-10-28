@@ -60,9 +60,11 @@ weight-record framing was a handover error and is withdrawn.
 ### Scope limits (what this does NOT establish)
 
 * The input lift's feature slots 7..9 (`native-input-lift.hpp`) keep their
-  documented single-frame stub (the current-colour copy) — deliberately
-  untouched here per instruction; binding the history colour into those slots
-  is the live-input stage's integration step.
+  documented single-frame stub (the current-colour copy) as the NO-CARRIER
+  path only. The integration landed with the temporal history consumer
+  (`temporal_image_evaluation`, native-io.hpp): in temporal mode the lift's
+  history feed is always the carrier's view — the zero map at start-up and
+  after a reset, never the stub (pinned by the io suite's probe seam).
 * Which stage consumes the frame counter is an unestablished boundary of the
   proprietary route (`TEMPORAL-HISTORY.md`'s "Next"); the counter is tracked
   here and not injected anywhere.

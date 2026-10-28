@@ -23,19 +23,42 @@ runtime required. No vendor code and no vendor correspondence.
   0.5f)` diverges at `scaled = 0.5 - 2^-25` (reachable at `fl(0.5/255)`,
   where the pin gives 0 and the naive form gives 1); the suite pins that
   edge.
-* `image_evaluation` — the host-frame entry over `network_run`: the plan's
-  padded extent is derived from the pre row (`2 * out_w` rows, `2 * out_h`
-  columns; `out_w` is the row count per native-graph-plan.hpp/pinned
-  plan.py), the run is wired to the caller's `EvalContext` (`run.context` is
-  set on the by-value copy), the temporal carrier's history colour is fed to
-  the input lift's slots 7..9 (null keeps the single-frame stub; the carrier
-  must match the padded extent in the chain's orientation and hold [0,1]
-  colour), and the final row must be the post block whose result map is the
-  full padded extent (both preconditions are validated before the run).
+* `image_map_evaluation` — the host-frame entry over `network_run` at map
+  level (the run's padded planar `[3, work_rows, work_cols]` result):
+  the plan's padded extent is derived from the pre row (`2 * out_w` rows,
+  `2 * out_h` columns; `out_w` is the row count per native-graph-plan.hpp/
+  pinned plan.py), the run is wired to the caller's `EvalContext`
+  (`run.context` is set on the by-value copy), the temporal carrier's
+  history colour is fed to the input lift's slots 7..9 (null keeps the
+  single-frame stub; the carrier must match the padded extent in the
+  chain's orientation and hold [0,1] colour), and the final row must be the
+  post block whose result map is the full padded extent (both preconditions
+  are validated before the run).
+* `image_evaluation` — `image_map_evaluation` with the host read-back
+  (`frame_to_u8`) appended.
+* `frame_to_history` — the FP16 output-texture store: the run's planar map
+  becomes the interleaved RGB pixel frame `[3*(r*cols + col) + c]` (read
+  through the view's own plane/row strides — padding never read), each
+  value rounded to the binary16 grid (the identity on that grid). A full
+  first pass rejects a non-finite value or one beyond 65504 before any
+  write.
+* `temporal_image_evaluation` — the temporal history consumer: one frame
+  step of the capture contract (native-history.hpp). `reset_before` applies
+  DLSSNR.Reset first (the carrier drops to its zero map and counter 0).
+  The history colour fed to the lift is ALWAYS the carrier's view — the
+  zero map at start-up and after a reset, the previous frame's stored
+  output otherwise; the single-frame stub (the lift's current-colour copy)
+  is never a temporal-mode feed. The run's output is stored through
+  `frame_to_history` and committed bit-exactly (`temporal_commit` advances
+  the frames-since-reset counter). Validation completes before any output
+  write: on error `out_host`, the store and the carrier are untouched,
+  except that a requested reset applies first by design (a failed step
+  leaves the carrier as the reset left it).
 * The temporal history feed: `native-input-lift.hpp` gains the primary
   `input_lift(frame, history, ...)`; the old entry delegates with
   `history == frame` — behaviour-preserving (the reference's no-history
-  stand-in), verified by the unchanged 5,316-check suite.
+  stand-in), verified by the unchanged 5,316-check suite. The stub is the
+  no-carrier path only; the consumer replaces it as the temporal feed.
 
 ## Reference and provenance
 
@@ -71,7 +94,7 @@ SOFTWARE.
 
 ## Known-answer test
 
-`vr/tests/native-io-test.cpp` (2,045 checks at -O2 and again at -O0 via
+`vr/tests/native-io-test.cpp` (2,357 checks at -O2 and again at -O0 via
 `vr/test-native-io.sh`) pins the boundary with hand-derived answers: the
 `_mirror` tables for extents 2/3/4; a non-square host (2x3 to a 4x5 extent)
 whose map is checked against hand-computed mirror maps in the chain's
@@ -102,6 +125,46 @@ the lift level (the suite above) but not through `eval_pre_block` itself; the
 eval suite covers the null (stub) path. The sanitised build is skipped on
 this toolchain (missing `/usr/lib64/libubsan.so.1.0.0`), a recorded
 environment gap.
+
+### The temporal consumer's tests (the G-slice after the handover)
+
+The consumer (`temporal_image_evaluation`) and `frame_to_history` add a
+probe seam (a layer that records the `EvalContext::history` feed and
+delegates to the stub layer) and hand-derived answers: the run sees the
+carrier's ZERO map at start-up (the lift's single-frame stub is never a
+temporal feed — its case is `history == null`, pinned as the no-carrier
+path separately); the commit is the FP16 output-texture store of the
+stub's known `m/32` map bit-exactly (`memcmp`); the history feed is
+pinned as `history_N = output_{N-1}` with a frame-tagged layer (each
+step's map carries a distinct `tag/4` offset, so the frame-2 feed must
+equal frame 1's commit — discriminating `output_{N-1}` from
+`output_{N-2}` and from the frame's own output); the frames-since-reset
+counter follows the capture's `[0,1,2,3,0,1,2,3]` literal across a
+mid-stream reset at frame 4 (the reset step's post-counter of 1 proves the
+reset's zero); the reset ignores staged history content (injectreset);
+`frame_to_history`'s planar -> interleaved repack, the binary16 round
+(1/3 -> 1365/4096 hand-derived from the 11-bit significand), the
+padded-stride poison control and the view's stride/extent classes
+(negative or short strides, extent caps — validated before the scan);
+and the consumer's rejection matrix (an unstoreable output, store/host
+geometry classes, the hoisted counter-exhaustion guard — a carrier at
+UINT32_MAX writes nothing and the reset cures it — and the result-map
+layout pin: a padded result is rejected rather than misread) with
+out_host, the store and the carrier sentinel-checked untouched, plus the
+documented reset-first failure form (a failed step leaves the carrier as
+the reset left it). Determinism across two identical four-step sequences
+and zero-allocation accounting close the section.
+
+An independent read-only review of this slice returned FAIL with three
+findings and four nits, all fixed and reverified: the commit path could
+still fail on the counter-exhaustion guard after the outputs were written
+(the guard is now hoisted to the step's entry), `frame_to_history` read
+strided views without validating them (bounds added before the scan), the
+feed pin was not discriminating (the tagged layer above), the doubled
+extent could overflow for absurd plans (bounded), the result map's layout
+was not pinned (the padded-result rejection), a never-initialised carrier
+map failed only mid-run (rejected at the seam), and an "unreachable"
+comment was overstated (now scoped).
 
 ## Non-vendor statement
 

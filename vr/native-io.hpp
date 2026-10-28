@@ -172,19 +172,24 @@ inline Status frame_to_u8(const float* in, int work_rows, int work_cols,
     return Status::kOk;
 }
 
-// The image-level native evaluation: host frame in, enhanced host frame out,
-// through the typed run. `run` supplies the layer/release wiring and the
-// caller's `LayerValue` outputs; the caller's `EvalContext` supplies the
-// records and controls. `image_storage` holds the planar image map (>=
-// 3 * work_w * work_h floats, outside the arena scratch). `history` may be
-// null (the single-frame stub) or the temporal carrier of native-history.hpp:
-// its history colour is fed to the input lift's slots 7..9. The caller
-// commits the produced frame into the carrier and applies the reset protocol;
-// this function performs one evaluation only. Validation completes before any
-// output write.
-inline Status image_evaluation(const std::uint8_t* host, int host_row_stride,
-                               int width, int height, std::uint8_t* out_host,
-                               int out_host_row_stride,
+// The image-level native evaluation, map level: host frame in, the run's
+// padded planar output map out (run.outputs[count - 1].main, the post
+// block's [3, work_rows, work_cols] result — cropped to the host frame by
+// frame_to_u8). `run` supplies the layer/release wiring and the caller's
+// `LayerValue` outputs; the caller's `EvalContext` supplies the records and
+// controls. `image_storage` holds the planar image map (>= 3 * work_w *
+// work_h floats, outside the arena scratch). `history` may be null (the
+// single-frame stub: the lift's slots 7..9 copy the current colour — the
+// reference's no-history stand-in) or the temporal carrier of
+// native-history.hpp: its history colour is fed to the input lift's slots
+// 7..9 as-is, including the zero map at start-up and after a reset (the
+// capture contract; the stub is never a temporal-mode feed). The caller
+// commits the produced frame into the carrier and applies the reset
+// protocol (see temporal_image_evaluation, which performs the whole step);
+// this function performs one evaluation only. Validation completes before
+// any output write.
+inline Status image_map_evaluation(const std::uint8_t* host,
+                               int host_row_stride, int width, int height,
                                float* image_storage, std::size_t image_count,
                                const LayerSpec* specs, int count,
                                NetworkRun run, EvalContext& context,
@@ -206,7 +211,10 @@ inline Status image_evaluation(const std::uint8_t* host, int host_row_stride,
     const LayerSpec& pre = specs[0];
     const LayerSpec& post = specs[count - 1];
     if (pre.kind != LayerKind::kPreBlock || pre.c_in != 3
-        || pre.out_w < 1 || pre.out_h < 1) {
+        || pre.out_w < 1 || pre.out_h < 1
+        || pre.out_w > kMaxRows / 2 || pre.out_h > kMaxCols / 2) {
+        // The last pair bounds the doubled extent below (no signed overflow
+        // in work_rows/work_cols, both within the map limits).
         return Status::kInvalidValues;
     }
     if (post.kind != LayerKind::kPostBlock) {
@@ -221,6 +229,11 @@ inline Status image_evaluation(const std::uint8_t* host, int host_row_stride,
     const FrameView history_view = history == nullptr
         ? FrameView{}
         : temporal_history_view(*history);
+    if (history != nullptr && history_view.rgb == nullptr) {
+        // A carrier whose map never initialised (temporal_init failed) has
+        // rows/cols but no bytes; reject here rather than mid-run.
+        return Status::kNullPointer;
+    }
     if (history != nullptr
         && (history_view.rows != work_rows || history_view.cols != work_cols)) {
         return Status::kInvalidDimensions;
@@ -244,11 +257,165 @@ inline Status image_evaluation(const std::uint8_t* host, int host_row_stride,
     }
     const FeatureBatchView& result = run.outputs[count - 1].main;
     if (result.channels != 3 || result.rows != work_rows
-        || result.cols != work_cols) {
+        || result.cols != work_cols
+        || result.plane_stride
+            != static_cast<std::ptrdiff_t>(work_rows) * work_cols
+        || result.row_stride != static_cast<std::ptrdiff_t>(work_cols)) {
+        // The extent and the planar-map layout convention (tight
+        // [c*rows*cols + r*cols + col]): frame_to_u8's read-back and
+        // frame_to_history's store both assume it, so a padded result is
+        // rejected here rather than misread.
         return Status::kInvalidBuffer;
     }
-    return frame_to_u8(result.data, work_rows, work_cols, out_host,
+    return Status::kOk;
+}
+
+// The image-level native evaluation: host frame in, enhanced host frame out,
+// through the typed run. Same boundary as image_map_evaluation with the
+// host read-back (frame_to_u8) appended. Validation completes before any
+// output write.
+inline Status image_evaluation(const std::uint8_t* host, int host_row_stride,
+                               int width, int height, std::uint8_t* out_host,
+                               int out_host_row_stride,
+                               float* image_storage, std::size_t image_count,
+                               const LayerSpec* specs, int count,
+                               NetworkRun run, EvalContext& context,
+                               const TemporalCarrier* history) {
+    const Status status = image_map_evaluation(host, host_row_stride, width,
+        height, image_storage, image_count, specs, count, run, context,
+        history);
+    if (status != Status::kOk) {
+        return status;
+    }
+    const FeatureBatchView& result = run.outputs[count - 1].main;
+    return frame_to_u8(result.data, result.rows, result.cols, out_host,
                        out_host_row_stride, width, height);
+}
+
+// The FP16 output-texture store: the run's padded planar [3, rows, cols]
+// output map becomes the interleaved RGB pixel frame in `store` (pixel p,
+// channel c: store[3p + c] = map[c * rows * cols + p]), each value rounded
+// to the binary16 grid — the output-texture store of the hardware route
+// (the temporal carrier holds FP16 texture content bit-exactly). For values
+// already on the binary16 grid the rounding is the identity. Validation is
+// a full first pass: a non-finite value or one beyond the max finite
+// binary16 magnitude (65504) rejects the whole store before any write
+// (kInvalidValues). `store_count >= 3 * rows * cols` floats.
+inline Status frame_to_history(const FeatureBatchView& map, float* store,
+                               std::size_t store_count) {
+    if (store == nullptr) {
+        return Status::kNullPointer;
+    }
+    if (map.data == nullptr || map.channels != 3 || map.rows < 1
+        || map.cols < 1 || map.rows > kMaxRows || map.cols > kMaxCols
+        || static_cast<long long>(map.rows) * map.cols > kMaxPixels) {
+        return Status::kInvalidValues;
+    }
+    if (map.plane_stride < 0 || map.row_stride < map.cols
+        || static_cast<long long>(map.rows) * map.row_stride
+            > map.plane_stride) {
+        return Status::kInvalidStride;
+    }
+    const std::size_t plane =
+        static_cast<std::size_t>(map.rows) * static_cast<std::size_t>(map.cols);
+    if (store_count < 3 * plane) {
+        return Status::kInvalidBuffer;
+    }
+    const std::size_t plane_stride = static_cast<std::size_t>(map.plane_stride);
+    const std::size_t row_stride = static_cast<std::size_t>(map.row_stride);
+    for (int c = 0; c < 3; ++c) {
+        for (int r = 0; r < map.rows; ++r) {
+            for (int col = 0; col < map.cols; ++col) {
+                const float v = map.data[c * plane_stride
+                    + static_cast<std::size_t>(r) * row_stride
+                    + static_cast<std::size_t>(col)];
+                if (!(v == v) || v > 65504.0f || v < -65504.0f) {
+                    return Status::kInvalidValues;
+                }
+            }
+        }
+    }
+    for (int r = 0; r < map.rows; ++r) {
+        for (int col = 0; col < map.cols; ++col) {
+            const std::size_t p = static_cast<std::size_t>(r) * map.cols
+                + static_cast<std::size_t>(col);
+            for (int c = 0; c < 3; ++c) {
+                store[3 * p + static_cast<std::size_t>(c)] = f16(map.data[
+                    c * plane_stride + static_cast<std::size_t>(r) * row_stride
+                    + static_cast<std::size_t>(col)]);
+            }
+        }
+    }
+    return Status::kOk;
+}
+
+// The temporal history consumer: one frame step of the temporal protocol
+// (native-history.hpp's capture contract):
+//
+//   1. `reset_before` applies DLSSNR.Reset first — the carrier drops to its
+//      zero map and counter 0 (the reset frame behaves as if history = 0).
+//   2. The history colour fed to the input lift is ALWAYS the carrier's
+//      view — the zero map at start-up and after a reset, the previous
+//      frame's stored output otherwise. The single-frame stub (the lift's
+//      current-colour copy) is never a temporal-mode feed.
+//   3. The run's padded planar output is stored through the FP16
+//      output-texture rounding (frame_to_history, into the caller's
+//      `store` scratch) and committed bit-exactly as the next frame's
+//      history (temporal_commit advances the frames-since-reset counter).
+//
+// Validation completes before any output write: on any error `out_host`,
+// `store` and the carrier are untouched. The requested reset, when asked,
+// applies immediately and first — a failed step leaves the carrier as the
+// reset left it (zero map, counter 0), which is the caller's requested
+// state, not an output. Allocation-free.
+inline Status temporal_image_evaluation(const std::uint8_t* host,
+                               int host_row_stride, int width, int height,
+                               std::uint8_t* out_host, int out_host_row_stride,
+                               float* image_storage, std::size_t image_count,
+                               const LayerSpec* specs, int count,
+                               NetworkRun run, EvalContext& context,
+                               TemporalCarrier& history, bool reset_before,
+                               float* store, std::size_t store_count) {
+    if (reset_before) {
+        const Status reset_status = temporal_reset(history);
+        if (reset_status != Status::kOk) {
+            return reset_status;
+        }
+    }
+    if (temporal_counter(history) == 0xFFFFFFFFu) {
+        // temporal_commit's exhaustion guard, hoisted to the step's entry:
+        // the frame cannot be committed, so nothing may be written (the
+        // store and out_host would otherwise hold an uncommittable frame).
+        return Status::kInvalidValues;
+    }
+    // The host read-back's failure classes are validated here so the commit
+    // below is the step's only state change after the run (frame_to_u8
+    // cannot fail once this passes: its only remaining classes are the work
+    // extent, pre-validated by frame_from_u8 and the result-geometry check
+    // inside the map evaluation).
+    const Status host_status = io_detail::validate_host(out_host,
+        out_host_row_stride, width, height);
+    if (host_status != Status::kOk) {
+        return host_status;
+    }
+    const Status status = image_map_evaluation(host, host_row_stride, width,
+        height, image_storage, image_count, specs, count, run, context,
+        &history);
+    if (status != Status::kOk) {
+        return status;
+    }
+    const FeatureBatchView& result = run.outputs[count - 1].main;
+    const Status store_status = frame_to_history(result, store, store_count);
+    if (store_status != Status::kOk) {
+        return store_status;
+    }
+    const Status read_status = frame_to_u8(result.data, result.rows,
+        result.cols, out_host, out_host_row_stride, width, height);
+    if (read_status != Status::kOk) {
+        return read_status;  // unreachable: pre-validated above and inside
+    }
+    return temporal_commit(history, FrameView{store, result.rows, result.cols,
+        static_cast<std::ptrdiff_t>(3) * result.cols});
 }
 
 }  // namespace dlss5_nr

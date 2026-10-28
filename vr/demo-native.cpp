@@ -489,20 +489,18 @@ int main(int argc, char** argv) {
     static float prev_padded[3 * kPaddedDim * kPaddedDim];
     bool have_prev = false;
     for (int frame = 0; frame < opt.frames; ++frame) {
-        if (opt.reset_at >= 0 && frame == opt.reset_at) {
-            status = dlss5_nr::temporal_reset(temporal);
-            if (status != Status::kOk) {
-                std::fprintf(stderr, "temporal_reset failed\n");
-                std::free(temporal_map);
-                std::free(arena);
-                std::free(image_storage);
-                return 1;
-            }
+        // The frame's contract inputs: the reset frame behaves as if
+        // history = 0, counter = 0 (temporal_image_evaluation applies
+        // DLSSNR.Reset first, so the reads below report the frame's inputs).
+        const bool reset_now = opt.reset_at >= 0 && frame == opt.reset_at;
+        const bool has_history = reset_now ? false
+            : dlss5_nr::temporal_has_history(temporal);
+        const std::uint32_t counter = reset_now ? 0
+            : dlss5_nr::temporal_counter(temporal);
+        if (reset_now) {
             std::printf("frame %d: RESET (history cleared, counter -> 0)\n",
                         frame);
         }
-        const bool has_history = dlss5_nr::temporal_has_history(temporal);
-        const std::uint32_t counter = dlss5_nr::temporal_counter(temporal);
         // The arena rewinds per frame (the suites' per-run contract); the
         // high-water mark survives the rewind.
         status = dlss5_nr::eval_reset(context);
@@ -514,14 +512,24 @@ int main(int argc, char** argv) {
             std::free(image_storage);
             return 1;
         }
+        // The temporal history consumer performs the whole frame step: the
+        // reset (when the sequence asks for one), the history feed (the
+        // carrier's view — the zero map at start-up and after a reset, never
+        // the lift's single-frame stub), the run, the FP16 output-texture
+        // store and the bit-exact commit. padded_rgb receives the stored
+        // frame (the f16 texture content) for the delta report below.
+        static float padded_rgb[3 * kPaddedDim * kPaddedDim];
+        const std::size_t plane = static_cast<std::size_t>(padding.width)
+            * static_cast<std::size_t>(padding.height);
         const auto t0 = std::chrono::steady_clock::now();
-        status = dlss5_nr::image_evaluation(
+        status = dlss5_nr::temporal_image_evaluation(
             before, 3 * kFrameW, kFrameW, kFrameH, after, 3 * kFrameW,
             image_storage, image_floats, specs, count, run, context,
-            has_history ? &temporal : nullptr);
+            temporal, reset_now, padded_rgb, 3 * plane);
         const auto t1 = std::chrono::steady_clock::now();
         if (status != Status::kOk) {
-            std::fprintf(stderr, "frame %d: image_evaluation failed: %d\n",
+            std::fprintf(stderr,
+                         "frame %d: temporal_image_evaluation failed: %d\n",
                          frame, static_cast<int>(status));
             std::free(temporal_map);
             std::free(arena);
@@ -536,44 +544,6 @@ int main(int argc, char** argv) {
             high_water = used;
         }
 
-        // The carrier maps the plan's padded extent: the commit source is
-        // the run's padded planar [3, rows, cols] output converted to
-        // interleaved RGB (pixel p, channel c: rgb[3p + c] = map[c*plane + p]).
-        static float padded_rgb[3 * kPaddedDim * kPaddedDim];
-        const dlss5_nr::FeatureBatchView& result_map =
-            run.outputs[count - 1].main;
-        const std::size_t plane = static_cast<std::size_t>(padding.width)
-            * static_cast<std::size_t>(padding.height);
-        for (std::size_t p = 0; p < plane; ++p) {
-            for (int c = 0; c < 3; ++c) {
-                padded_rgb[3 * p + c] =
-                    result_map.data[static_cast<std::size_t>(c) * plane + p];
-            }
-        }
-        // The FP16 output-texture store of the hardware route (the carrier
-        // holds FP16 texture content bit-exactly).
-        status = dlss5_demo::round_frame_to_f16(padded_rgb, 3 * plane);
-        if (status != dlss5_nr::Status::kOk) {
-            std::fprintf(stderr, "frame %d: f16 store failed: %d\n", frame,
-                         static_cast<int>(status));
-            std::free(temporal_map);
-            std::free(arena);
-            std::free(image_storage);
-            return 1;
-        }
-        status = dlss5_nr::temporal_commit(
-            temporal,
-            dlss5_nr::FrameView{padded_rgb, padding.height, padding.width,
-                                static_cast<std::ptrdiff_t>(3)
-                                    * padding.width});
-        if (status != Status::kOk) {
-            std::fprintf(stderr, "frame %d: temporal_commit failed: %d\n",
-                         frame, static_cast<int>(status));
-            std::free(temporal_map);
-            std::free(arena);
-            std::free(image_storage);
-            return 1;
-        }
         double delta = -1.0;
         double delta_crop = -1.0;
         if (have_prev) {
