@@ -602,3 +602,19 @@ Next: localise the uninitialised read (phase 2's recorded defect), then
 phase 4 (sustained GPU hardening: soak, device-loss re-verify, arena
 stability at the 345 MiB high-water) and phase 5 (stretch: desktop delivery
 boundary + a Centre Stage branch on a worktree).
+
+## Sustained GPU hardening (29/10/2026, overnight phase 4) — `vr/NATIVE-PERFORMANCE.md`
+
+`vr/test-native-vulkan.sh` gained the G8 soak: six frames with a
+mid-stream reset through the temporal chain on the GPU path — artefacts
+byte-identical to the CPU reference over the whole sequence (the G2/G8
+gates are single-frame), the arena high-water pinned at the measured level
+(90,298,116 floats = 344.4 MiB, under a 350 MiB bound), and peak-RSS
+stability across the run (689,496 -> 689,664 KiB over four extra frames =
+168 KiB growth; a 4 MiB creep bound). Device-loss honesty re-verified
+green (the stress suite's 1,997 checks including the forced-failure
+injection and the live generation counter).
+
+Next: phase 5 (stretch: desktop delivery boundary + a Centre Stage branch
+on a worktree — the tested boundary with a mock host is a valid outcome),
+and the recorded defect (the uninitialised read's localisation).

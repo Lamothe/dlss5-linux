@@ -312,3 +312,17 @@ byte-identical artefacts plus routing evidence (the executor call count
 must strictly increase with the swin rows routed: 61 -> 427 in the gate).
 Speed numbers are real measurements; with synthetic weight presets the
 OUTPUT is arbitrary — no image-quality or vendor-parity claim is made.
+
+## G8 soak re-verification (29/10/2026, overnight phase 4)
+
+`vr/test-native-vulkan.sh` gained a sustained-run soak after the G8 gate:
+six frames with a mid-stream reset (`--reset-at 3`) through the temporal
+chain on the GPU path must match the CPU reference's artefacts over the
+whole sequence (the G2/G8 gates are single-frame), the arena high-water
+must stay at the measured level (the run reports 90,298,116 floats =
+**344.4 MiB**, under the 350 MiB bound — a scratch-sizing regression fails
+loudly), and the peak RSS of the long run must stay within 4 MiB of a
+short run's (measured: 689,496 -> 689,664 KiB = **168 KiB over four extra
+frames** — no resource creep). The device-loss honesty paths re-verified
+green in the same session (stress suite 1,997 checks including the forced
+failures and the live generation counter).

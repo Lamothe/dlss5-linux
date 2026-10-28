@@ -105,4 +105,57 @@ cmp "$temp/cpu/after.ppm" "$temp/gpu-swin/after.ppm"
 cmp "$temp/cpu/before.ppm" "$temp/gpu-swin/before.ppm"
 echo "native-vulkan: G8 batched swin parity OK (artefacts byte-identical)"
 
+# ---- G8 soak: sustained GPU frames — arena stability and no resource creep
+# Six frames with a mid-stream reset through the temporal chain: the
+# artefacts must match the CPU reference over the WHOLE sequence (the G2/G8
+# gates above are single-frame), the G8 arena high-water must stay at the
+# measured level (NATIVE-PERFORMANCE.md G8: ~345 MiB for the 64x72 small
+# plan; the bound is 350 MiB so a scratch-sizing regression fails loudly),
+# and the peak RSS of the long run must stay within a small margin of a
+# short run's (per-frame resource creep would grow it).
+peak_rss_run() {
+    # Runs the command and echoes its peak RSS (KiB) from VmHWM, polled
+    # while it runs (VmHWM is the kernel's own high-water mark).
+    local log="$1"
+    shift
+    "$@" >"$log" 2>&1 &
+    local pid=$!
+    local peak=0
+    while kill -0 "$pid" 2>/dev/null; do
+        local v=""
+        v="$(awk '/VmHWM/ {print $2}' "/proc/$pid/status" 2>/dev/null || true)"
+        if [[ -n "$v" && "$v" -gt "$peak" ]]; then
+            peak="$v"
+        fi
+        sleep 0.25
+    done
+    wait "$pid"
+    echo "$peak"
+}
+mkdir -p "$temp/soak-cpu" "$temp/soak-gpu" "$temp/soak-short"
+"$temp/demo" --out "$temp/soak-cpu" --frames 6 --reset-at 3 --threads 8 \
+    >/dev/null
+rss_short="$(peak_rss_run "$temp/soak-short.log" "$temp/demo" \
+    --out "$temp/soak-short" --frames 2 --reset-at -1 --threads 8 \
+    --gpu "$SPIRV" --gpu-swin)"
+rss_long="$(peak_rss_run "$temp/soak-gpu.log" "$temp/demo" \
+    --out "$temp/soak-gpu" --frames 6 --reset-at 3 --threads 8 \
+    --gpu "$SPIRV" --gpu-swin)"
+cmp "$temp/soak-cpu/after.ppm" "$temp/soak-gpu/after.ppm"
+cmp "$temp/soak-cpu/before.ppm" "$temp/soak-gpu/before.ppm"
+arena_floats="$(sed -n 's/.*arena high-water \([0-9][0-9]*\) floats.*/\1/p' \
+    "$temp/soak-gpu.log" | tail -1)"
+max_arena_floats=$((350 * 1024 * 1024 / 4))
+if [[ -z "$arena_floats" || "$arena_floats" -gt "$max_arena_floats" ]]; then
+    echo "error: arena high-water '${arena_floats}' exceeds 350 MiB" >&2
+    exit 1
+fi
+creep_kib=$((rss_long - rss_short))
+if [[ "$creep_kib" -gt 4096 ]]; then
+    echo "error: resource creep: peak RSS ${rss_short} -> ${rss_long} KiB" \
+        >&2
+    exit 1
+fi
+echo "native-vulkan: G8 soak OK (6-frame parity with reset; arena ${arena_floats} floats; peak RSS ${rss_short} -> ${rss_long} KiB over 4 frames)"
+
 echo "native-vulkan: suite passed"
