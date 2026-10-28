@@ -111,3 +111,12 @@ End-to-end at 8 CPU threads: **16,303 -> 14,242 ms/frame (1.14x)** — the
 GPU row cost is staging-dominated (kernel 223 ms vs decode+staging 509 ms
 per frame), which G3 weight residency removes. G1's per-kernel result
 stands (622x vs cpu-1t on the projection).
+
+## G3 — the split/attention GPU family (30/10/2026)
+
+The SplitProjectionSite (one hoisted executor call per row; CPU post
+chains) covers SplitFfwdProj/SplitProj/SplitProjPool/SplitFinalHead — 44%
+of the frame profile. 86 checks at -O2/-O0; the complete-network CPU-vs-GPU
+gate stays byte-identical with these rows on the GPU. Staging still
+dominates the GPU row cost; G4 residency is next, then the swin family and
+the end-to-end frame numbers.

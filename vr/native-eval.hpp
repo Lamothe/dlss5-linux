@@ -1401,15 +1401,25 @@ inline Status eval_split_projection(EvalContext& ctx, const LayerSpec& spec,
         * static_cast<std::size_t>(x.cols);
     const std::size_t in_count = tokens * static_cast<std::size_t>(spec.c_in);
     const std::size_t out_count = tokens * static_cast<std::size_t>(spec.c_out);
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul != nullptr;
     RowBlocks blocks;
     status = row_begin(ctx, spec, out_count, 0,
-                       in_count + out_count + out_count, blocks);
+                       in_count + out_count + out_count
+                           + (gpu_projection ? out_count : 0),
+                       blocks);
     if (status != Status::kOk) {
         return status;
     }
     float* in_tokens = blocks.work;
     float* residual_tokens = in_tokens + in_count;
     float* out_tokens = residual_tokens + out_count;
+    SplitProjectionSite site;
+    if (gpu_projection) {
+        site.ex = ctx.projection;
+        site.products = out_tokens + out_count;
+        site.products_capacity = out_count;
+    }
     status = eval_planar_to_tokens(x, in_tokens, in_count);
     if (status == Status::kOk) {
         status = eval_planar_to_tokens(residual, residual_tokens, out_count);
@@ -1420,9 +1430,10 @@ inline Status eval_split_projection(EvalContext& ctx, const LayerSpec& spec,
         status = spec.kind == LayerKind::kSplitFfwdProj
             ? split_ffwd_proj(in_tokens, residual_tokens, x.rows, x.cols, weight,
                               out_tokens,
-                              out.stash.attn)   // the pinned's ("attn", block)
+                              out.stash.attn,   // the pinned's ("attn", block)
+                              gpu_projection ? &site : nullptr)
             : split_proj(in_tokens, residual_tokens, x.rows, x.cols, weight,
-                         out_tokens);
+                         out_tokens, gpu_projection ? &site : nullptr);
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out, x.rows,
@@ -1607,9 +1618,13 @@ inline Status eval_split_proj_pool(EvalContext& ctx, const LayerSpec& spec,
     const std::size_t pooled_count = static_cast<std::size_t>(pad_rows)
         * static_cast<std::size_t>(pad_cols)
         * static_cast<std::size_t>(spec.c_out);
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul != nullptr;
     RowBlocks blocks;
     status = row_begin(ctx, spec, out_count, pooled_count,
-                       in_count + out_count + out_count + pooled_count, blocks);
+                       in_count + out_count + out_count + pooled_count
+                           + (gpu_projection ? out_count : 0),
+                       blocks);
     if (status != Status::kOk) {
         return status;
     }
@@ -1617,6 +1632,12 @@ inline Status eval_split_proj_pool(EvalContext& ctx, const LayerSpec& spec,
     float* residual_tokens = in_tokens + in_count;
     float* out_tokens = residual_tokens + out_count;
     float* pooled_tokens = out_tokens + out_count;
+    SplitProjectionSite site;
+    if (gpu_projection) {
+        site.ex = ctx.projection;
+        site.products = pooled_tokens + pooled_count;
+        site.products_capacity = out_count;
+    }
     status = eval_planar_to_tokens(x, in_tokens, in_count);
     if (status == Status::kOk) {
         status = eval_planar_to_tokens(residual, residual_tokens, out_count);
@@ -1628,7 +1649,8 @@ inline Status eval_split_proj_pool(EvalContext& ctx, const LayerSpec& spec,
                                                       spec.c_in}, gain};
         status = split_proj_pool(in_tokens, residual_tokens, x.rows, x.cols,
                                  weight, out_tokens, pooled_tokens, &pooled_rows,
-                                 &pooled_cols);
+                                 &pooled_cols,
+                                 gpu_projection ? &site : nullptr);
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out, x.rows,
@@ -1677,19 +1699,29 @@ inline Status eval_split_final_head(EvalContext& ctx, const LayerSpec& spec,
         * static_cast<std::size_t>(pooled.cols);
     const std::size_t in_count = tokens * static_cast<std::size_t>(spec.c_in);
     const std::size_t out_count = tokens * static_cast<std::size_t>(spec.c_out);
+    const bool gpu_projection =
+        ctx.projection != nullptr && ctx.projection->matmul != nullptr;
     RowBlocks blocks;
-    status = row_begin(ctx, spec, out_count, 0, in_count + out_count, blocks);
+    status = row_begin(ctx, spec, out_count, 0,
+                       in_count + out_count + (gpu_projection ? out_count : 0),
+                       blocks);
     if (status != Status::kOk) {
         return status;
     }
     float* in_tokens = blocks.work;
     float* out_tokens = in_tokens + in_count;
+    SplitProjectionSite site;
+    if (gpu_projection) {
+        site.ex = ctx.projection;
+        site.products = out_tokens + out_count;
+        site.products_capacity = out_count;
+    }
     status = eval_planar_to_tokens(pooled, in_tokens, in_count);
     if (status == Status::kOk) {
         const SplitProjectionWeight weight{E4m3Matrix{codes, spec.c_out,
                                                       spec.c_in}, nullptr};
         status = split_final_head(in_tokens, pooled.rows, pooled.cols, weight,
-                                  out_tokens);
+                                  out_tokens, gpu_projection ? &site : nullptr);
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out,

@@ -22,6 +22,7 @@
 #include "native-parallel.hpp"
 #include "native-vulkan.hpp"
 #include "native-vit.hpp"
+#include "native-split-swin.hpp"
 
 namespace {
 
@@ -436,6 +437,114 @@ int main(int argc, char** argv) {
                   == Status::kOk);
         }
         CHECK(std::memcmp(cpu_qkv, gpu_qkv, sizeof(cpu_qkv)) == 0);
+
+        // Split seams: SplitProjectionSite + split_projection_post must
+        // equal the CPU kernels bit-for-bit (SplitFfwdProj / SplitProj and
+        // SplitFinalHead semantics).
+        {
+            static std::uint8_t scodes[20 * 32];
+            for (int i = 0; i < 20 * 32; ++i) {
+                scodes[i] = static_cast<std::uint8_t>(12 + (i * 5) % 17);
+            }
+            static E4m3Matrix sm;
+            sm.bits = scodes;
+            sm.rows = 20;
+            sm.cols = 32;
+            static float sgain[20];
+            for (int i = 0; i < 20; ++i) {
+                sgain[i] = static_cast<float>((i % 15)) / 8.0f - 1.0f;
+            }
+            static float sinv[26 * 32];
+            static float sskip[26 * 20];
+            for (int i = 0; i < 26 * 32; ++i) {
+                sinv[i] = static_cast<float>((i * 11) % 31) / 8.0f - 2.0f;
+            }
+            for (int i = 0; i < 26 * 20; ++i) {
+                sskip[i] = static_cast<float>((i * 7) % 15) / 8.0f - 1.0f;
+            }
+            const SplitProjectionWeight sw{sm, sgain};
+            static float cpu_proj[26 * 20];
+            static float gpu_proj[26 * 20];
+            static float side_cpu[26 * 20];
+            static float side_gpu[26 * 20];
+            CHECK(split_ffwd_proj(sinv, sskip, 13, 2, sw, cpu_proj, side_cpu)
+                  == Status::kOk);
+            {
+                static float products[26 * 20];
+                SplitProjectionSite ssite;
+                ssite.ex = &ex;
+                ssite.products = products;
+                ssite.products_capacity = 26 * 20;
+                CHECK(split_ffwd_proj(sinv, sskip, 13, 2, sw, gpu_proj,
+                                      side_gpu, &ssite)
+                      == Status::kOk);
+            }
+            CHECK(std::memcmp(cpu_proj, gpu_proj, sizeof(cpu_proj)) == 0);
+            CHECK(std::memcmp(side_cpu, side_gpu, sizeof(side_cpu)) == 0);
+
+            // SplitFinalHead (no residual).
+            const SplitProjectionWeight sw_nr{sm, nullptr};
+            static float cpu_head[26 * 20];
+            static float gpu_head[26 * 20];
+            CHECK(split_final_head(sinv, 13, 2, sw_nr, cpu_head)
+                  == Status::kOk);
+            {
+                static float products[26 * 20];
+                SplitProjectionSite ssite;
+                ssite.ex = &ex;
+                ssite.products = products;
+                ssite.products_capacity = 26 * 20;
+                CHECK(split_final_head(sinv, 13, 2, sw_nr, gpu_head, &ssite)
+                      == Status::kOk);
+            }
+            CHECK(std::memcmp(cpu_head, gpu_head, sizeof(cpu_head)) == 0);
+
+            // SplitProjPool: the pooled scatter must consume the site
+            // products too (the review found the scatter dead once).
+            {
+                static float out_proj_cpu[26 * 20];
+                static float out_proj_gpu[26 * 20];
+                static float pooled_cpu[32 * 20];
+                static float pooled_gpu[32 * 20];
+                int pr = 0;
+                int pc = 0;
+                int pr2 = 0;
+                int pc2 = 0;
+                CHECK(split_proj_pool(sinv, sskip, 13, 2, sw, out_proj_cpu,
+                                      pooled_cpu, &pr, &pc)
+                      == Status::kOk);
+                {
+                    static float products[26 * 20];
+                    SplitProjectionSite ssite;
+                    ssite.ex = &ex;
+                    ssite.products = products;
+                    ssite.products_capacity = 26 * 20;
+                    CHECK(split_proj_pool(sinv, sskip, 13, 2, sw,
+                                          out_proj_gpu, pooled_gpu, &pr2,
+                                          &pc2, &ssite)
+                          == Status::kOk);
+                }
+                CHECK(pr == pr2);
+                CHECK(pc == pc2);
+                CHECK(std::memcmp(out_proj_cpu, out_proj_gpu,
+                                  sizeof(out_proj_cpu))
+                      == 0);
+                CHECK(std::memcmp(pooled_cpu, pooled_gpu,
+                                  sizeof(float) * 32 * 20)
+                      == 0);
+            }
+
+            // The site validates its buffer before use.
+            {
+                SplitProjectionSite bad;
+                bad.ex = &ex;
+                bad.products = nullptr;
+                static float outp[4] = {-777, -777, -777, -777};
+                CHECK(split_final_head(sinv, 13, 2, sw_nr, outp, &bad)
+                      == Status::kInvalidBuffer);
+                CHECK(outp[0] == -777);
+            }
+        }
 
         // The executor rejects out-of-envelope shapes without touching out.
         static float small_out[4] = {-777.0f, -777.0f, -777.0f, -777.0f};

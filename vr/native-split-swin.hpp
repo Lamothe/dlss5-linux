@@ -309,6 +309,32 @@ struct SplitProjectionWeight {
 // `value[t][j] = f16(sum_k x[t][k] * W[j][k] + gain[j] * residual[t][j])`
 // (`_Projection.project`); the layers below store or pool this float16 value.
 // `value` receives tokens * c_out floats.
+// The per-element post chain, shared by the CPU kernel's fused loop and any
+// external raw-projection executor (the Vulkan backend): identical
+// operations in identical order. The split gain takes NO binary16 hop (the
+// pinned's f32 semantics); the result rounds to binary16 once.
+inline float split_projection_post(float product, float gain_value,
+                                   float skip_value, bool has_skip) {
+    float acc = product;
+    if (has_skip) {
+        acc += gain_value * skip_value;
+    }
+    return f16(acc);
+}
+
+// An external raw-projection site for the split rows: when present, the raw
+// projection (out[t][j] = sum_k in[t][k] * w[j][k]) runs through the
+// executor ONCE for all tokens into `products` (caller-owned, [tokens,
+// c_out] floats), and the per-element post chain runs on the CPU —
+// bit-identical to the fused CPU loop when every intermediate is in the
+// fp32 normal range (the Vulkan backend's documented denormal tolerance).
+// Null keeps the CPU kernel (the deterministic reference).
+struct SplitProjectionSite {
+    const ProjectionExecutor* ex = nullptr;
+    float* products = nullptr;
+    std::size_t products_capacity = 0;  // in floats
+};
+
 inline Status split_projection_value(const float* x, const float* residual,
                                      long long tokens, int c_in, int c_out,
                                      const SplitProjectionWeight& w, float* value) {
@@ -338,10 +364,11 @@ inline Status split_projection_value(const float* x, const float* residual,
             for (int k = 0; k < c_in; ++k) {
                 acc += row[k] * e4m3_from_bits(wrow[k]);
             }
-            if (skip != nullptr) {
-                acc += w.gain[j] * skip[j];
-            }
-            dst[j] = f16(acc);
+            dst[j] = split_projection_post(acc, w.gain == nullptr
+                                                   ? 0.0f
+                                                   : w.gain[j],
+                                           skip == nullptr ? 0.0f : skip[j],
+                                           skip != nullptr);
         }
     });
     return Status::kOk;
@@ -351,8 +378,12 @@ inline Status split_projection_value(const float* x, const float* residual,
 // is the block input. `x` is the feed-forward output, `block_input` the
 // unchanged layer input the feed-forward returned alongside it.
 inline Status split_ffwd_proj(const float* x, const float* block_input, int rows,
-                              int cols, const SplitProjectionWeight& w, float* out, float* side_out = nullptr) {
-    if (block_input == nullptr || out == nullptr) {
+                              int cols, const SplitProjectionWeight& w, float* out, float* side_out = nullptr,
+                              const SplitProjectionSite* site = nullptr) {
+    // x/block_input/out are mandatory and the residual pairing rule then
+    // requires gain: both the CPU and site paths reject the same inputs.
+    if (x == nullptr || block_input == nullptr || out == nullptr
+        || w.gain == nullptr) {
         return Status::kNullPointer;
     }
     if (rows < 1 || rows > kSplitMaxExtent || cols < 1 || cols > kSplitMaxExtent) {
@@ -367,10 +398,37 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
     if (c_in < 1 || c_in > kSplitMaxChannels || c_out < 1 || c_out > kSplitMaxChannels) {
         return Status::kInvalidDimensions;
     }
+    if (site != nullptr
+        && (site->ex == nullptr || site->ex->matmul == nullptr
+            || site->products == nullptr
+            || site->products_capacity
+                   < static_cast<std::size_t>(rows) * cols
+                       * static_cast<std::size_t>(c_out))) {
+        return Status::kInvalidBuffer;
+    }
+    if (site != nullptr) {
+        const Status st = site->ex->matmul(site->ex->ctx, x,
+                                           static_cast<int>(tokens), c_in,
+                                           w.weight, site->products);
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
     for (long long t = 0; t < tokens; ++t) {
         float value[kSplitMaxChannels];
-        const Status status = split_projection_value(
-            x + t * c_in, block_input + t * c_out, 1, c_in, c_out, w, value);
+        Status status = Status::kOk;
+        if (site != nullptr) {
+            const float* product_row = site->products + t * c_out;
+            for (int j = 0; j < c_out; ++j) {
+                value[j] = split_projection_post(
+                    product_row[j], w.gain == nullptr ? 0.0f : w.gain[j],
+                    block_input[t * c_out + j], true);
+            }
+        } else {
+            status = split_projection_value(
+                x + t * c_in, block_input + t * c_out, 1, c_in, c_out, w,
+                value);
+        }
         if (status != Status::kOk) {
             return status;
         }
@@ -390,8 +448,9 @@ inline Status split_ffwd_proj(const float* x, const float* block_input, int rows
 // SplitProj: the stored projection of the attention map; the residual is the
 // SplitFfwdProj output.
 inline Status split_proj(const float* x, const float* residual, int rows, int cols,
-                         const SplitProjectionWeight& w, float* out) {
-    return split_ffwd_proj(x, residual, rows, cols, w, out);
+                         const SplitProjectionWeight& w, float* out,
+                         const SplitProjectionSite* site = nullptr) {
+    return split_ffwd_proj(x, residual, rows, cols, w, out, nullptr, site);
 }
 
 // SplitProjPool: `SplitProj` plus the half-resolution pooled copy. The pooled
@@ -405,7 +464,8 @@ inline Status split_proj(const float* x, const float* residual, int rows, int co
 inline Status split_proj_pool(const float* x, const float* residual, int rows,
                               int cols, const SplitProjectionWeight& w,
                               float* out_proj, float* out_pooled,
-                              int* pooled_rows, int* pooled_cols) {
+                              int* pooled_rows, int* pooled_cols,
+                              const SplitProjectionSite* site = nullptr) {
     if (x == nullptr || residual == nullptr || out_proj == nullptr
         || out_pooled == nullptr || pooled_rows == nullptr || pooled_cols == nullptr
         || w.gain == nullptr) {
@@ -423,6 +483,14 @@ inline Status split_proj_pool(const float* x, const float* residual, int rows,
     if (c_in < 1 || c_in > kSplitMaxChannels || c_out < 1 || c_out > kSplitMaxChannels) {
         return Status::kInvalidDimensions;
     }
+    if (site != nullptr
+        && (site->ex == nullptr || site->ex->matmul == nullptr
+            || site->products == nullptr
+            || site->products_capacity
+                   < static_cast<std::size_t>(rows) * cols
+                       * static_cast<std::size_t>(c_out))) {
+        return Status::kInvalidBuffer;
+    }
     const int half_rows = (rows + 1) / 2;
     const int half_cols = (cols + 1) / 2;
     const int pad_rows = (half_rows + 3) & ~3;
@@ -430,6 +498,14 @@ inline Status split_proj_pool(const float* x, const float* residual, int rows,
     const long long pooled_slots = static_cast<long long>(pad_rows) * pad_cols;
     for (long long r = 0; r < pooled_slots * c_out; ++r) {
         out_pooled[r] = 0.0f;
+    }
+    if (site != nullptr) {
+        const Status st = site->ex->matmul(
+            site->ex->ctx, x, static_cast<int>(rows) * cols, w.weight.cols,
+            w.weight, site->products);
+        if (st != Status::kOk) {
+            return st;
+        }
     }
     for (int r = 0; r < half_rows; ++r) {
         for (int c = 0; c < half_cols; ++c) {
@@ -441,8 +517,19 @@ inline Status split_proj_pool(const float* x, const float* residual, int rows,
                     float* slot = block + (br * 2 + bc) * c_out;
                     if (src_r < rows && src_c < cols) {
                         const long long t = static_cast<long long>(src_r) * cols + src_c;
-                        const Status status = split_projection_value(
-                            x + t * c_in, residual + t * c_out, 1, c_in, c_out, w, slot);
+                        Status status = Status::kOk;
+                        if (site != nullptr) {
+                            const float* product_row = site->products + t * c_out;
+                            for (int j = 0; j < c_out; ++j) {
+                                slot[j] = split_projection_post(
+                                    product_row[j], w.gain[j],
+                                    residual[t * c_out + j], true);
+                            }
+                        } else {
+                            status = split_projection_value(
+                                x + t * c_in, residual + t * c_out, 1, c_in,
+                                c_out, w, slot);
+                        }
                         if (status != Status::kOk) {
                             return status;
                         }
@@ -476,13 +563,22 @@ inline Status split_proj_pool(const float* x, const float* residual, int rows,
 // [pooled_rows * pooled_cols][c_in] (the padded pooled map); `out` receives
 // [pooled_rows * pooled_cols][c_out].
 inline Status split_final_head(const float* pooled, int pooled_rows, int pooled_cols,
-                               const SplitProjectionWeight& w, float* out) {
+                               const SplitProjectionWeight& w, float* out,
+                               const SplitProjectionSite* site = nullptr) {
     if (pooled == nullptr || out == nullptr || w.gain != nullptr) {
         return Status::kNullPointer;
     }
     if (pooled_rows < 1 || pooled_rows > kSplitMaxExtent
         || pooled_cols < 1 || pooled_cols > kSplitMaxExtent) {
         return Status::kInvalidDimensions;
+    }
+    if (site != nullptr
+        && (site->ex == nullptr || site->ex->matmul == nullptr
+            || site->products == nullptr
+            || site->products_capacity
+                   < static_cast<std::size_t>(pooled_rows) * pooled_cols
+                       * static_cast<std::size_t>(w.weight.rows))) {
+        return Status::kInvalidBuffer;
     }
     const long long tokens = static_cast<long long>(pooled_rows) * pooled_cols;
     if (tokens > kSplitMaxTokens) {
@@ -493,10 +589,27 @@ inline Status split_final_head(const float* pooled, int pooled_rows, int pooled_
     if (c_in < 1 || c_in > kSplitMaxChannels || c_out < 1 || c_out > kSplitMaxChannels) {
         return Status::kInvalidDimensions;
     }
+    if (site != nullptr) {
+        const Status st = site->ex->matmul(site->ex->ctx, pooled,
+                                           static_cast<int>(tokens), c_in,
+                                           w.weight, site->products);
+        if (st != Status::kOk) {
+            return st;
+        }
+    }
     for (long long t = 0; t < tokens; ++t) {
         float value[kSplitMaxChannels];
-        const Status status = split_projection_value(
-            pooled + t * c_in, nullptr, 1, c_in, c_out, w, value);
+        Status status = Status::kOk;
+        if (site != nullptr) {
+            const float* product_row = site->products + t * c_out;
+            for (int j = 0; j < c_out; ++j) {
+                value[j] = split_projection_post(product_row[j], 0.0f, 0.0f,
+                                                 false);
+            }
+        } else {
+            status = split_projection_value(pooled + t * c_in, nullptr, 1,
+                                            c_in, c_out, w, value);
+        }
         if (status != Status::kOk) {
             return status;
         }

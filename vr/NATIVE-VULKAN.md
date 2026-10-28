@@ -78,6 +78,22 @@ residency removes the decode+upload of the static weights). The remaining
 frame time is the CPU rows (split/swin families) and the pre/post blocks;
 the GPU families grow one slice at a time.
 
+## G3 — the split/attention family (30/10/2026)
+
+The SplitProjectionSite seam routes the split-family raw projections
+(SplitFfwdProj/SplitProj via split_ffwd_proj, SplitProjPool via
+split_proj_pool, SplitFinalHead via split_final_head) through the same
+Vulkan executor with ONE hoisted matmul per row — the per-element post
+chain (`split_projection_post`, `f16(product + gain*skip)`; the split gain
+takes no binary16 hop) stays on the CPU. All CPU-vs-site results are
+bit-identical in the normal-range contract: 86 checks at -O2/-O0 (the
+per-row seams plus the pooled-scatter parity that a review finding caught
+dead once), and the complete-network gate (CPU vs --gpu, byte-identical
+artefacts) now covers the split rows on the GPU as well.
+
+Per-call staging still dominates the GPU row cost (the G4 weight-residency
+slice removes it); the split families were 44% of the frame profile.
+
 ## Provenance
 
 No proprietary code, payload, capture or binary is used or redistributed;

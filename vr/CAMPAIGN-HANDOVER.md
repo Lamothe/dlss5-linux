@@ -260,3 +260,19 @@ contract, the silent-fallback gate, envelope/shader guards, comment
 scoping). Next: G3 weight residency (persistent weight buffers; removes
 the per-call decode+upload), then the split/attention + swin GPU families,
 then the end-to-end GPU frame timings.
+
+## Performance phase G3: the split/attention GPU family (30/10/2026)
+
+Published: SplitProjectionSite (hoisted executor call per row; CPU post
+chains) wired through split_ffwd_proj/split_proj/split_proj_pool/
+split_final_head and the three eval rows; 86 checks at -O2/-OO including
+per-row CPU-vs-site bit-identity and the pooled-scatter parity; the
+complete-network CPU-vs-GPU gate stays byte-identical. Independent review
+raised 5 findings, all fixed — including the MAJOR one where
+split_proj_pool's scatter still took the CPU path despite the hoisted
+matmul (my patch had silently not matched `value` vs `slot` — the silent
+patch-miss class again; the new parity test now catches it), the gain-null
+status divergence, the site/dimension validation order and a null-input
+delegation gap. Next: G4 weight residency (removes the per-call
+decode+upload that dominates the GPU row cost), then the swin GPU family,
+then the end-to-end per-frame GPU timings vs the CPU baselines.
