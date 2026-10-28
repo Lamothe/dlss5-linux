@@ -222,3 +222,21 @@ documented: split_ffwd_proj/split_qkv_attn's status-returning inner calls.
 Next: P3 (SIMD where P2 leaves headroom) then the Vulkan GPU stage per
 family with parity + per-kernel timing (VRAM bandwidth is the expected
 larger win).
+
+## Performance phase G1: Vulkan projection matmul (29/10/2026)
+
+First GPU slice published: `vr/native-vulkan.hpp` + `vr/shaders/matmul_e4m3.comp`
++ tests (57 checks at -O2/-O0) + `vr/NATIVE-VULKAN.md`. CPU-vs-GPU
+bit-identity is contractual for normal-range intermediates (proven at
+dispatch padding boundaries and full size); the denormal-intermediate
+flush-to-zero divergence is measured/driver-dependent and pinned as such
+(the over-claimed "flush(cpu)" contract was a review finding and is now
+corrected). RTX 4070 Ti SUPER, 100x1024x4096: **gpu kernel 2.54 ms vs
+cpu-1t 1,578.8 ms (622x) and cpu-mt 201.1 ms (79x)**; staging transfers
+measured separately. Independent review raised 10 findings, all fixed
+(tolerance contract + counterexample case, FTZ sign/NaN scoping, uint32
+dispatch overflow, 128-wide workgroups within guaranteed limits,
+timestamp-family preference, VkResult propagation, runner leftovers).
+Next: the optional GPU backend in the eval dispatch (CPU reference intact),
+then the split/attention + swin GPU families and end-to-end GPU frame
+timings.

@@ -82,3 +82,21 @@ where the larger win lives.
 The demo exposes this as `--threads N` (default 1 = the reference; 0 =
 hardware concurrency) and `--profile` (the per-kind breakdown at the dispatch
 seam).
+
+## G1 — Vulkan projection matmul (29/10/2026)
+
+The first GPU slice (vr/NATIVE-VULKAN.md): the hot projection family on
+Vulkan compute with `precise` accumulation. CPU-vs-GPU results are
+**bit-identical** on normal-range intermediates (contractual; proven across
+dispatch padding boundaries and a full-size run) with one measured,
+driver-dependent divergence class (denormal intermediates flush to zero;
+both shapes pinned in the test). Measured on the RTX 4070 Ti SUPER at
+100x1024x4096: cpu-1t 1,578.8 ms, cpu-mt 201.1 ms, **gpu kernel 2.54 ms =
+622x vs the single-thread reference** (cold-clock runs measure up to 15 ms;
+both are reported). Staging upload 2.0 ms / download 5.6 ms measured
+separately (a later slice keeps weights resident).
+
+Next GPU slices: wire the projection into the eval dispatch as an optional
+backend (CPU reference intact), then the split/attention and swin families,
+weight residency, and end-to-end per-frame GPU timing against the CPU
+baselines above.
