@@ -74,24 +74,24 @@ void make_source(std::vector<float>& rgb) {
 
 // The downscale that produces the "low-resolution capture": box average
 // of scale x scale blocks (the standard capture model).
-void downscale(const std::vector<float>& hi, std::vector<float>& lo) {
+void downscale(const std::vector<float>& hi, std::vector<float>& lo, int lw,
+               int lh, int s) {
     const std::size_t plane_hi = static_cast<std::size_t>(kW) * kH;
-    const std::size_t plane_lo = static_cast<std::size_t>(kLw) * kLh;
+    const std::size_t plane_lo = static_cast<std::size_t>(lw) * lh;
     lo.assign(3 * plane_lo, 0.0f);
-    const float n = static_cast<float>(kScale * kScale);
+    const float n = static_cast<float>(s * s);
     for (int c = 0; c < 3; ++c) {
-        for (int y = 0; y < kLh; ++y) {
-            for (int x = 0; x < kLw; ++x) {
+        for (int y = 0; y < lh; ++y) {
+            for (int x = 0; x < lw; ++x) {
                 float acc = 0.0f;
-                for (int dy = 0; dy < kScale; ++dy) {
-                    for (int dx = 0; dx < kScale; ++dx) {
+                for (int dy = 0; dy < s; ++dy) {
+                    for (int dx = 0; dx < s; ++dx) {
                         acc += hi[c * plane_hi
-                                  + static_cast<std::size_t>(y * kScale + dy)
-                                        * kW
-                                  + (x * kScale + dx)];
+                                  + static_cast<std::size_t>(y * s + dy) * kW
+                                  + (x * s + dx)];
                     }
                 }
-                lo[c * plane_lo + static_cast<std::size_t>(y) * kLw + x] =
+                lo[c * plane_lo + static_cast<std::size_t>(y) * lw + x] =
                     acc / n;
             }
         }
@@ -99,28 +99,28 @@ void downscale(const std::vector<float>& hi, std::vector<float>& lo) {
 }
 
 // The bilinear baseline (the honest comparison floor).
-void bilinear(const std::vector<float>& lo, std::vector<float>& up) {
-    const std::size_t plane_lo = static_cast<std::size_t>(kLw) * kLh;
+void bilinear(const std::vector<float>& lo, std::vector<float>& up, int lw,
+              int lh, int s) {
+    const std::size_t plane_lo = static_cast<std::size_t>(lw) * lh;
     const std::size_t plane_hi = static_cast<std::size_t>(kW) * kH;
     up.assign(3 * plane_hi, 0.0f);
     for (int c = 0; c < 3; ++c) {
         for (int y = 0; y < kH; ++y) {
-            const float fy = (static_cast<float>(y) + 0.5f) / kScale - 0.5f;
+            const float fy = (static_cast<float>(y) + 0.5f) / s - 0.5f;
             const int y0 = static_cast<int>(std::floor(fy));
             const float ty = fy - static_cast<float>(y0);
             for (int x = 0; x < kW; ++x) {
-                const float fx = (static_cast<float>(x) + 0.5f) / kScale
-                    - 0.5f;
+                const float fx = (static_cast<float>(x) + 0.5f) / s - 0.5f;
                 const int x0 = static_cast<int>(std::floor(fx));
                 const float tx = fx - static_cast<float>(x0);
-                const int xa = x0 < 0 ? 0 : (x0 >= kLw ? kLw - 1 : x0);
-                const int xb = xa + 1 >= kLw ? kLw - 1 : xa + 1;
-                const int ya = y0 < 0 ? 0 : (y0 >= kLh ? kLh - 1 : y0);
-                const int yb = ya + 1 >= kLh ? kLh - 1 : ya + 1;
-                const float v00 = lo[c * plane_lo + ya * kLw + xa];
-                const float v10 = lo[c * plane_lo + ya * kLw + xb];
-                const float v01 = lo[c * plane_lo + yb * kLw + xa];
-                const float v11 = lo[c * plane_lo + yb * kLw + xb];
+                const int xa = x0 < 0 ? 0 : (x0 >= lw ? lw - 1 : x0);
+                const int xb = xa + 1 >= lw ? lw - 1 : xa + 1;
+                const int ya = y0 < 0 ? 0 : (y0 >= lh ? lh - 1 : y0);
+                const int yb = ya + 1 >= lh ? lh - 1 : ya + 1;
+                const float v00 = lo[c * plane_lo + ya * lw + xa];
+                const float v10 = lo[c * plane_lo + ya * lw + xb];
+                const float v01 = lo[c * plane_lo + yb * lw + xa];
+                const float v11 = lo[c * plane_lo + yb * lw + xb];
                 up[c * plane_hi + static_cast<std::size_t>(y) * kW + x] =
                     (1 - ty) * ((1 - tx) * v00 + tx * v10)
                     + ty * ((1 - tx) * v01 + tx * v11);
@@ -200,8 +200,8 @@ int main() {
 
     std::vector<float> source, low, up_bilinear, up_demo;
     make_source(source);
-    downscale(source, low);
-    bilinear(low, up_bilinear);
+    downscale(source, low, kLw, kLh, kScale);
+    bilinear(low, up_bilinear, kLw, kLh, kScale);
 
     DemoUpscaleParams p;
     p.scale = kScale;
@@ -226,6 +226,66 @@ int main() {
         }
     }
 
+    // ---- The demo's default ratio (x2: half-window capture) ----
+    {
+        const int lw2 = kW / 2, lh2 = kH / 2;
+        std::vector<float> low2, up2b, up2d;
+        downscale(source, low2, lw2, lh2, 2);
+        bilinear(low2, up2b, lw2, lh2, 2);
+        up2d.assign(up2b.size(), 0.0f);
+        DemoUpscaleParams p2;
+        p2.scale = 2;
+        CHECK_(demo_upscale(low2.data(), lw2, lh2, up2d.data(), kW, kH, p2));
+        const double pb = psnr(source, up2b), pd = psnr(source, up2d);
+        const double sb = ssim(source, up2b), sd = ssim(source, up2d);
+        std::printf("x2 ratio (the demo default: half-window capture):\n");
+        std::printf("  bilinear baseline: PSNR %.2f dB, SSIM %.4f\n", pb, sb);
+        std::printf("  demonstration transform: PSNR %.2f dB, SSIM %.4f\n",
+                    pd, sd);
+        std::printf("  delta vs baseline: PSNR %+.2f dB, SSIM %+.4f\n",
+                    pd - pb, sd - sb);
+        if (sd - sb < 0.01) {
+            std::printf("  (the SSIM margin is SMALL - stated plainly; the\n"
+                        "   demo's case is the visible A/B, not the number)\n");
+        }
+        if (pd - pb < 0.2) {
+            std::printf("  (the PSNR margin is SMALL at this ratio)\n");
+        }
+        // The measured claim: beats the baseline on BOTH metrics at the
+        // demo's ratio too (strict, matching the x4 block and the doc).
+        CHECK_(pd > pb);
+        CHECK_(sd > sb);
+        // The transform's Bilinear kernel must match the independent
+        // bilinear reference in the INTERIOR (the A/B comparison's
+        // integrity). The two use different edge conventions - the
+        // transform clamps sample positions ("clamped to range", edge
+        // replication), the reference re-spaces the taps inside the
+        // image - which differs only in the 1-pixel border.
+        std::vector<float> up2k(up2b.size(), 0.0f);
+        DemoUpscaleParams pk;
+        pk.scale = 2;
+        pk.kernel = DemoKernel::Bilinear;
+        CHECK_(demo_upscale(low2.data(), lw2, lh2, up2k.data(), kW, kH, pk));
+        double maxdiff = 0.0;
+        for (int c = 0; c < 3; ++c) {
+            for (int y = 2; y < kH - 2; ++y) {
+                for (int x = 2; x < kW - 2; ++x) {
+                    const std::size_t i =
+                        static_cast<std::size_t>(c) * kW * kH
+                        + static_cast<std::size_t>(y) * kW + x;
+                    const double d = std::fabs(up2k[i] - up2b[i]);
+                    if (d > maxdiff) {
+                        maxdiff = d;
+                    }
+                }
+            }
+        }
+        std::printf("  kernel-vs-reference interior max |diff|: %.6f\n",
+                    maxdiff);
+        CHECK_(maxdiff == 0.0);  // bit-exact: the doc claims it, the test pins it
+    }
+
+    // ---- The historical x4 measurement (the recorded claim) ----
     const double psnr_bilinear = psnr(source, up_bilinear);
     const double psnr_demo = psnr(source, up_demo);
     const double ssim_bilinear = ssim(source, up_bilinear);

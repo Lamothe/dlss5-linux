@@ -24,6 +24,7 @@
 struct dlss5_nr_handle {
     // The demonstration-transform mode (0 = off, else the upscale factor).
     int demo_scale = 0;
+    int demo_kernel = DLSS5_NR_DEMO_LANCZOS3;  // dlss5_nr_demo_kernel
     int width = 0;
     int height = 0;
     dlss5_nr::LayerSpec specs[dlss5_nr::kPlanMaxLayers];
@@ -151,6 +152,18 @@ dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
     return DLSS5_NR_OK;
 }
 
+dlss5_nr_status dlss5_nr_set_demo_kernel(dlss5_nr_handle* handle,
+                                         dlss5_nr_demo_kernel kernel) {
+    if (handle == nullptr) {
+        return DLSS5_NR_NULL_POINTER;
+    }
+    if (kernel != DLSS5_NR_DEMO_LANCZOS3 && kernel != DLSS5_NR_DEMO_BILINEAR) {
+        return DLSS5_NR_INVALID_VALUES;
+    }
+    handle->demo_kernel = static_cast<int>(kernel);
+    return DLSS5_NR_OK;
+}
+
 dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
                                             int scale) {
     if (handle == nullptr) {
@@ -207,6 +220,9 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
             }
         }
         demoup::DemoUpscaleParams p;
+        p.kernel = handle->demo_kernel == DLSS5_NR_DEMO_BILINEAR
+                       ? demoup::DemoKernel::Bilinear
+                       : demoup::DemoKernel::Lanczos3;
         p.scale = scale;
         if (!demoup::demo_upscale(in.data(), handle->width, handle->height,
                                   out.data(), ow, oh, p)) {

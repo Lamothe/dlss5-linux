@@ -31,6 +31,13 @@ typedef enum dlss5_nr_status {
     DLSS5_NR_INVALID_BUFFER = 6
 } dlss5_nr_status;
 
+// The demonstration kernel: Lanczos3 (the transform) or the bilinear
+// baseline (the A/B comparison floor, at the SAME capture geometry).
+typedef enum dlss5_nr_demo_kernel {
+    DLSS5_NR_DEMO_LANCZOS3 = 1,
+    DLSS5_NR_DEMO_BILINEAR = 2
+} dlss5_nr_demo_kernel;
+
 typedef struct dlss5_nr_handle dlss5_nr_handle;
 
 // The label a host must display alongside any presented output (UTF-8).
@@ -68,6 +75,12 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
 // is the low-resolution capture. The result must be presented with the
 // label `dlss5_nr_label_for(handle)` returns:
 //   "not DLSS5 - demonstration transform with real weights"
+// The demonstration kernel (A/B): Lanczos3 or the bilinear baseline at
+// the SAME capture geometry. Stored even while the demo mode is off and
+// applied when the mode is next enabled.
+dlss5_nr_status dlss5_nr_set_demo_kernel(dlss5_nr_handle* handle,
+                                         dlss5_nr_demo_kernel kernel);
+
 dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
                                             int scale);
 // The label for THIS handle's current mode (the synthetic pipeline's

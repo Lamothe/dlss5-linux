@@ -36,6 +36,15 @@ namespace demoup {
 //   sigma        the unsharp blur's Gaussian sigma in OUTPUT pixels
 //                (the pass runs on the upscaled buffer)
 //   lanczos_a   the Lanczos window (3.0 = the classic Lanczos3)
+// The demonstration kernels: Lanczos3 (the transform) and the bilinear
+// baseline (the honest A/B comparison floor - also a real, openly
+// documented weight set). The kernel is a parameter of the SAME
+// resampling path, so the A/B comparison is apples to apples.
+enum class DemoKernel : int {
+    Lanczos3 = 0,
+    Bilinear = 1,
+};
+
 struct DemoUpscaleParams {
     int scale = 4;
     // The measured default (the harness's sweep): sharpen = 0 keeps the
@@ -45,6 +54,8 @@ struct DemoUpscaleParams {
     float sharpen = 0.0f;
     float sigma = 1.0f;
     float lanczos_a = 3.0f;
+    // The resampling kernel: Lanczos3 (default) or the bilinear baseline.
+    DemoKernel kernel = DemoKernel::Lanczos3;
 };
 
 // The Lanczos kernel: sinc(x) * sinc(x / a) for |x| < a, else 0.
@@ -60,6 +71,12 @@ inline float lanczos(float x, float a) {
     return s;
 }
 
+// The bilinear (tent) kernel: max(0, 1 - |x|).
+inline float tent(float x) {
+    const float a = x < 0.0f ? -x : x;
+    return a >= 1.0f ? 0.0f : 1.0f - a;
+}
+
 // One-dimensional resampling weights for an output line of `out_count`
 // samples mapping back onto `in_count` inputs at the given scale (the
 // standard (x_out + 0.5) / scale - 0.5 mapping). `taps` = the kernel
@@ -68,7 +85,8 @@ inline float lanczos(float x, float a) {
 // (clamped to range) and `weight[o * taps + k]` its normalised weight.
 inline void resample_weights(int in_count, int out_count, float scale,
                              float a, int taps, std::vector<int>& index,
-                             std::vector<float>& weight) {
+                             std::vector<float>& weight,
+                             DemoKernel kernel = DemoKernel::Lanczos3) {
     index.assign(static_cast<std::size_t>(out_count) * taps, 0);
     weight.assign(static_cast<std::size_t>(out_count) * taps, 0.0f);
     for (int o = 0; o < out_count; ++o) {
@@ -83,7 +101,10 @@ inline void resample_weights(int in_count, int out_count, float scale,
             int src = base + k;
             const int clamped = src < 0 ? 0 : (src >= in_count ? in_count - 1
                                                                : src);
-            const float w = lanczos(center - static_cast<float>(src), a);
+            const float w =
+                kernel == DemoKernel::Bilinear
+                    ? tent(center - static_cast<float>(src))
+                    : lanczos(center - static_cast<float>(src), a);
             index[static_cast<std::size_t>(o) * taps + k] = clamped;
             weight[static_cast<std::size_t>(o) * taps + k] = w;
             total += w;
@@ -129,14 +150,16 @@ inline bool demo_upscale(const float* in_rgb, int lw, int lh, float* out_rgb,
     }
     const std::size_t in_plane = static_cast<std::size_t>(lw) * lh;
     const std::size_t out_plane = static_cast<std::size_t>(ow) * oh;
-    const int taps = 2 * static_cast<int>(std::ceil(p.lanczos_a));
+    // The bilinear kernel has unit support; Lanczos3 honours lanczos_a.
+    const float a = p.kernel == DemoKernel::Bilinear ? 1.0f : p.lanczos_a;
+    const int taps = 2 * static_cast<int>(std::ceil(a));
 
     std::vector<int> ix, iy;
     std::vector<float> wx, wy;
-    resample_weights(lw, ow, static_cast<float>(p.scale), p.lanczos_a, taps,
-                     ix, wx);
-    resample_weights(lh, oh, static_cast<float>(p.scale), p.lanczos_a, taps,
-                     iy, wy);
+    resample_weights(lw, ow, static_cast<float>(p.scale), a, taps,
+                     ix, wx, p.kernel);
+    resample_weights(lh, oh, static_cast<float>(p.scale), a, taps,
+                     iy, wy, p.kernel);
 
     // Per channel: the horizontal pass into a channel-sized intermediate,
     // then the vertical pass into the output plane.

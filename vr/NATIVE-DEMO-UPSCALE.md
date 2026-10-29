@@ -2,7 +2,7 @@
 
 Status: complete (30/10/2026, scope-pivot phase, item 2).
 Tests: `vr/test-native-demo-upscale.sh` (the quality family), the mock
-host family (`vr/test-native-host.sh`, 60 checks incl. the mode).
+host family (`vr/test-native-host.sh`, 69 checks incl. the mode).
 
 ## What this is — and what it is NOT
 
@@ -28,48 +28,75 @@ with DLSS5 quality or vendor parity.
 
 `vr/tests/native-demo-upscale-test.cpp` generates a deterministic
 320x288 source (mixed frequencies, gradients, hard edges, a chart
-region), box-downscales x4 to an 80x72 "capture", and compares the
-transform against the source AND a bilinear baseline (PSNR and the
-standard Wang SSIM):
+region), box-downscales to a "capture", and compares the transform
+against the source AND a bilinear baseline (PSNR and the standard Wang
+SSIM). The DEMO DEFAULT is the x2 ratio (a half-window capture - the
+geometry that actually looks sharp); the x4 numbers are retained as the
+historical record. NOTE (Michael's F9 verdict, 30/10/2026): at the x4
+64x72 capture geometry the margin is real but IMPERCEPTIBLE - every
+upsampler pixelates at that size. The visible case is the x2 A/B:
 
-| method              | PSNR    | SSIM   |
+| method (x2 ratio)   | PSNR    | SSIM   |
 |---------------------|---------|--------|
-| bilinear baseline   | 14.74 dB| 0.7755 |
-| demo transform (x4) | 14.79 dB| 0.7930 |
-| delta               | +0.05 dB| +0.0175|
+| bilinear baseline   | 19.62 dB| 0.9067 |
+| demo transform      | 20.49 dB| 0.9138 |
+| delta               | +0.87 dB| +0.0071|
+
+| method (x4, historical) | PSNR    | SSIM   |
+|-------------------------|---------|--------|
+| bilinear baseline       | 14.74 dB| 0.7755 |
+| demo transform          | 14.79 dB| 0.7930 |
+| delta                   | +0.05 dB| +0.0175|
 
 The default parameter set (sharpen = 0: pure Lanczos3) beats the
-baseline on BOTH metrics — that is the measured basis for "Michael's F9
-visibly improves the image". The harness prints a parameter sweep as the
-tuning record (the sweep shows the unsharp gain trading PSNR for SSIM at the measured points).
+baseline on both metrics at both ratios. The SSIM margin at x2 is small
+(+0.0071) - stated plainly; the demo's case is the visible A/B toggle
+at the same capture geometry, not the number. The A/B kernel
+(`DemoKernel::Bilinear`, exposed through the host ABI's
+`dlss5_nr_set_demo_kernel`) is the SAME resampling path with the
+bilinear tent: the honest comparison floor at the same capture
+geometry, matching the harness's independent bilinear reference
+bit-exactly in the interior (the two edge conventions - clamped sample
+positions vs re-spaced taps - differ only in the 1-pixel border). The
+harness prints a parameter sweep as the tuning record (the sweep shows
+the unsharp gain trading PSNR for SSIM at the measured points).
 
 ## Geometry (documented)
 
-The Centre Stage seam captures 64x72 at the native boundary's demo
-geometry and presents the x4 demonstration result: **64x72 capture ->
-256x288 presented frame** (the window scales the presented frame to the
-viewport). The C ABI's demo mode (`dlss5_nr_set_demo_transform(handle,
-scale)`, scale 2..4) writes scale*width x scale*height output; the
-synthetic pipeline's same-extent contract is unchanged when the mode is
-off. The transform costs milliseconds per frame at this geometry — the
-seam stays frame-by-frame (F9-triggered) by design, and the latency
-figures in the evidence report are real measurements.
+The capture geometry is the seam's knob; the x2 upscale ratio is the
+transform's documented property. The demo default is a **half-window
+capture upscaled x2** (e.g. 640x360 -> 1280x720) - the geometry that
+actually looks sharp (Michael's F9 verdict: at the 64x72 x4 geometry
+the improvement is imperceptible). 64x72 x4 remains available as the
+"extreme" mode (env-flagged in the seam) as the recorded stress case.
+The C ABI's demo mode (`dlss5_nr_set_demo_transform(handle, scale)`,
+scale 2..4) writes scale*width x scale*height output; the synthetic
+pipeline's same-extent contract is unchanged when the mode is off (and
+keeps its own 64x72 capture - the network's 320x320 floor). The
+transform costs milliseconds per frame at this geometry — the seam
+stays frame-by-frame (F9-triggered) by design, and the latency figures
+in the evidence report are real measurements.
 
 ## The interface
 
 - `vr/native-demo-upscale.hpp`: `demo_upscale()` (planar f32 RGB in/out)
   and `demo_upscale_label()` (the mandatory label).
 - `vr/native-host.h`: `dlss5_nr_set_demo_transform(handle, scale)`
-  (0 = off) and `dlss5_nr_label_for(handle)` (the label for the
-  handle's current mode).
-- Centre Stage: `Dlss5Pipeline.SetDemoTransform` / `LabelFor`, the seam
-  enables x4 by default; the presented frame carries the label in-band.
+  (0 = off), `dlss5_nr_set_demo_kernel(handle, kernel)` (the A/B:
+  Lanczos3 or the bilinear baseline at the same capture geometry;
+  stored while off and applied when enabled) and
+  `dlss5_nr_label_for(handle)` (the label for the handle's current
+  mode).
+- Centre Stage: `Dlss5Pipeline.SetDemoTransform` / `SetDemoKernel` /
+  `LabelFor`; the seam enables the demo transform at the x2 half-window
+  capture by default with the A/B toggle (F10) at the same capture;
+  the presented frame carries the label in-band.
 
 ## Honest limits
 
-- The quality claim is exactly the table above: measured on one
-  deterministic generated source at x4 against one baseline. It is not a
-  photographic or perceptual study.
+- The quality claim is exactly the tables above: measured on one
+  deterministic generated source (x2 and x4 ratios) against one
+  baseline. It is not a photographic or perceptual study.
 - The transform is classical resampling (documented weights), not a
   learned upscaler. A genuinely learned open-weights model (e.g. an
   ncnn-distributed Real-ESRGAN variant) would slot behind the same ABI

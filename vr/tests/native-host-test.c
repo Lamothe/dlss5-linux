@@ -233,6 +233,40 @@ int main(void) {
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 2), DLSS5_NR_OK);
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 3), DLSS5_NR_OK);
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 4), DLSS5_NR_OK);
+        /* The A/B kernel setter: validated, and the bilinear kernel
+           produces a DIFFERENT result at the same capture (the visible
+           A/B's basis) with the same scaled extent. */
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_BILINEAR),
+                     DLSS5_NR_OK);
+        {
+            /* The transform is at scale 4 here (the last setter call). */
+            const int owb = w * 4, ohb = h * 4;
+            unsigned char* out_b = (unsigned char*)malloc((size_t)(3 * owb * ohb));
+            unsigned char* out_l = (unsigned char*)malloc((size_t)(3 * owb * ohb));
+            memset(out_b, 0x7F, (size_t)(3 * owb * ohb));
+            memset(out_l, 0x7F, (size_t)(3 * owb * ohb));
+            unsigned char* in_b = (unsigned char*)malloc((size_t)(3 * w * h));
+            int t;
+            for (t = 0; t < 3 * w * h; ++t) {
+                in_b[t] = (unsigned char)(t * 251u + 3u);
+            }
+            CHECK_STATUS(dlss5_nr_evaluate(demo, in_b, 3 * w, out_b, 3 * owb, 1),
+                         DLSS5_NR_OK);
+            CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_LANCZOS3),
+                         DLSS5_NR_OK);
+            CHECK_STATUS(dlss5_nr_evaluate(demo, in_b, 3 * w, out_l, 3 * owb, 1),
+                         DLSS5_NR_OK);
+            CHECK(memcmp(out_b, out_l, (size_t)(3 * owb * ohb)) != 0);
+            free(in_b);
+            free(out_b);
+            free(out_l);
+        }
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_LANCZOS3),
+                     DLSS5_NR_OK);
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, (dlss5_nr_demo_kernel)77),
+                     DLSS5_NR_INVALID_VALUES);
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(NULL, DLSS5_NR_DEMO_LANCZOS3),
+                     DLSS5_NR_NULL_POINTER);
         /* Mode off restores the synthetic pipeline's label. */
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 0), DLSS5_NR_OK);
         CHECK(dlss5_nr_label_for(demo) == dlss5_nr_label());
