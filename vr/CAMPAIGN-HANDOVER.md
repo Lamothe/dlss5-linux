@@ -689,6 +689,8 @@ Michael at the Genesis machine).
 
 ## Centre Stage seam delivered (29/10/2026 delivery phase 2) — `vr/NATIVE-HOST.md`, branch `feature/dlss5-native-seam`
 
+(Delivery commits: this repository `e48275d`; CentreStage
+`feature/dlss5-native-seam` at `6ebfa57`, its main untouched at `80c19c1`.)
 The app branch is delivered on a worktree of `/home/michael/Projects/CentreStage`
 (never its main): `Dlss5Interop.cs` (P/Invoke over the tested C ABI),
 `DlssStage.cs` (64x72 capture framebuffer + nearest presenter),
