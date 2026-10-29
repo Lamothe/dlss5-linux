@@ -69,6 +69,8 @@ bash vr/test-native-demo.sh  # typed CPU synthetic input-to-image demo slice
 bash vr/test-native-parallel.sh  # typed CPU parallel-for layer slice
 bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames; -O2 full soak + the -O0 run at reduced depth, see vr/NATIVE-LIVE.md)
 bash vr/test-native-uninit.sh  # scratch-content independence (the MALLOC_PERTURB_ regression: swin scratch/decode-staging poison, arena poison, perturb sweeps at -O2 and -O0; SLOW ~20 min)
+bash vr/test-native-weights-file.sh  # the data-free weights interface (container round-trip, the rejection matrix, the full-network byte-identity round-trip through the file provider; NATIVE-WEIGHTS-FILE.md)
+bash vr/validate-weights.sh <file>   # the single reference-validation step for a weight file
 bash vr/test-native-host.sh  # stable desktop host boundary (C ABI + C mock host; SLOW: full-network frames at -O2 and -O0, see vr/NATIVE-HOST.md)
 ```
 

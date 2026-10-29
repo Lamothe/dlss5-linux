@@ -22,6 +22,7 @@
 #include <string>
 
 #include "native-demo-support.hpp"
+#include "native-weights-file.hpp"
 #include "native-eval.hpp"
 #include "native-graph-plan.hpp"
 #include "native-history.hpp"
@@ -57,11 +58,19 @@ struct Options {
     int reset_at = 2;  // -1 = never; otherwise reset BEFORE this frame index
     bool profile = false;
     int threads = 1;  // the serial reference; 0 = hardware concurrency
+    // The data-free weights interface (native-weights-file.hpp):
+    // --weights <file.nwf> evaluates through a file-backed provider;
+    // --dump-weights <file.nwf> records this run's exact request set and
+    // bytes into a container (the manifest reference for the resume path).
+    const char* weights_path = nullptr;
+    const char* dump_weights_path = nullptr;
 };
 
 void usage() {
     std::printf(
         "usage: demo-native [options]\n"
+        "  --weights <file.nwf>      evaluate through a weight file\n"
+        "  --dump-weights <file.nwf> record this run's request set\n"
         "  --input PATH       host PPM (P6) image, %dx%d RGB (default: built-in)\n"
         "  --synthetic NAME   built-in image: checker | gradient\n"
         "  --out DIR          output directory (default: demo-output)\n"
@@ -226,6 +235,18 @@ int main(int argc, char** argv) {
                 usage();
                 return 2;
             }
+        } else if (std::strcmp(a, "--weights") == 0) {
+            opt.weights_path = need();
+            if (opt.weights_path == nullptr) {
+                usage();
+                return 2;
+            }
+        } else if (std::strcmp(a, "--dump-weights") == 0) {
+            opt.dump_weights_path = need();
+            if (opt.dump_weights_path == nullptr) {
+                usage();
+                return 2;
+            }
         } else if (std::strcmp(a, "--frames") == 0) {
             const char* v = need();
             if (v == nullptr || !parse_int(v, opt.frames)) {
@@ -344,8 +365,34 @@ int main(int argc, char** argv) {
         return 2;
     }
     store.seed = opt.seed;
-    static dlss5_nr::EvalWeights weights;
-    dlss5_demo::demo_bind_weights(weights, store);
+    // The inner (synthetic) provider and the SERVED provider are distinct
+    // objects: the recorder wraps the inner, so the served struct must not
+    // overwrite the inner it points at.
+    static dlss5_nr::EvalWeights inner_weights;
+    dlss5_demo::demo_bind_weights(inner_weights, store);
+    static dlss5_nr::EvalWeights weights = inner_weights;
+    // The weights-interface modes (data-free; native-weights-file.hpp).
+    static dlss5_nr::weightsfile::Recorder recorder;
+    static dlss5_nr::weightsfile::FileStore file_store;
+    if (opt.dump_weights_path != nullptr) {
+        recorder.length_for = [](const char* name) -> int {
+            int length = 0;
+            return dlss5_demo::demo_detail::wildcard_length(name, length) ? length : -1;
+        };
+        dlss5_nr::weightsfile::recorder_bind(weights, recorder, inner_weights);
+    } else if (opt.weights_path != nullptr) {
+        dlss5_nr::weightsfile::WeightsFileError lerr;
+        if (!dlss5_nr::weightsfile::load_file(opt.weights_path, file_store.file,
+                                              lerr)) {
+            std::fprintf(stderr, "weights file rejected:\n%s\n",
+                         lerr.str().c_str());
+            return 2;
+        }
+        dlss5_nr::weightsfile::file_bind(weights, file_store);
+        std::printf("weights: %s (%zu tensors, %zu payload bytes)\n",
+                    opt.weights_path, file_store.file.records.size(),
+                    file_store.file.payload.size());
+    }
 
     // The padded planar image map the runner pads the host into.
     const std::size_t image_floats = 3u
@@ -604,6 +651,37 @@ int main(int argc, char** argv) {
         total_ms, opt.frames, total_ms / opt.frames, high_water,
         static_cast<double>(high_water) * 4.0 / (1024.0 * 1024.0));
 
+    // The weights-interface end-of-run hooks (data-free; see the Options
+    // comment): the dump is written only after a complete recording run,
+    // and a file provider that could not serve the plan fails the run with
+    // every unserved request named.
+    if (opt.dump_weights_path != nullptr) {
+        dlss5_nr::weightsfile::WeightsFileError serr;
+        if (!recorder.err.ok()
+            || !dlss5_nr::weightsfile::save_file(opt.dump_weights_path,
+                                                 recorder, serr)) {
+            std::fprintf(stderr, "weights dump failed:\n%s\n",
+                         (recorder.err.str() + serr.str()).c_str());
+            return 1;
+        }
+        std::printf("weights dump: %s (%zu tensors, %zu payload bytes)\n",
+                    opt.dump_weights_path, recorder.manifest.size(),
+                    recorder.payload.size());
+    }
+    if (opt.weights_path != nullptr && !file_store.error.ok()) {
+        std::fprintf(stderr, "weights file could not serve the plan:\n%s\n",
+                     file_store.error.str().c_str());
+        return 1;
+    }
+    if (opt.weights_path != nullptr) {
+        dlss5_nr::weightsfile::WeightsFileError verr;
+        dlss5_nr::weightsfile::verify_content(file_store.file, verr);
+        if (!verr.ok()) {
+            std::fprintf(stderr, "weights file content rejected:\n%s\n",
+                         verr.str().c_str());
+            return 1;
+        }
+    }
     // ---- the artefacts ---------------------------------------------------
     const std::string out_dir(opt.out_dir);
     std::error_code dir_error;
