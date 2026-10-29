@@ -58,7 +58,25 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
                                   unsigned char* out_rgb, int out_stride,
                                   int reset);
 
-// The frames-since-reset counter (the capture's schedule).
+// The demonstration-transform mode (NOT DLSS5): a real, openly
+// documented upscaling transform (Lanczos3 + documented parameters -
+// vr/native-demo-upscale.hpp) runs instead of the synthetic network, so a
+// host can present a VISIBLE real improvement through this same ABI.
+// `scale` is the integer upscale factor (2..4); 0 restores the synthetic
+// pipeline. In this mode `dlss5_nr_evaluate` writes scale*width x
+// scale*height output (out_stride must cover 3*scale*width) and the input
+// is the low-resolution capture. The result must be presented with the
+// label `dlss5_nr_label_for(handle)` returns:
+//   "not DLSS5 - demonstration transform with real weights"
+dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
+                                            int scale);
+// The label for THIS handle's current mode (the synthetic pipeline's
+// label, or the demonstration transform's mandatory label).
+const char* dlss5_nr_label_for(const dlss5_nr_handle* handle);
+
+// The frames-since-reset counter (the capture's schedule). The
+// demonstration-transform mode is stateless: the counter stays 0 and the
+// `reset` argument has no effect while the mode is on (documented).
 unsigned int dlss5_nr_counter(const dlss5_nr_handle* handle);
 // The evaluator arena's high-water mark in floats (the host's memory
 // accounting; constant across frames).

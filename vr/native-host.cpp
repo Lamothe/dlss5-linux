@@ -6,7 +6,10 @@
 // (temporal_image_evaluation — reset, history feed, run, store, read-back,
 // commit, counter). The weights are the deterministic synthetic DemoStore
 // records: the transformation is arbitrary and the label says so.
+#include <vector>
+
 #include "native-host.h"
+#include "native-demo-upscale.hpp"
 
 #include <cstdlib>
 #include <new>
@@ -19,6 +22,8 @@
 
 // The opaque handle (the C header's forward declaration).
 struct dlss5_nr_handle {
+    // The demonstration-transform mode (0 = off, else the upscale factor).
+    int demo_scale = 0;
     int width = 0;
     int height = 0;
     dlss5_nr::LayerSpec specs[dlss5_nr::kPlanMaxLayers];
@@ -146,6 +151,25 @@ dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
     return DLSS5_NR_OK;
 }
 
+dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
+                                            int scale) {
+    if (handle == nullptr) {
+        return DLSS5_NR_NULL_POINTER;
+    }
+    if (scale != 0 && (scale < 2 || scale > 4)) {
+        return DLSS5_NR_INVALID_DIMENSIONS;
+    }
+    handle->demo_scale = scale;
+    return DLSS5_NR_OK;
+}
+
+const char* dlss5_nr_label_for(const dlss5_nr_handle* handle) {
+    if (handle != nullptr && handle->demo_scale != 0) {
+        return dlss5_nr::demoup::demo_upscale_label();
+    }
+    return dlss5_nr_label();
+}
+
 dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
                                   const unsigned char* rgb, int row_stride,
                                   unsigned char* out_rgb, int out_stride,
@@ -153,6 +177,54 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
     using namespace dlss5_nr;
     if (handle == nullptr || rgb == nullptr || out_rgb == nullptr) {
         return DLSS5_NR_NULL_POINTER;
+    }
+    if (handle->demo_scale != 0) {
+        // The demonstration transform (NOT DLSS5): the low-resolution
+        // capture in, scale*width x scale*height out. Every value runs
+        // through the documented resampler (vr/native-demo-upscale.hpp);
+        // the result must carry dlss5_nr_label_for(handle).
+        const int scale = handle->demo_scale;
+        const int ow = handle->width * scale;
+        const int oh = handle->height * scale;
+        if (row_stride < 3 * handle->width
+            || out_stride < 3 * ow) {
+            return DLSS5_NR_INVALID_STRIDE;
+        }
+        const std::size_t in_plane = static_cast<std::size_t>(handle->width)
+            * handle->height;
+        const std::size_t out_plane = static_cast<std::size_t>(ow) * oh;
+        std::vector<float> in(3 * in_plane), out(3 * out_plane);
+        for (int c = 0; c < 3; ++c) {
+            for (int y = 0; y < handle->height; ++y) {
+                for (int x = 0; x < handle->width; ++x) {
+                    in[c * in_plane
+                       + static_cast<std::size_t>(y) * handle->width + x] =
+                        static_cast<float>(
+                            rgb[static_cast<std::size_t>(y) * row_stride
+                                + 3 * x + c])
+                        / 255.0f;
+                }
+            }
+        }
+        demoup::DemoUpscaleParams p;
+        p.scale = scale;
+        if (!demoup::demo_upscale(in.data(), handle->width, handle->height,
+                                  out.data(), ow, oh, p)) {
+            return DLSS5_NR_INVALID_VALUES;
+        }
+        for (int c = 0; c < 3; ++c) {
+            for (int y = 0; y < oh; ++y) {
+                for (int x = 0; x < ow; ++x) {
+                    float v = out[c * out_plane
+                                  + static_cast<std::size_t>(y) * ow + x];
+                    v = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                    out_rgb[static_cast<std::size_t>(y) * out_stride
+                            + 3 * x + c] = static_cast<unsigned char>(
+                        v * 255.0f + 0.5f);
+                }
+            }
+        }
+        return DLSS5_NR_OK;
     }
     const int minimum = 3 * handle->width;
     if (row_stride < minimum || out_stride < minimum) {

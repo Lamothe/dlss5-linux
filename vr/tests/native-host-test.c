@@ -175,9 +175,73 @@ int main(void) {
     CHECK_STATUS(dlss5_nr_arena_high_water(handle, NULL),
                  DLSS5_NR_NULL_POINTER);
 
+    /* ---- the demonstration-transform mode (NOT DLSS5) --------------- */
+    {
+        const int w = 64, h = 72, scale = 4;  /* the documented geometry */
+        dlss5_nr_handle* demo = NULL;
+        CHECK_STATUS(dlss5_nr_create(w, h, 2, &demo), DLSS5_NR_OK);
+        /* Mode validation. */
+        CHECK_STATUS(dlss5_nr_set_demo_transform(NULL, scale),
+                     DLSS5_NR_NULL_POINTER);
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 1),
+                     DLSS5_NR_INVALID_DIMENSIONS);
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 5),
+                     DLSS5_NR_INVALID_DIMENSIONS);
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, scale), DLSS5_NR_OK);
+        /* The label must be EXACTLY the mandatory demonstration label. */
+        CHECK(strcmp(dlss5_nr_label_for(demo),
+                     "not DLSS5 - demonstration transform with real weights")
+              == 0);
+        CHECK(dlss5_nr_label_for(NULL) == dlss5_nr_label());
+        /* One frame: the low-res capture in, scale*w x scale*h out. */
+        {
+            const int ow = w * scale, oh = h * scale;
+            static unsigned char in[64 * 72 * 3];
+            static unsigned char out[256 * 288 * 3];
+            static unsigned char small_out[64 * 72 * 3];
+            int i;
+            for (i = 0; i < w * h * 3; ++i) {
+                in[i] = (unsigned char)((i * 17) & 0xFF);
+            }
+            memset(out, 0x7F, sizeof(out));
+            memset(small_out, 0x7F, sizeof(small_out));
+            /* The output stride must cover the scaled width. */
+            CHECK_STATUS(dlss5_nr_evaluate(demo, in, 3 * w, small_out, 3 * w,
+                                           1),
+                         DLSS5_NR_INVALID_STRIDE);
+            CHECK(small_out[0] == 0x7F);  /* untouched on rejection */
+            /* The input stride must cover the capture width. */
+            CHECK_STATUS(dlss5_nr_evaluate(demo, in, 3 * w - 1, out, 3 * ow,
+                                           1),
+                         DLSS5_NR_INVALID_STRIDE);
+            CHECK_STATUS(dlss5_nr_evaluate(demo, in, 3 * w, out, 3 * ow, 1),
+                         DLSS5_NR_OK);
+            /* The result must not be the flat untouched sentinel. */
+            {
+                int changed = 0;
+                int j;
+                for (j = 0; j < ow * oh * 3; ++j) {
+                    if (out[j] != 0x7F) {
+                        changed = 1;
+                        break;
+                    }
+                }
+                CHECK(changed);
+            }
+        }
+        /* Scales 2 and 3 are accepted (the documented range). */
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 2), DLSS5_NR_OK);
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 3), DLSS5_NR_OK);
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 4), DLSS5_NR_OK);
+        /* Mode off restores the synthetic pipeline's label. */
+        CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 0), DLSS5_NR_OK);
+        CHECK(dlss5_nr_label_for(demo) == dlss5_nr_label());
+        dlss5_nr_destroy(demo);
+    }
+
     dlss5_nr_destroy(handle);
     dlss5_nr_destroy(second);
-    dlss5_nr_destroy(NULL);  // idempotent
+    dlss5_nr_destroy(NULL);  /* idempotent */
 
     if (g_failures == 0) {
         printf("native-host: %lld checks passed\n", g_checks);

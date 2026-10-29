@@ -21,13 +21,24 @@ code and no vendor correspondence.
   result itself). A non-zero `reset` runs DLSSNR.Reset first (history = 0,
   counter = 0). **The output buffer is untouched unless the call returns
   `DLSS5_NR_OK`.**
-* `dlss5_nr_counter(handle)` — the frames-since-reset counter.
+* `dlss5_nr_counter(handle)` — the frames-since-reset counter (always 0
+  in the stateless demonstration-transform mode).
 * `dlss5_nr_arena_high_water(handle, &floats)` — the evaluator arena's
   high-water (constant across frames).
 * `dlss5_nr_label()` — the string a host must display alongside any
-  presented output: **"synthetic weights — arbitrary transform"**. The
-  synthetic DemoStore records make the transformation arbitrary; the
-  boundary is honest about it in-band, not just in documentation.
+  presented output of the synthetic pipeline: **"synthetic weights —
+  arbitrary transform"**. The synthetic DemoStore records make the
+  transformation arbitrary; the boundary is honest about it in-band, not
+  just in documentation.
+* `dlss5_nr_set_demo_transform(handle, scale)` — the demonstration-
+  transform mode (NOT DLSS5, vr/NATIVE-DEMO-UPSCALE.md): a real openly
+  documented Lanczos3 upscaler with real weights writes scale*width x
+  scale*height output behind this same ABI. scale 2..4; 0 restores the
+  synthetic pipeline. The mode is stateless: the counter stays 0 and the
+  `reset` argument has no effect while it is on.
+* `dlss5_nr_label_for(handle)` — the label for the handle's current
+  mode; in demo mode the host MUST display exactly "not DLSS5 -
+  demonstration transform with real weights".
 * `dlss5_nr_status_name(status)` — stable status strings for logs and
   overlays. The status values are pinned to `Status`'s exact numbers.
 
@@ -38,7 +49,7 @@ linked against the C++ implementation) — the ABI exactly as a host sees
 it: the label's content, the lifecycle, the counter schedule with resets,
 the pipeline's determinism (two handles over the same stream produce
 bit-identical frames), the arena report's stability, and the rejection
-matrix with the untouched-output contract. 45 checks at -O2 via
+matrix with the untouched-output contract. 60 checks at -O2 via
 `vr/test-native-host.sh`, which also RUNS the full mock at -O0 (reinstated
 with the uninitialised-read investigation's closure, NATIVE-LIVE.md); the
 sanitised build follows the family's missing-runtime rule.
