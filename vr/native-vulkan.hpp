@@ -43,7 +43,9 @@ namespace dlss5_nr {
 // nothing when unarmed. Production behaviour is byte-identical to the
 // previous build when the counters are left at -1.
 struct VulkanFaultPlan {
-    // Fires on the Nth vkMapMemory (0 = the next call).
+    // Fires on the Nth host map/memcpy point (0 = the next call; the
+    // staging buffers are persistently mapped, so the hooks sit at the
+    // host memcpy phases of a run).
     int fail_map_countdown = -1;
     // Fires on the Nth vkQueueSubmit (0 = the next call).
     int fail_submit_countdown = -1;
@@ -72,6 +74,7 @@ struct VulkanDevice {
     std::uint32_t queue_family = 0;
     VkCommandPool pool = VK_NULL_HANDLE;
     float timestamp_period = 0.0f;   // nanoseconds per timestamp tick
+    std::uint32_t timestamp_valid_bits = 0;  // for wrap-safe deltas
     bool has_timestamps = false;
     char name[256] = {};
 };
@@ -120,6 +123,7 @@ inline Status vulkan_open(VulkanDevice& out, bool& opened,
     VkPhysicalDevice chosen = VK_NULL_HANDLE;
     std::uint32_t chosen_family = 0;
     float chosen_period = 0.0f;
+    std::uint32_t chosen_ts_bits = 0;
     bool chosen_ts = false;
     int chosen_score = -1;
     for (std::uint32_t i = 0; i < dev_count; ++i) {
@@ -152,6 +156,7 @@ inline Status vulkan_open(VulkanDevice& out, bool& opened,
                 chosen = devices[i];
                 chosen_family = f;
                 chosen_period = props.limits.timestampPeriod;
+                chosen_ts_bits = fams[f].timestampValidBits;
                 chosen_ts = fams[f].timestampValidBits > 0;
                 std::snprintf(out.name, sizeof(out.name), "%s",
                               props.deviceName);
@@ -166,6 +171,7 @@ inline Status vulkan_open(VulkanDevice& out, bool& opened,
     out.physical = chosen;
     out.queue_family = chosen_family;
     out.timestamp_period = chosen_period;
+    out.timestamp_valid_bits = chosen_ts_bits;
     out.has_timestamps = chosen_ts;
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo qci{};
@@ -201,9 +207,16 @@ struct VulkanBuffer {
     VkBuffer buffer = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     std::size_t size = 0;
+    // Host-visible buffers stay mapped for their whole life (the staging
+    // hot path copies in and out per call; the per-call map/unmap measured
+    // as real cost on the download-bound ceiling, NATIVE-PERFORMANCE.md G9).
+    void* mapped = nullptr;
 };
 
 inline void vulkan_buffer_destroy(const VulkanDevice& d, VulkanBuffer& b) {
+    if (b.mapped != nullptr && b.memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(d.device, b.memory);
+    }
     if (b.buffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(d.device, b.buffer, nullptr);
     }
@@ -262,6 +275,14 @@ inline Status vulkan_buffer_create(const VulkanDevice& d, VulkanBuffer& out,
         return Status::kInvalidBuffer;
     }
     out.size = bytes;
+    if (host_visible) {
+        if (vkMapMemory(d.device, out.memory, 0, bytes, 0, &out.mapped)
+            != VK_SUCCESS) {
+            out.mapped = nullptr;
+            vulkan_buffer_destroy(d, out);
+            return Status::kInvalidBuffer;
+        }
+    }
     return Status::kOk;
 }
 
@@ -271,14 +292,11 @@ inline Status vulkan_upload(const VulkanDevice& d, VulkanBuffer& staging,
     if (data == nullptr || bytes > staging.size || bytes > device_local.size) {
         return Status::kInvalidBuffer;
     }
-    void* mapped = nullptr;
     if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
-        || vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
-               != VK_SUCCESS) {
+        || staging.mapped == nullptr) {
         return Status::kInvalidBuffer;
     }
-    std::memcpy(mapped, data, bytes);
-    vkUnmapMemory(d.device, staging.memory);
+    std::memcpy(staging.mapped, data, bytes);
     VkCommandBufferAllocateInfo cai{};
     cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     cai.commandPool = d.pool;
@@ -292,10 +310,12 @@ inline Status vulkan_upload(const VulkanDevice& d, VulkanBuffer& staging,
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     bool ok = vkBeginCommandBuffer(cmd, &bi) == VK_SUCCESS;
-    VkBufferCopy copy{};
-    copy.size = bytes;
-    vkCmdCopyBuffer(cmd, staging.buffer, device_local.buffer, 1, &copy);
-    ok = ok && vkEndCommandBuffer(cmd) == VK_SUCCESS;
+    if (ok) {
+        VkBufferCopy copy{};
+        copy.size = bytes;
+        vkCmdCopyBuffer(cmd, staging.buffer, device_local.buffer, 1, &copy);
+        ok = vkEndCommandBuffer(cmd) == VK_SUCCESS;
+    }
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
@@ -332,10 +352,12 @@ inline Status vulkan_download(const VulkanDevice& d, VulkanBuffer& staging,
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     bool ok = vkBeginCommandBuffer(cmd, &bi) == VK_SUCCESS;
-    VkBufferCopy copy{};
-    copy.size = bytes;
-    vkCmdCopyBuffer(cmd, device_local.buffer, staging.buffer, 1, &copy);
-    ok = ok && vkEndCommandBuffer(cmd) == VK_SUCCESS;
+    if (ok) {
+        VkBufferCopy copy{};
+        copy.size = bytes;
+        vkCmdCopyBuffer(cmd, device_local.buffer, staging.buffer, 1, &copy);
+        ok = vkEndCommandBuffer(cmd) == VK_SUCCESS;
+    }
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
@@ -353,14 +375,11 @@ inline Status vulkan_download(const VulkanDevice& d, VulkanBuffer& staging,
     if (!ok) {
         return Status::kInvalidBuffer;
     }
-    void* mapped = nullptr;
     if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
-        || vkMapMemory(d.device, staging.memory, 0, bytes, 0, &mapped)
-               != VK_SUCCESS) {
+        || staging.mapped == nullptr) {
         return Status::kInvalidBuffer;
     }
-    std::memcpy(data, mapped, bytes);
-    vkUnmapMemory(d.device, staging.memory);
+    std::memcpy(data, staging.mapped, bytes);
     return Status::kOk;
 }
 
@@ -599,15 +618,6 @@ inline Status vulkan_matmul_create(const VulkanDevice& d, VulkanMatmul& out,
 // Runs out[t][n] = sum_k in[t][k] * w[n][k] with the CPU's exact element
 // order; `in`/`weights` are plain row-major float arrays (the weights are
 // the CPU's exact e4m3 decodes).
-// The resident-weight variant: `w_dev` is a persistent weight buffer (the
-// G5 weight cache) already holding the [rows, c_in] float32 matrix. Only
-// the input stages; the dispatch and download are the same as
-// vulkan_matmul_run, so results are bit-identical between the two.
-inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
-                                         const float* in, int tokens, int c_in,
-                                         const VulkanBuffer& w_dev, int rows,
-                                         float* out,
-                                         VulkanMatmulTiming& timing);
 
 // A small persistent weight cache keyed by the caller's weight pointer (the
 // EvalWeights record source): the FIRST sight of a key uploads its decoded
@@ -837,6 +847,18 @@ inline Status vulkan_weight_cache_ensure(VulkanWeightCache& cache,
 // persistent weight buffer) is bound instead of m.set; only the input
 // stages. The dispatch and download are identical to vulkan_matmul_run, so
 // the results are bit-identical between the two paths.
+// The merged single-round-trip form (the download-bound ceiling attack,
+// NATIVE-PERFORMANCE.md G9): the input upload, the dispatch and the output
+// download are RECORDED into one command buffer with barriers and submitted
+// once, so a run costs ONE queue round trip instead of three. The recorded
+// GPU operations, their order and every byte are unchanged from the
+// three-submit form, so the results are byte-identical; only the queue
+// round trips disappear. The shared staging buffer carries the input
+// (host-written before the submit, read by the copy-in) and then the output
+// (written by the copy-out, host-read after the wait) - the barriers keep
+// the phases ordered. Timing semantics: upload_ms/download_ms are the host
+// memcpy phases (the round trip now sits in kernel_ms), and kernel_ms is
+// replaced by the GPU timestamp span whenever the device has timestamps.
 inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
                                          const float* in, int tokens, int c_in,
                                          const VulkanWeightCache::Entry& e,
@@ -870,13 +892,14 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
         * static_cast<std::size_t>(rows) * sizeof(float);
     {
         const auto t0 = std::chrono::steady_clock::now();
-        const Status st = vulkan_upload(d, m.staging, m.in_dev, in, in_bytes);
+        if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+            || m.staging.mapped == nullptr) {
+            return Status::kInvalidBuffer;
+        }
+        std::memcpy(m.staging.mapped, in, in_bytes);
         const auto t1 = std::chrono::steady_clock::now();
         timing.upload_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
-        if (st != Status::kOk) {
-            return st;
-        }
     }
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkCommandBufferAllocateInfo cai{};
@@ -894,10 +917,23 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
         vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
         return Status::kInvalidBuffer;
     }
+    // copy-in (staging -> in_dev), barrier, dispatch, barrier, copy-out
+    // (out_dev -> staging): exactly the three phases of the old form, in
+    // the same order, without the queue drains between them.
+    VkBufferCopy in_copy{};
+    in_copy.size = in_bytes;
+    vkCmdCopyBuffer(cmd, m.staging.buffer, m.in_dev.buffer, 1, &in_copy);
+    VkMemoryBarrier to_shader{};
+    to_shader.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &to_shader, 0, nullptr, 0, nullptr);
     if (m.queries != VK_NULL_HANDLE) {
         vkCmdResetQueryPool(cmd, m.queries, 0, 2);
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m.queries,
-                            0);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            m.queries, 0);
     }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.layout, 0,
@@ -909,9 +945,19 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
                        sizeof(push), push);
     vkCmdDispatch(cmd, (push[2] + 127) / 128, push[0], 1);
     if (m.queries != VK_NULL_HANDLE) {
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                             m.queries, 1);
     }
+    VkMemoryBarrier to_transfer{};
+    to_transfer.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    to_transfer.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_transfer,
+                         0, nullptr, 0, nullptr);
+    VkBufferCopy out_copy{};
+    out_copy.size = out_bytes;
+    vkCmdCopyBuffer(cmd, m.out_dev.buffer, m.staging.buffer, 1, &out_copy);
     if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
         vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
         return Status::kInvalidBuffer;
@@ -941,25 +987,39 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
                                   stamps, sizeof(stamps[0]),
                                   VK_QUERY_RESULT_64_BIT)
             == VK_SUCCESS) {
-            const double ticks = static_cast<double>(stamps[1] - stamps[0]);
+            // Wrap-safe: mask to the valid bits, then the modular
+            // difference survives a counter wrap between the stamps.
+            const std::uint64_t tmask =
+                d.timestamp_valid_bits == 0 || d.timestamp_valid_bits >= 64
+                ? ~static_cast<std::uint64_t>(0)
+                : (static_cast<std::uint64_t>(1) << d.timestamp_valid_bits)
+                      - 1;
+            const double ticks = static_cast<double>(
+                ((stamps[1] & tmask) - (stamps[0] & tmask)) & tmask);
             timing.kernel_ms = ticks * static_cast<double>(d.timestamp_period)
                 / 1.0e6;
         }
     }
     {
         const auto t0 = std::chrono::steady_clock::now();
-        const Status st = vulkan_download(d, m.staging, m.out_dev, out,
-                                          out_bytes);
+        if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+            || m.staging.mapped == nullptr) {
+            return Status::kInvalidBuffer;
+        }
+        std::memcpy(out, m.staging.mapped, out_bytes);
         const auto t1 = std::chrono::steady_clock::now();
         timing.download_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
-        if (st != Status::kOk) {
-            return st;
-        }
     }
     return Status::kOk;
 }
 
+// The staging-weight fallback (cache miss or capacity grow), merged the
+// same way as the resident path: the weights need their own staging buffer
+// (the shared one carries the input), and every copy plus the dispatch is
+// recorded into one command buffer with one submit. This path is rare (the
+// weight cache serves the steady state); it keeps the exact operations of
+// the old four-round-trip form.
 inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
                                 const float* in, int tokens, int c_in,
                                 const float* weights, int rows, float* out,
@@ -987,19 +1047,30 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
         * static_cast<std::size_t>(c_in) * sizeof(float);
     const std::size_t out_bytes = static_cast<std::size_t>(tokens)
         * static_cast<std::size_t>(rows) * sizeof(float);
-    double ms = 0.0;
+    VulkanBuffer w_staging;
+    const Status wst = vulkan_buffer_create(d, w_staging, w_bytes,
+                                            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                            true);
+    if (wst != Status::kOk) {
+        return wst;
+    }
     {
         const auto t0 = std::chrono::steady_clock::now();
-        Status st = vulkan_upload(d, m.staging, m.in_dev, in, in_bytes);
-        if (st == Status::kOk) {
-            st = vulkan_upload(d, m.staging, m.w_dev, weights, w_bytes);
+        if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+            || m.staging.mapped == nullptr) {
+            vulkan_buffer_destroy(d, w_staging);
+            return Status::kInvalidBuffer;
         }
+        std::memcpy(m.staging.mapped, in, in_bytes);
+        if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+            || w_staging.mapped == nullptr) {
+            vulkan_buffer_destroy(d, w_staging);
+            return Status::kInvalidBuffer;
+        }
+        std::memcpy(w_staging.mapped, weights, w_bytes);
         const auto t1 = std::chrono::steady_clock::now();
-        ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        timing.upload_ms = ms;
-        if (st != Status::kOk) {
-            return st;
-        }
+        timing.upload_ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
     }
     VkCommandBufferAllocateInfo cai{};
     cai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1008,6 +1079,7 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
     cai.commandBufferCount = 1;
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     if (vkAllocateCommandBuffers(d.device, &cai, &cmd) != VK_SUCCESS) {
+        vulkan_buffer_destroy(d, w_staging);
         return Status::kInvalidBuffer;
     }
     VkCommandBufferBeginInfo bi{};
@@ -1015,12 +1087,26 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     if (vkBeginCommandBuffer(cmd, &bi) != VK_SUCCESS) {
         vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+        vulkan_buffer_destroy(d, w_staging);
         return Status::kInvalidBuffer;
     }
+    VkBufferCopy in_copy{};
+    in_copy.size = in_bytes;
+    vkCmdCopyBuffer(cmd, m.staging.buffer, m.in_dev.buffer, 1, &in_copy);
+    VkBufferCopy w_copy{};
+    w_copy.size = w_bytes;
+    vkCmdCopyBuffer(cmd, w_staging.buffer, m.w_dev.buffer, 1, &w_copy);
+    VkMemoryBarrier to_shader{};
+    to_shader.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    to_shader.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    to_shader.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                         &to_shader, 0, nullptr, 0, nullptr);
     if (m.queries != VK_NULL_HANDLE) {
         vkCmdResetQueryPool(cmd, m.queries, 0, 2);
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m.queries,
-                            0);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                            m.queries, 0);
     }
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m.layout, 0,
@@ -1033,11 +1119,22 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
     // 2D dispatch: x = output rows (128-wide), y = tokens.
     vkCmdDispatch(cmd, (push[2] + 127) / 128, push[0], 1);
     if (m.queries != VK_NULL_HANDLE) {
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                             m.queries, 1);
     }
+    VkMemoryBarrier to_transfer{};
+    to_transfer.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    to_transfer.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &to_transfer,
+                         0, nullptr, 0, nullptr);
+    VkBufferCopy out_copy{};
+    out_copy.size = out_bytes;
+    vkCmdCopyBuffer(cmd, m.out_dev.buffer, m.staging.buffer, 1, &out_copy);
     if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
         vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+        vulkan_buffer_destroy(d, w_staging);
         return Status::kInvalidBuffer;
     }
     VkSubmitInfo si{};
@@ -1056,6 +1153,7 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
             std::chrono::duration<double, std::milli>(t1 - t0).count();
     }
     vkFreeCommandBuffers(d.device, d.pool, 1, &cmd);
+    vulkan_buffer_destroy(d, w_staging);
     if (!submitted) {
         return Status::kInvalidBuffer;
     }
@@ -1065,22 +1163,29 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
                                   stamps, sizeof(stamps[0]),
                                   VK_QUERY_RESULT_64_BIT)
             == VK_SUCCESS) {
-            const double ticks =
-                static_cast<double>(stamps[1] - stamps[0]);
+            // Wrap-safe: mask to the valid bits, then the modular
+            // difference survives a counter wrap between the stamps.
+            const std::uint64_t tmask =
+                d.timestamp_valid_bits == 0 || d.timestamp_valid_bits >= 64
+                ? ~static_cast<std::uint64_t>(0)
+                : (static_cast<std::uint64_t>(1) << d.timestamp_valid_bits)
+                      - 1;
+            const double ticks = static_cast<double>(
+                ((stamps[1] & tmask) - (stamps[0] & tmask)) & tmask);
             timing.kernel_ms = ticks * static_cast<double>(d.timestamp_period)
                 / 1.0e6;
         }
     }
     {
         const auto t0 = std::chrono::steady_clock::now();
-        const Status st = vulkan_download(d, m.staging, m.out_dev, out,
-                                          out_bytes);
+        if (vulkan_fault_consume(g_vulkan_faults.fail_map_countdown)
+            || m.staging.mapped == nullptr) {
+            return Status::kInvalidBuffer;
+        }
+        std::memcpy(out, m.staging.mapped, out_bytes);
         const auto t1 = std::chrono::steady_clock::now();
         timing.download_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
-        if (st != Status::kOk) {
-            return st;
-        }
     }
     return Status::kOk;
 }
@@ -1326,9 +1431,11 @@ inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
                                    timing);
         }
     }
-    site->kernel_ms += timing.kernel_ms;
-    site->upload_ms += timing.upload_ms;
-    site->download_ms += timing.download_ms;
+    if (st == Status::kOk) {
+        site->kernel_ms += timing.kernel_ms;
+        site->upload_ms += timing.upload_ms;
+        site->download_ms += timing.download_ms;
+    }
     return st;
 }
 

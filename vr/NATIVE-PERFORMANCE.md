@@ -326,3 +326,58 @@ short run's (measured: 689,496 -> 689,664 KiB = **168 KiB over four extra
 frames** — no resource creep). The device-loss honesty paths re-verified
 green in the same session (stress suite 1,997 checks including the forced
 failures and the live generation counter).
+
+## G9 — the download-bound ceiling: characterised and partially attacked (29/10/2026)
+
+The stretch phase ("attack the download-bound GPU ceiling") started with a
+measurement, and the measurement reframe is the headline. Baseline (the G8
+configuration, 64x72 frame, 8 threads, RTX 4070 Ti SUPER, 2 frames, 854
+executor calls): `gpu totals: kernel 781 ms, staging upload 506 ms,
+download 2,552 ms` — the staging transfers dominate the GPU path, matching
+the G2/G3 records ("staging-dominated").
+
+**Landed (byte-identical, gates green):**
+1. **One queue round trip per call instead of three.** The resident and
+   staging matmul paths previously submitted three command buffers per
+   call (upload copy, dispatch, download copy) with a `vkQueueWaitIdle`
+   after each. They now record the same operations in the SAME ORDER into
+   one command buffer with `vkCmdPipelineBarrier` between the phases, and
+   submit once. The recorded GPU work and every byte are unchanged, so the
+   results are byte-identical — proven by the G1/G2/G8 gates and the
+   six-frame soak, and end-to-end by `cmp`-identical demo artefacts across
+   the old and new forms. Measured: upload 506 -> 9 ms (the round trip was
+   the upload cost), kernel 781 -> 804 ms (now includes the single queue
+   drain; the GPU timestamps still report the true dispatch span).
+2. **Persistent staging mapping.** The staging buffers are mapped once at
+   creation and used directly (`VulkanBuffer::mapped`); the per-call
+   map/unmap is gone (the fault hooks still consume at the same points).
+   Measured effect: download 2,414 -> 2,397 ms — within noise.
+
+**The finding that reframes the attack: the download is BANDWIDTH-bound,
+not latency-bound.** Download stayed at ~2.4 s after the round trips and
+the map/unmap were removed: the cost is the memcpy of the raw f32
+products (`[tokens, c_out]` floats per executor call, ~3 MB per swin
+chunk, larger for the split rows). End-to-end moved 6,604 -> 6,570 ms/
+frame (~0.5%, noise-level) — honest: the landed change removes structural
+overhead (three queue drains per call, per-call map/unmap) but is not the
+ceiling fix.
+
+**The actual fix, bounded honestly (the next slice):** the per-element
+post chain (`split_projection_post` = `f16(product + gain*skip)`) runs on
+the CPU over the downloaded products and immediately rounds to binary16.
+Keeping post-processing resident on the GPU would download HALF the bytes
+(f16 instead of f32, ~2.4 s -> ~1.2 s) and delete the CPU post pass —
+BUT only for rows without a residual: a `has_skip` row needs its
+`[tokens, c_out]` f32 skip uploaded to the GPU, which costs as much as the
+download it saves (the skip cannot be re-derived on the device and cannot
+be quantised without breaking the pinned f32 semantics). So the honest
+bound is: post-residency pays only where `has_skip == false`, and the
+measured split of download volume between skip/no-skip rows determines the
+real win (measure first). "Streamed reductions" as originally framed does
+not apply: nothing in the post chain reduces — every downloaded element is
+consumed exactly once by the CPU post.
+
+Parity contract for the next slice unchanged: the G2/G8 byte-identical
+artefact gates are the arbiter; any f16-resident path must either stay
+bit-identical (the post is exactly `f16(product + gain*skip)` in the same
+order) or declare a measured tolerance the way G1's denormal class does.

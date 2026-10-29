@@ -480,7 +480,7 @@ int main(int argc, char** argv) {
               == Status::kOk);
         CHECK(std::memcmp(out, cpu_out, sizeof out) == 0);
 
-        // Forced map failure (the download's staging map): the resident run
+        // Forced map failure (the first map hook, the input phase): the resident run
         // rejects before writing `out`; the path stays usable.
         std::memcpy(out, sentinel, sizeof out);
         g_vulkan_faults.fail_map_countdown = 0;
@@ -494,7 +494,7 @@ int main(int argc, char** argv) {
         CHECK(std::memcmp(out, cpu_out, sizeof out) == 0);
 
         // The countdown semantics, checked deterministically at the seam
-        // (one run issues several submits — upload/dispatch/download — so
+        // (one run issues one submit — upload/dispatch/download — so
         // run-level "Nth submit" expectations would be fragile; the
         // run-level checks above use countdown = 0, the run's first
         // submit).
