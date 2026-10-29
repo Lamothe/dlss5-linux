@@ -136,8 +136,9 @@ every path and need no stamp.
 ## Plan-level integration suite
 
 `vr/tests/native-eval-int4-network-test.cpp` (374 checks at -O2 via
-`vr/test-native-eval-int4-network.sh`; the -O0 build is compile-only — the
-recorded uninitialised-read gap of NATIVE-LIVE.md) runs the full 76-row
+`vr/test-native-eval-int4-network.sh`; the -O0 build is compile-only by
+runtime bound — the NATIVE-LIVE.md gap this used to cite was retired) runs
+the full 76-row
 small plan (64x72) with synthetic sites bound by policy: a pure-e4m3
 baseline, a fully mixed network (vit FFN contraction + expansion, vit QKV,
 split attn_qkv, the Swin overlay), an alternating-vit-block mixed network,

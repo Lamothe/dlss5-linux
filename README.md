@@ -24,7 +24,7 @@ Published source checks remain bounded: `vk_gltf_renderer` v2026.11 release note
 
 Historical handovers still name the predecessor workspace/remote: for all continuing migration work, use this workspace and its `dlss5-linux` origin instead. Do not follow their old publishing destination.
 
-Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), and [CHECKPOINT.md](CHECKPOINT.md).
+Start with [MILESTONE.md](MILESTONE.md), [vr/CAMPAIGN-HANDOVER.md](vr/CAMPAIGN-HANDOVER.md), [vr/NATIVE-SLOT-REPLAY.md](vr/NATIVE-SLOT-REPLAY.md), [vr/NATIVE-LIVE.md](vr/NATIVE-LIVE.md) (the sustained-input contracts and the retired defect record), and [CHECKPOINT.md](CHECKPOINT.md). The VR/Genesis milestone skeleton is [vr/VR-SEAM-PLAN.md](vr/VR-SEAM-PLAN.md).
 
 The current externally gated evidence path and resumption criteria are summarised in [NATIVE-MIGRATION-GATE.md](vr/NATIVE-MIGRATION-GATE.md). The audit state was documented at `1f03478`, then clarified in `ffd808c`; subsequent read-only local evidence/artifact checks recorded in `a5a52f6` and `37c251a` found no new qualifying input. The earlier bounded 26/10/2026 source-check checkpoint began at `f4eca7a`; the latest maintenance review began at `0e4c8c0`. A subsequent safe CPU-regression check and handover update at `a060431` still found no authorised target ABI/capture scope or producer-to-launch identity evidence. See the campaign handover and migration gate for the current status and qualifications. This is a blocker record for the proprietary evidence path, not a prohibition on the independent synthetic implementation path and not a completion claim.
 
@@ -64,11 +64,12 @@ bash vr/test-native-history.sh  # typed CPU temporal history carrier slice (FP16
 bash vr/test-native-io.sh  # typed CPU host-image boundary + the temporal frame step (reset/feed/run/store/commit)
 bash vr/test-native-int4.sh  # typed CPU int4 mixed-network operand kernels slice
 bash vr/test-native-eval-int4.sh  # typed CPU int4 mixed-network evaluator slice
-bash vr/test-native-eval-int4-network.sh  # int4 mixed-network PLAN integration (routing policy, side-channel routing, rejection, temporal; SLOW ~2 min; -O0 build compile-only)
+bash vr/test-native-eval-int4-network.sh  # int4 mixed-network PLAN integration (routing policy, side-channel routing, rejection, temporal; SLOW ~2 min; -O0 build compile-only by runtime bound)
 bash vr/test-native-demo.sh  # typed CPU synthetic input-to-image demo slice
 bash vr/test-native-parallel.sh  # typed CPU parallel-for layer slice
-bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames, ~90 s at -O2; -O0 build compile-only, see vr/NATIVE-LIVE.md)
-bash vr/test-native-host.sh  # stable desktop host boundary (C ABI + C mock host; SLOW: full-network frames; -O0 build compile-only, see vr/NATIVE-HOST.md)
+bash vr/test-native-live.sh  # sustained live-input suite (SLOW: full-network frames; -O2 full soak + the -O0 run at reduced depth, see vr/NATIVE-LIVE.md)
+bash vr/test-native-uninit.sh  # scratch-content independence (the MALLOC_PERTURB_ regression: swin scratch/decode-staging poison, arena poison, perturb sweeps at -O2 and -O0; SLOW ~20 min)
+bash vr/test-native-host.sh  # stable desktop host boundary (C ABI + C mock host; SLOW: full-network frames at -O2 and -O0, see vr/NATIVE-HOST.md)
 ```
 
 Keep proprietary payloads out of Git. Native replay currently uses NVIDIA's proprietary kernels/weights; it is not a clean-room replacement or a redistribution licence. Preserve the existing containment, rights and evidence qualifications. Never run probes concurrently across the two workspaces: their local locks are now independent.

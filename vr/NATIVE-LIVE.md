@@ -52,18 +52,86 @@ Per frame the harness also asserts:
 | RSS growth | 76-276 KiB over 9 frames |
 
 Speed numbers are real measurements of the synthetic-weight pipeline; the
-output content is an arbitrary transform — no image-quality claim.
+output content is an arbitrary transform — no image-quality claim. A fresh
+verification run on 29/10/2026 (host under concurrent load) measured
+8,921 ms mean frame at the same level.
 
 ## Suite levels
 
 * `-O2`, 8 threads, depth 3 (three 3-frame sequences): the full soak; 87
   checks.
-* `-O0`: the build is verified to compile (build coverage at the second
-  level); its run is a **recorded gap** — see the open defect below.
+* `-O0`, 8 threads, depth 2 (six frames across the three sequences): **runs
+  the assertion classes** (reinstated 29/10/2026 with the uninitialised-read
+  investigation's closure below; it was compile-only while that record was
+  open). Measured 36-48 s/frame under load.
 * sanitised: skipped on this toolchain (missing sanitizer runtime), the
   recorded environment gap shared by the family's suites.
 
-## Open defect: uninitialised-memory read (performance-only, -O0 only)
+## The uninitialised-read investigation (closed 29/10/2026 — not reproduced; the runner's execution cap was the confound; content independence pinned by regression)
+
+The record this closes (kept verbatim below) described an intermittent stall
+on the second network run of long unoptimised runs, attributed to an
+uninitialised heap read proven by `MALLOC_PERTURB_=165` flipping a clean
+4-run probe into stalling on run 2. The 29/10/2026 localisation could not
+reproduce any part of the stall and identified the confound that produces
+exactly the recorded signatures:
+
+* **The workspace's command runner kills foreground commands at ~120 s**
+  (recorded in `.tools/job-cap-ticks.log`: a 10-second-tick heartbeat
+  reaching tick 13 — 120 s of wall time — then killed mid-tick; a 100 s
+  sleep survives, anything longer dies). An -O0 network frame is 36-94 s
+  (8-1 threads), so any -O0 probe of several runs straddles the cap and is
+  cut mid-run — which is the recorded "stall on run 2" shape, with the
+  completed run's hash unchanged. The overnight investigation's own logs
+  show the same shape (`.tools/stall-a1.log` ends mid-frame-3,
+  `.tools/watch2.log` ends at ~120 s without its footer). -O2 runs are
+  ~8 s/frame and never reach the cap ("O2 immune even under
+  MALLOC_PERTURB_"). The original probe's per-run cost was not recorded,
+  so the exact cap boundary of that observation cannot be reconstructed;
+  what is established is that every long-run failure observed in this
+  workspace — including this investigation's own first attempts — ended at
+  ~119-125 s of work. Detached execution (`setsid nohup`) escapes the cap;
+  every observation below is a detached run.
+* **`MALLOC_PERTURB_` sweeps at -O0**: seven runs (six at 6 frames, one at
+  3 frames) across fills {165, 255, 1, 127, 128, 254} and 1 thread —
+  **39 frame hashes identical**, no stall, uniform per-frame timings.
+* **Arena poisoning at -O0/-O2** (the whole 512 MiB arena painted before
+  every frame with NaN `0xFF`, denormal `0x01`, `0xA5`, and per-frame
+  pseudorandom bytes): frame hashes **bit-identical** to the unpainted
+  baseline. This probes what `MALLOC_PERTURB_` cannot: the fresh-malloc
+  fill bytes always pair to finite floats, never NaN.
+* **ASan+UBSan at -O0, 4 full frames: clean** (no heap overflow, no UB).
+  **valgrind memcheck `--track-origins=yes`, 2 full -O0 frames** (the
+  fresh-run and the leftover-state run; `.tools/job-memcheck.log`): both
+  frames `DONE status=0` with hashes identical to the clean runs, heap
+  balanced (268,241 allocs/frees), **ERROR SUMMARY: 0 errors from 0
+  contexts**.
+* **Live suite at -O0: 87 checks pass**, unperturbed and under
+  `MALLOC_PERTURB_=165`, with bounded RSS in both.
+* **The recorded candidates are pinned directly** by
+  `vr/tests/native-uninit-test.cpp`: the swin scratch partitions and the
+  per-row decode staging, poisoned with 5 poisons (denormal, the perturb
+  fill byte, 0xA5, NaN, random) against a zeroed baseline (plus the
+  zeroed-control repaint), produce **bit-identical** `swin_core`,
+  `swin_mlp` and `swin_attention` outputs for all four head families
+  (246,186 checks at -O2), plus a full-network arena sweep and a literal
+  cross-process `MALLOC_PERTURB_` sweep in `vr/test-native-uninit.sh`
+  (every perturb fill prints identical output at -O2 for
+  1/127/128/165/254/255 and at -O0 for 165/255).
+
+Conclusion: no uninitialised read with any observable output, control-flow
+or timing effect exists in the exercised paths; the swin scratch partitions
+and the decode staging are write-before-read before any use. The recorded
+stall did not reproduce in roughly ninety evaluated -O0 frames across 8
+heap-fill configurations and 2 thread counts. A hypothetical read whose
+garbage affects only the timing of dead computation cannot be excluded by
+an output regression, but nothing in the timing data supports one (frame
+times were uniform across all fills) and no such read was found by memcheck.
+The defect record is retired into this investigation;
+`vr/test-native-uninit.sh` (the MALLOC_PERTURB_ regression) and the
+reinstated -O0 runs are the standing guard.
+
+### The original record (historical, 28/10/2026)
 
 During development an intermittent stall appeared on the *second* network
 run of long unoptimised runs. The investigation established:

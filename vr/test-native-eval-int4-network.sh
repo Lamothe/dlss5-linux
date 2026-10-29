@@ -18,11 +18,12 @@ COMMON=(-std=c++20 -pthread -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr"
 
 "${CXX}" "${COMMON[@]}" -O2 "$SRC" -o "$temp/test-o2"
 "$temp/test-o2"
-# The -O0 build is verified to compile (build coverage at the second level),
-# but its run is a recorded gap — the open uninitialised-memory read under
-# -O0 codegen (NATIVE-LIVE.md's evidence) makes full-network runs
-# intermittently stall there. The -O0 arithmetic contract is pinned by the
-# eval/int4 suites, which run at both levels.
+# The -O0 build is compile-only by RUNTIME bound (this full-plan integration
+# suite runs many network passes; -O0 costs ~20 min). The defect-based
+# reason that used to stand here was retired with the uninitialised-read
+# investigation (NATIVE-LIVE.md): -O0 full-network runs are reinstated in
+# the live/host/uninit suites and complete with the same contracts. The
+# -O0 arithmetic contract is pinned by the eval/int4 suites (both levels).
 "${CXX}" "${COMMON[@]}" -O0 "$SRC" -o "$temp/test-o0"
 
 sanitised=0

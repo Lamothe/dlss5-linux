@@ -8,8 +8,9 @@
  * determinism of the synthetic pipeline, the arena report, and the
  * rejection matrix with the output buffer untouched on failure.
  *
- * Built by vr/test-native-host.sh at -O2 (the full mock) and compile-only
- * at -O0 (the recorded NATIVE-LIVE.md gap). The synthetic weights make the
+ * Built by vr/test-native-host.sh at -O2 (the full mock) and at -O0 (the
+ * recorded codegen level; its run was reinstated once the uninitialised-read
+ * investigation was pinned, NATIVE-LIVE.md). The synthetic weights make the
  * transformation arbitrary; the label must say so.
  */
 #include <stdio.h>

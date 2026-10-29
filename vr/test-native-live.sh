@@ -4,14 +4,14 @@
 # sustained-run contracts (determinism, input responsiveness, balanced
 # allocations, constant arena high-water, bounded RSS) and a measured
 # throughput report. This is the slow suite by design (full-network frames at
-# the plan's 320x320 working floor, ~8.4 s/frame at -O2 and >100 s/frame at
+# the plan's 320x320 working floor, ~8.4 s/frame at -O2 and ~36 s/frame at
 # -O0 on the dev host): the full soak runs at -O2 (three 3-frame sequences);
-# any sanitised build runs the same assertion classes at reduced sequence
-# depth. The -O0 build is compile-only: its run is a recorded gap (the open
-# uninitialised-memory read under -O0 codegen drives intermittent stalls
-# there — NATIVE-LIVE.md carries the evidence). Cross-optimisation
+# the -O0 level runs the same assertion classes at reduced depth (the
+# recorded-codegen level, reinstated now that the uninitialised-read
+# investigation is pinned by vr/test-native-uninit.sh and NATIVE-LIVE.md);
+# any sanitised build runs at reduced depth too. Cross-optimisation
 # bit-identity is pinned by the eval/io suites' known answers, not
-# re-measured here).
+# re-measured here.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 CXX="${CXX:-c++}"
@@ -22,14 +22,15 @@ COMMON=(-std=c++20 -pthread -Wall -Wextra -Werror -ffp-contract=off -I"$ROOT/vr"
 
 "${CXX}" "${COMMON[@]}" -O2 "$SRC" -o "$temp/test-o2"
 DLSS5_LIVE_DEPTH=3 DLSS5_LIVE_THREADS=8 "$temp/test-o2"
-# The -O0 build is verified to compile (build coverage at the second level),
-# but its RUN is a recorded gap: an open uninitialised-memory read (proven by
-# MALLOC_PERTURB_ flipping run behaviour) drives intermittent swin-row stalls
-# under -O0 codegen at any thread count. It is performance-only (output hashes
-# stay identical) and does not reproduce at -O2, even with MALLOC_PERTURB_
-# set. The -O0 arithmetic contract is pinned by the eval/io/plan suites (they
-# run at both levels); NATIVE-LIVE.md carries the full investigation evidence.
+# The -O0 level RUNS the assertion classes at depth 2 (six frames across the
+# three sequences). The earlier compile-only gap recorded here was closed by
+# the scratch-content independence suite (vr/test-native-uninit.sh): its
+# arena/scratch poison runs are output-identical at -O0 and its
+# MALLOC_PERTURB_ sweep covers both levels (the full value set at -O2, the
+# recorded 165/255 at -O0), and the sustained -O0 run completes with the
+# same contracts (NATIVE-LIVE.md carries the evidence).
 "${CXX}" "${COMMON[@]}" -O0 "$SRC" -o "$temp/test-o0"
+DLSS5_LIVE_DEPTH=2 DLSS5_LIVE_THREADS=8 "$temp/test-o0"
 
 sanitised=0
 for flags in "-fsanitize=address,undefined" "-fsanitize=undefined"; do

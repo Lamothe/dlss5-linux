@@ -641,3 +641,78 @@ main) is the recorded next step for a session with display access.
 
 Next: the recorded defect (the uninitialised read's localisation with its
 MALLOC_PERTURB_ regression), then the Centre Stage worktree branch.
+
+## Hygiene: the uninitialised-read investigation closed + regression (29/10/2026 delivery phase 1) — `vr/NATIVE-LIVE.md`
+
+The recorded defect did not reproduce and the confound that produced its
+signatures was identified: the workspace's command runner kills foreground
+commands at ~120 s (recorded in `.tools/job-cap-ticks.log`, a 10-tick
+heartbeat cut at tick 13 = 120 s), and an -O0 network frame is 36-94 s —
+so "clean 4-run probe vs perturbed probe stalls on run 2 with run 1's hash
+unchanged" is exactly the cap's kill signature, as is "-O2 immune" (8
+s/frame, never near the cap). The original probe's per-run cost was not
+recorded, so the exact boundary cannot be reconstructed; every long-run
+failure observed in this workspace ended at ~119-125 s of work. Everything
+below is from detached runs.
+
+The localisation evidence: `MALLOC_PERTURB_` sweeps at -O0 (seven runs —
+six at 6 frames, one at 3; 6 fills; 1 and 8 threads) — 39 frame hashes
+identical, no stall; arena poisoning with NaN/denormal/random (what glibc's
+fresh-malloc fills cannot express) — bit-identical hashes; ASan+UBSan -O0
+4 frames clean; valgrind memcheck `--track-origins=yes` two full frames
+(fresh-run and leftover-state) — both DONE with the clean hashes and
+`ERROR SUMMARY: 0 errors from 0 contexts`; the live suite at -O0 passes 87
+checks unperturbed and under `MALLOC_PERTURB_=165`; and the recorded
+candidates themselves (the swin scratch partitions + per-row decode
+staging) poisoned with 5 poisons against a zeroed baseline produce
+bit-identical `swin_core`/`swin_mlp`/`swin_attention` outputs for all four
+head families. No uninitialised read with any observable effect exists in
+the exercised paths; the record is retired in `NATIVE-LIVE.md` (historical
+text kept).
+
+The standing guard: `vr/test-native-uninit.sh`
+(`vr/tests/native-uninit-test.cpp`, 246,186 checks) — the MALLOC_PERTURB_
+regression: kernel-level scratch/decode-staging poisoning, a full-network
+arena sweep (painted run + leftover run), and a cross-process
+`MALLOC_PERTURB_` sweep asserting identical output (the full value set at
+-O2, the recorded 165/255 at -O0). The live suite's -O0
+run is REINSTATED (depth 2) and the mock host's -O0 run reinstated; the
+int4-network suite keeps its -O0 build compile-only as a runtime bound
+(the defect-based reason retired).
+
+Next: the Centre Stage worktree branch (in flight: `feature/dlss5-native-seam`
+on a worktree of `/home/michael/Projects/CentreStage`, the C ABI wired by
+P/Invoke with on-demand frame-by-frame processing and the in-band label),
+then the VR/Genesis seam integration plan (stretch, milestones only —
+delivered as `vr/VR-SEAM-PLAN.md`; the headset session happens with
+Michael at the Genesis machine).
+
+## Centre Stage seam delivered (29/10/2026 delivery phase 2) — `vr/NATIVE-HOST.md`, branch `feature/dlss5-native-seam`
+
+The app branch is delivered on a worktree of `/home/michael/Projects/CentreStage`
+(never its main): `Dlss5Interop.cs` (P/Invoke over the tested C ABI),
+`DlssStage.cs` (64x72 capture framebuffer + nearest presenter),
+`DlssSeam.cs` (Idle/Processing/Presenting/Failed state machine; evaluate on
+a worker thread while the live view keeps rendering; F9 = one frame,
+camera input unpins; `--dlss-demo outdir` drives the unattended evidence
+run), `linux/build-native-host.sh` (builds `libdlss5_nr_host.so` from this
+repository; artefact gitignored). The in-band label ("synthetic weights —
+arbitrary transform") is displayed with every presented frame and captured
+in the evidence; the measured latency is worker wall-clock around the
+native call (8.7 s/frame; an earlier 60 s reading was traced to the
+idle-blanked compositor's frame throttling, not the evaluator — the
+latency is now measured on the worker and the presentation delay reported
+separately). The app's own workflow is unbroken (56 core tests;
+`--capture` regression verified).
+
+Unattended evidence (screenshots + report, kept out of Git):
+`/home/michael/Projects/CentreStage-dlss5/.evidence/dlss-demo-final2/`
+(live.png, processing.png — the live view renders full-size during the
+in-flight frame, processed.png — the presented synthetic output with the
+label in-band, report.txt, run.log). The synthetic output rails G->0 and
+B->255 while R tracks input structure — identical to this repository's own
+demo artefacts (`.tools/asan-out/after.ppm`), i.e. the arbitrary transform
+presented faithfully, not an integration artefact.
+
+Next: interactive F9/session with Michael when convenient; the VR/Genesis
+plan milestones (Milestone 1 needs the Genesis checkout on platinum).

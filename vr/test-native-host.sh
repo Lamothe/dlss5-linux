@@ -30,11 +30,13 @@ build_pair() {
 
 build_pair "$temp/test-o2" -O2
 "$temp/test-o2"
-# The -O0 build is verified to compile (build coverage at the second level),
-# but its run is a recorded gap — the open uninitialised-memory read under
-# -O0 codegen (NATIVE-LIVE.md's evidence) makes full-network runs
-# intermittently stall there.
+# The -O0 level runs the full mock too (it was compile-only while the
+# recorded uninitialised-read gap was open; NATIVE-LIVE.md now pins that
+# investigation and vr/test-native-uninit.sh the content-independence
+# regression, so the run is reinstated). Seven full-network evaluations at
+# -O0 (three frames over two handles plus the reset frame).
 build_pair "$temp/test-o0" -O0
+"$temp/test-o0"
 
 sanitised=0
 for flags in "-fsanitize=address,undefined" "-fsanitize=undefined"; do

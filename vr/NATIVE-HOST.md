@@ -39,9 +39,9 @@ it: the label's content, the lifecycle, the counter schedule with resets,
 the pipeline's determinism (two handles over the same stream produce
 bit-identical frames), the arena report's stability, and the rejection
 matrix with the untouched-output contract. 45 checks at -O2 via
-`vr/test-native-host.sh`; the -O0 build is compile-only (the recorded
-NATIVE-LIVE.md gap) and the sanitised build follows the family's
-missing-runtime rule.
+`vr/test-native-host.sh`, which also RUNS the full mock at -O0 (reinstated
+with the uninitialised-read investigation's closure, NATIVE-LIVE.md); the
+sanitised build follows the family's missing-runtime rule.
 
 ## Centre Stage interop (investigated; the tested boundary is the delivery)
 
@@ -62,6 +62,19 @@ runs), and the brief's stated valid outcome is the tested boundary with a
 mock host when interop is not clean end to end. The boundary + mock host
 is that outcome; the app branch remains the recorded next step for a
 session with display access.
+
+**Update (29/10/2026):** the app branch is delivered on a worktree of
+`/home/michael/Projects/CentreStage` (`feature/dlss5-native-seam`, never
+its main): P/Invoke over this ABI (`Dlss5Interop.cs`), a 64x72 capture
+framebuffer + presenter (`DlssStage.cs`) and the on-demand frame-by-frame
+workflow (`DlssSeam.cs`, F9 in the viewer + `--dlss-demo` for unattended
+evidence runs with the label in-band). Measured evaluate cost through the
+app: 8.7 s/frame (worker wall clock; an earlier 60 s reading was an
+idle-blanked compositor cadence artefact, not the evaluator — the latency
+is now measured around the native call). The
+branch keeps the app's own workflow unbroken (56 core tests pass;
+`--capture` unchanged). Evidence paths are recorded in the campaign
+handover.
 
 ## Provenance
 

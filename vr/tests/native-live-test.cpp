@@ -74,10 +74,9 @@ std::atomic<long long> g_live{0};
 constexpr int kFrameW = 64;
 constexpr int kFrameH = 72;
 constexpr int kMaxSeqFrames = 8;
-// The sequence depth (frames per sequence). The full soak runs at -O2; any
-// sanitised build runs the same assertion classes at reduced depth
-// (DLSS5_LIVE_DEPTH). The -O0 build is compile-only: its run is a recorded
-// gap (the open uninitialised-memory read under -O0 codegen, NATIVE-LIVE.md).
+// The sequence depth (frames per sequence). The full soak runs at -O2; the
+// -O0 level (the recorded codegen class, reinstated) and any sanitised build
+// run the same assertion classes at reduced depth (DLSS5_LIVE_DEPTH).
 // Cross-optimisation bit-identity is pinned by the eval/io suites' known
 // answers, not re-measured here.
 int g_depth = 3;
