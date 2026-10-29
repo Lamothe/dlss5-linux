@@ -66,7 +66,7 @@ int main(void) {
         CHECK_STATUS(dlss5_nr_create(0, kHeight, 8, &handle),
                      DLSS5_NR_INVALID_DIMENSIONS);
         CHECK(handle == NULL);
-        CHECK_STATUS(dlss5_nr_create(1000, 1000, 8, &handle),
+        CHECK_STATUS(dlss5_nr_create(3000, 3000, 8, &handle),
                      DLSS5_NR_INVALID_DIMENSIONS);
         CHECK(handle == NULL);
         CHECK_STATUS(dlss5_nr_create(kWidth, kHeight, 65, &handle),
@@ -269,6 +269,33 @@ int main(void) {
                      DLSS5_NR_NULL_POINTER);
         /* Mode off restores the synthetic pipeline's label. */
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 0), DLSS5_NR_OK);
+
+        /* A demo-only handle (extent beyond the network's 320x320 floor):
+           creates cleanly, serves the demonstration transform, and the
+           synthetic path refuses it with a clean status. */
+        {
+            dlss5_nr_handle* big = NULL;
+            CHECK_STATUS(dlss5_nr_create(640, 400, 2, &big), DLSS5_NR_OK);
+            CHECK_STATUS(dlss5_nr_set_demo_transform(big, 2), DLSS5_NR_OK);
+            {
+                unsigned char* in_big = (unsigned char*)malloc(3u * 640u * 400u);
+                unsigned char* out_big = (unsigned char*)malloc(3u * 1280u * 800u);
+                int t2;
+                for (t2 = 0; t2 < 3 * 640 * 400; ++t2) {
+                    in_big[t2] = (unsigned char)(t2 * 197u + 5u);
+                }
+                CHECK_STATUS(dlss5_nr_evaluate(big, in_big, 3 * 640, out_big,
+                                               3 * 1280, 1),
+                             DLSS5_NR_OK);
+                CHECK_STATUS(dlss5_nr_set_demo_transform(big, 0), DLSS5_NR_OK);
+                CHECK_STATUS(dlss5_nr_evaluate(big, in_big, 3 * 640, out_big,
+                                               3 * 640, 1),
+                             DLSS5_NR_INVALID_DIMENSIONS);
+                free(in_big);
+                free(out_big);
+            }
+            dlss5_nr_destroy(big);
+        }
         CHECK(dlss5_nr_label_for(demo) == dlss5_nr_label());
         dlss5_nr_destroy(demo);
     }

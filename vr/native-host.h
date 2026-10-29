@@ -48,9 +48,10 @@ const char* dlss5_nr_status_name(dlss5_nr_status status);
 // Create a pipeline for width x height RGB frames (8-bit, 3 bytes per
 // pixel). `threads` selects the evaluator's parallelism (1..64; 0 = 8).
 // The internal working extent comes from the plan's padding; frames whose
-// padded extent exceeds the demo geometry's floor (320x320) are refused
-// with DLSS5_NR_INVALID_DIMENSIONS (the documented bound of this
-// boundary's fixed arena). On success `*out_handle` owns the pipeline; on
+// padded extent exceeds the network's floor (320x320) serve the
+// demonstration transform only (accepted up to 2048x2048): the synthetic
+// evaluate refuses them with DLSS5_NR_INVALID_DIMENSIONS (the documented
+// bound of this boundary's fixed arena). On success `*out_handle` owns the pipeline; on
 // any failure it is null and nothing was allocated.
 dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
                                 dlss5_nr_handle** out_handle);

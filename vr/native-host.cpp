@@ -25,6 +25,7 @@ struct dlss5_nr_handle {
     // The demonstration-transform mode (0 = off, else the upscale factor).
     int demo_scale = 0;
     int demo_kernel = DLSS5_NR_DEMO_LANCZOS3;  // dlss5_nr_demo_kernel
+    bool has_plan = false;  // the synthetic path's plan (absent > 320x320)
     int width = 0;
     int height = 0;
     dlss5_nr::LayerSpec specs[dlss5_nr::kPlanMaxLayers];
@@ -49,9 +50,13 @@ struct dlss5_nr_handle {
 namespace {
 
 constexpr char kLabel[] = "synthetic weights \xe2\x80\x94 arbitrary transform";
-// The demo geometry's floor: the small plan's padded extent at 64x72 (the
-// boundary's fixed arena covers it; larger frames are refused).
+// The synthetic network's floor: the small plan's padded extent at 64x72
+// (the boundary's fixed arena covers it; the SYNTHETIC path refuses
+// larger frames). The demonstration-transform mode needs no plan, so the
+// create accepts frames up to kMaxDemoSide (half-window captures) and
+// only builds the plan when the padded extent fits the network.
 constexpr int kMaxPaddedSide = 320;
+constexpr int kMaxDemoSide = 2048;
 
 dlss5_nr_status to_abi(dlss5_nr::Status status) {
     return static_cast<dlss5_nr_status>(static_cast<int>(status));
@@ -83,20 +88,22 @@ dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
         return DLSS5_NR_NULL_POINTER;
     }
     *out_handle = nullptr;
-    if (width < 1 || height < 1 || width > kMaxPaddedSide
-        || height > kMaxPaddedSide) {
+    if (width < 1 || height < 1 || width > kMaxDemoSide
+        || height > kMaxDemoSide) {
         return DLSS5_NR_INVALID_DIMENSIONS;
     }
     if (threads < 0 || threads > 64) {
         return DLSS5_NR_INVALID_VALUES;
     }
     PlanPadding padding{};
-    if (plan_padding(width, height, NetworkKind::kSmall, padding)
-        != Status::kOk) {
-        return DLSS5_NR_INVALID_DIMENSIONS;
-    }
-    if (padding.width > kMaxPaddedSide || padding.height > kMaxPaddedSide) {
-        return DLSS5_NR_INVALID_DIMENSIONS;
+    const bool fits_network =
+        plan_padding(width, height, NetworkKind::kSmall, padding) == Status::kOk
+        && padding.width <= kMaxPaddedSide && padding.height <= kMaxPaddedSide;
+    if (!fits_network) {
+        // Demo-only handle: no synthetic plan (the mode's evaluate refuses
+        // it); the demonstration transform works at any accepted extent.
+        padding.width = width;
+        padding.height = height;
     }
     void* raw = std::calloc(1, sizeof(dlss5_nr_handle));
     if (raw == nullptr) {
@@ -105,27 +112,32 @@ dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
     dlss5_nr_handle* handle = new (raw) dlss5_nr_handle();
     handle->width = width;
     handle->height = height;
-    if (build_plan(width, height, NetworkKind::kSmall, handle->specs,
-                   kPlanMaxLayers, handle->row_count)
-        != Status::kOk) {
-        handle->~dlss5_nr_handle();
-        std::free(raw);
-        return DLSS5_NR_INVALID_VALUES;
+    if (fits_network) {
+        if (build_plan(width, height, NetworkKind::kSmall, handle->specs,
+                       kPlanMaxLayers, handle->row_count)
+            != Status::kOk) {
+            handle->~dlss5_nr_handle();
+            std::free(raw);
+            return DLSS5_NR_INVALID_VALUES;
+        }
+        handle->has_plan = true;
     }
     handle->image_floats = 3u
         * static_cast<std::size_t>(padding.width)
         * static_cast<std::size_t>(padding.height);
-    handle->arena_floats = std::size_t{1} << 27;  // 512 MiB (the demo's bound)
-    handle->arena = static_cast<float*>(
-        std::malloc(handle->arena_floats * sizeof(float)));
+    handle->arena_floats = fits_network ? std::size_t{1} << 27 : 0;
+    handle->arena = fits_network
+        ? static_cast<float*>(std::malloc(handle->arena_floats * sizeof(float)))
+        : nullptr;
     handle->image_storage = static_cast<float*>(
         std::malloc(handle->image_floats * sizeof(float)));
     handle->store_scratch = static_cast<float*>(
         std::malloc(handle->image_floats * sizeof(float)));
     handle->carrier_map = static_cast<float*>(
         std::malloc(handle->image_floats * sizeof(float)));
-    if (handle->arena == nullptr || handle->image_storage == nullptr
-        || handle->store_scratch == nullptr || handle->carrier_map == nullptr) {
+    if (handle->image_storage == nullptr || handle->store_scratch == nullptr
+        || handle->carrier_map == nullptr
+        || (fits_network && handle->arena == nullptr)) {
         dlss5_nr_destroy(handle);
         return DLSS5_NR_INVALID_BUFFER;
     }
@@ -135,12 +147,14 @@ dlss5_nr_status dlss5_nr_create(int width, int height, int threads,
     handle->context.weights = &handle->weights;
     handle->context.scratch = handle->arena;
     handle->context.scratch_capacity = handle->arena_floats;
-    if (eval_reset(handle->context) != Status::kOk
-        || temporal_init(handle->carrier, handle->carrier_map,
-                         handle->image_floats, padding.height, padding.width)
-            != Status::kOk) {
-        dlss5_nr_destroy(handle);
-        return DLSS5_NR_INVALID_BUFFER;
+    if (fits_network) {
+        if (eval_reset(handle->context) != Status::kOk
+            || temporal_init(handle->carrier, handle->carrier_map,
+                             handle->image_floats, padding.height, padding.width)
+                != Status::kOk) {
+            dlss5_nr_destroy(handle);
+            return DLSS5_NR_INVALID_BUFFER;
+        }
     }
     handle->run.outputs = handle->outputs;
     handle->run.skip_sources = handle->skip_scratch;
@@ -245,6 +259,11 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
     const int minimum = 3 * handle->width;
     if (row_stride < minimum || out_stride < minimum) {
         return DLSS5_NR_INVALID_STRIDE;
+    }
+    if (!handle->has_plan) {
+        // A demo-only handle (extent beyond the network's 320x320 floor)
+        // has no synthetic plan: the synthetic path refuses it cleanly.
+        return DLSS5_NR_INVALID_DIMENSIONS;
     }
     const Status status = temporal_image_evaluation(
         rgb, row_stride, handle->width, handle->height, out_rgb, out_stride,

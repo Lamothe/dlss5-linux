@@ -2,7 +2,7 @@
 
 Status: complete (30/10/2026, scope-pivot phase, item 2).
 Tests: `vr/test-native-demo-upscale.sh` (the quality family), the mock
-host family (`vr/test-native-host.sh`, 69 checks incl. the mode).
+host family (`vr/test-native-host.sh`, 75 checks incl. the mode).
 
 ## What this is — and what it is NOT
 
@@ -57,7 +57,7 @@ at the same capture geometry, not the number. The A/B kernel
 bilinear tent: the honest comparison floor at the same capture
 geometry, matching the harness's independent bilinear reference
 bit-exactly in the interior (the two edge conventions - clamped sample
-positions vs re-spaced taps - differ only in the 1-pixel border). The
+positions vs re-spaced taps - differ only in the outermost border (the pin excludes 2 pixels per side)). The
 harness prints a parameter sweep as the tuning record (the sweep shows
 the unsharp gain trading PSNR for SSIM at the measured points).
 
