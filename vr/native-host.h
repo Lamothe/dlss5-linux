@@ -5,7 +5,7 @@
 // experiment's seam): a C ABI over the native evaluator. The host renders
 // its scene at a LOW resolution, hands the RGB bytes to the boundary and
 // presents the upscaled result. Synthetic weights: the transformation is
-// ARBITRARY — `dlss5_nr_label()` returns the string a host must display
+// ARBITRARY — `dlss5_nr_label()` returns the string a host must record
 // alongside any presented output ("synthetic weights — arbitrary
 // transform"). No vendor code, no proprietary payloads, no runtime or
 // capture probes; CPU-only (the evaluator's kernels are the same ones the
@@ -46,7 +46,9 @@ typedef enum dlss5_nr_demo_kernel {
 
 typedef struct dlss5_nr_handle dlss5_nr_handle;
 
-// The label a host must display alongside any presented output (UTF-8).
+// The label a host must record alongside any presented output (UTF-8).
+// On-screen display is the host's UI choice; the label must not be lost
+// from the host's records (reports, logs).
 const char* dlss5_nr_label(void);
 // The status code's name (a stable string for logs/overlays).
 const char* dlss5_nr_status_name(dlss5_nr_status status);
@@ -79,9 +81,10 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
 // `scale` is the integer upscale factor (2..4); 0 restores the synthetic
 // pipeline. In this mode `dlss5_nr_evaluate` writes scale*width x
 // scale*height output (out_stride must cover 3*scale*width) and the input
-// is the low-resolution capture. The result must be presented with the
-// label `dlss5_nr_label_for(handle)` returns; the demonstration mode's
-// labels are per path:
+// is the low-resolution capture. The label `dlss5_nr_label_for(handle)`
+// returns must be recorded alongside the presented output (on-screen
+// display is the host's UI choice); the demonstration mode's labels are
+// per path:
 //   neural:     "not DLSS5 - demonstration transform with real weights
 //                (<model>, <license>)"  (the phrase "real weights" is
 //                reserved for the neural path)
@@ -110,7 +113,7 @@ const char* dlss5_nr_demo_model_label(void);
 dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
                                             int scale);
 // The label for THIS handle's current mode (the synthetic pipeline's
-// label, or the demonstration transform's mandatory label).
+// label, or the demonstration transform's label - mandatory to record).
 const char* dlss5_nr_label_for(const dlss5_nr_handle* handle);
 
 // The frames-since-reset counter (the capture's schedule). The

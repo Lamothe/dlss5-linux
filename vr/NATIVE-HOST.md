@@ -25,7 +25,7 @@ code and no vendor correspondence.
   in the stateless demonstration-transform mode).
 * `dlss5_nr_arena_high_water(handle, &floats)` — the evaluator arena's
   high-water (constant across frames).
-* `dlss5_nr_label()` — the string a host must display alongside any
+* `dlss5_nr_label()` — the string a host must record alongside any
   presented output of the synthetic pipeline: **"synthetic weights —
   arbitrary transform"**. The synthetic DemoStore records make the
   transformation arbitrary; the boundary is honest about it in-band, not
@@ -38,7 +38,7 @@ code and no vendor correspondence.
   pipeline. The mode is stateless: the counter stays 0 and the `reset`
   argument has no effect while it is on.
 * `dlss5_nr_label_for(handle)` — the label for the handle's current
-  mode; in demo mode the host MUST display exactly what this returns,
+  mode; in demo mode the host MUST record exactly what this returns
   which names the actual path: "not DLSS5 - demonstration transform with
   real weights (<model>, <license>)" for the neural path or "not DLSS5 -
   classical demonstration scaler (Lanczos3 / bilinear baseline)" for the
@@ -68,8 +68,9 @@ this C ABI, and the app already reads framebuffers (`gl.ReadPixels` in
 `Program.cs` for its screenshot path). The integration shape is: render
 the scene into a low-resolution offscreen framebuffer, read the RGB bytes
 back, call `dlss5_nr_evaluate`, and present the upscaled result as a
-fullscreen texture, with `dlss5_nr_label()` shown in the app's status
-overlay (`StatusOverlay.cs`).
+fullscreen texture, with `dlss5_nr_label()` recorded alongside the
+presented output (the demo report and console; on-screen display is the
+host's UI choice).
 
 The full app integration is NOT delivered here: the evaluator costs
 ~8 s/frame at the demo geometry (a slideshow, explicitly labelled), the
@@ -84,7 +85,7 @@ session with display access.
 its main): P/Invoke over this ABI (`Dlss5Interop.cs`), a 64x72 capture
 framebuffer + presenter (`DlssStage.cs`) and the on-demand frame-by-frame
 workflow (`DlssSeam.cs`, F9 in the viewer + `--dlss-demo` for unattended
-evidence runs with the label in-band). Measured evaluate cost through the
+evidence runs; the label is recorded in the report). Measured evaluate cost through the
 app: 8.7 s/frame (worker wall clock; an earlier 60 s reading was an
 idle-blanked compositor cadence artefact, not the evaluator — the latency
 is now measured around the native call). The
