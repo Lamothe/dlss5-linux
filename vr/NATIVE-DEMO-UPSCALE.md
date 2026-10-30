@@ -1,115 +1,139 @@
-# NATIVE-DEMO-UPSCALE — the demonstration transform (NOT DLSS5)
+# The demonstration transform: visible quality through the identical seam
 
-Status: complete (30/10/2026, scope-pivot phase, item 2).
-Tests: `vr/test-native-demo-upscale.sh` (the quality family), the mock
-host family (`vr/test-native-host.sh`, 75 checks incl. the mode).
+**Status: complete.** This is the scope-pivot phase's item 2: a REAL learned
+upscaler with REAL openly licensed weights behind the identical C ABI /
+capture / present path used by the synthetic pipeline. It proves the
+platform end to end with a visible result. **It is NOT DLSS5 and must never
+be conflated with one.** Every artefact, UI label and report carries
+`not DLSS5` in-band.
 
-## What this is — and what it is NOT
+## The models (real weights, openly licensed, openly obtained)
 
-A real, openly documented upscaling transform with real weights —
-Lanczos3 resampling (the analytic windowed-sinc kernel, a = 3) plus an
-optional documented unsharp pass — run behind the SAME C ABI / capture /
-present seam that the synthetic network uses, so a host's F9 produces a
-**visibly improved** presented frame end to end. The parameters
-("weights") are the published mathematical definitions
-(`vr/native-demo-upscale.hpp`'s `DemoUpscaleParams`); openly licensed by
-construction and independent of any vendor.
+Both are fetched by `vr/fetch-demo-model.sh` (pinned checksums; the repo
+carries no model binaries). No NVIDIA assets, no proprietary payloads,
+captures or binaries, no runtime probes.
 
-**This is NOT DLSS5 and makes no DLSS5 claim.** Every artefact, UI
-label and report carries:
+| Model | Class | License | Source | Parameters | Timings at 640x400 (CPU) |
+|---|---|---|---|---|---|
+| **EDSR-base x2** (default) | classical super-resolution (trained on clean degradation, DIV2K, L1) | Apache-2.0 (Lim et al., CVPRW 2017) | `huggingface.co/eugenesiow/edsr-base` (`pytorch_model_2x.pt`) | 1,369,883 (16 ResBlocks x 64 feats, measured and pinned by the smoke) | **10-11 s/frame** (8 threads; measured 10.2-11.2 across runs) |
+| Real-ESRGAN x2 | blind restoration (GAN-trained) | BSD-3-Clause (Wang et al., ICCVW 2021) | `huggingface.co/mlx-community/Real-ESRGAN-x2plus` (`model.safetensors`) | 16,703,171 (RRDBNet, F16) | 43.2 s/frame (8 threads) |
 
-    not DLSS5 - demonstration transform with real weights
+CPU inference is accepted for frame-by-frame F9; the timings above are
+measured worker wall clock around the native call (they vary with load;
+the evidence report carries the exact run) and the app never claims
+real-time (the processing state is visible while the frame is in
+flight).
 
-It proves the PLATFORM (loader → evaluator seam → C ABI → capture →
-present) end to end with a real transform. It must never be conflated
-with DLSS5 quality or vendor parity.
+## Loaders (format-agnostic plumbing)
 
-## The measured quality claim (honest, reproducible)
+`vr/native-demo-rrdbnet.hpp` reads **safetensors** (the Real-ESRGAN
+weights); `vr/native-demo-edsr.hpp` reads the **torch-save** container (a
+zip of a pickle stream plus raw f32 storages; the supported pickle subset
+is the state-dict form only - anything else is rejected with a named
+error). The container is detected from the file magic; every expected
+tensor name and shape is verified and every mismatch is rejected by name
+(the weights-interface contract in `NATIVE-WEIGHTS-FILE.md` applies to the
+NWF1 path; these demo loaders verify the same way: shapes and names in,
+named rejections out, no numeric probing).
 
-`vr/tests/native-demo-upscale-test.cpp` generates a deterministic
-320x288 source (mixed frequencies, gradients, hard edges, a chart
-region), box-downscales to a "capture", and compares the transform
-against the source AND a bilinear baseline (PSNR and the standard Wang
-SSIM). The DEMO DEFAULT is the x2 ratio (a half-window capture - the
-geometry that actually looks sharp); the x4 numbers are retained as the
-historical record. NOTE (Michael's F9 verdict, 30/10/2026): at the x4
-64x72 capture geometry the margin is real but IMPERCEPTIBLE - every
-upsampler pixelates at that size. The visible case is the x2 A/B:
+## The honesty labelling (fixed in this phase)
 
-| method (x2 ratio)   | PSNR    | SSIM   |
-|---------------------|---------|--------|
-| bilinear baseline   | 19.62 dB| 0.9067 |
-| demo transform      | 20.49 dB| 0.9138 |
-| delta               | +0.87 dB| +0.0071|
+- The neural views carry `not DLSS5 - demonstration transform with real
+  weights (EDSR-base x2, Apache-2.0)` (or the Real-ESRGAN variant) - the
+  phrase "real weights" is reserved for the neural path.
+- The classical views carry `not DLSS5 - classical demonstration scaler
+  (Lanczos3)` / `(bilinear baseline)`. **Lanczos3 is a fixed-kernel
+  scaler; it has no weights and is no longer described as having any.**
+- The label is in-band on every presented frame (`dlss5_nr_label_for`) and
+  in every report line.
 
-| method (x4, historical) | PSNR    | SSIM   |
-|-------------------------|---------|--------|
-| bilinear baseline       | 14.74 dB| 0.7755 |
-| demo transform          | 14.79 dB| 0.7930 |
-| delta                   | +0.05 dB| +0.0175|
+## Measured quality - and the honest finding
 
-The default parameter set (sharpen = 0: pure Lanczos3) beats the
-baseline on both metrics at both ratios. The SSIM margin at x2 is small
-(+0.0071) - stated plainly; the demo's case is the visible A/B toggle
-at the same capture geometry, not the number. The A/B kernel
-(`DemoKernel::Bilinear`, exposed through the host ABI's
-`dlss5_nr_set_demo_kernel`) is the SAME resampling path with the
-bilinear tent: the honest comparison floor at the same capture
-geometry, matching the harness's independent bilinear reference
-bit-exactly in the interior (the two edge conventions - clamped sample
-positions vs re-spaced taps - differ only in the outermost border (the pin excludes 2 pixels per side)). The
-harness prints a parameter sweep as the tuning record (the sweep shows
-the unsharp gain trading PSNR for SSIM at the measured points).
+Capture geometry (the seam's knob): **640x400 capture, x2, 1280x800
+presented** (one uniform scale). The quality family
+(`vr/test-native-demo-upscale.sh`) measures on generated chart content;
+the evidence run measures on the app's real capture against the ground
+truth (the same view rendered at the presented size).
 
-## Geometry (documented)
+**On generated chart content** (the adversarial synthetic chart:
+checkerboards, sine waves, hard edges - hostile to learned models):
 
-The capture geometry is the seam's knob; the x2 upscale ratio is the
-transform's documented property. The demo default is a **half-window
-capture upscaled x2** (e.g. 640x360 -> 1280x720) - the geometry that
-actually looks sharp (Michael's F9 verdict: at the 64x72 x4 geometry
-the improvement is imperceptible). 64x72 x4 remains available as the
-"extreme" mode (env-flagged in the seam) as the recorded stress case.
-The C ABI's demo mode (`dlss5_nr_set_demo_transform(handle, scale)`,
-scale 2..4) writes scale*width x scale*height output; the synthetic
-pipeline's same-extent contract is unchanged when the mode is off (and
-keeps its own 64x72 capture - the network's 320x320 floor). The
-transform costs milliseconds per frame at this geometry — the seam
-stays frame-by-frame (F9-triggered) by design, and the latency figures
-in the evidence report are real measurements.
+| View | PSNR | SSIM |
+|---|---|---|
+| bilinear | 19.97 dB | 0.9068 |
+| Lanczos3 | 20.45 dB | 0.9075 |
+| EDSR (neural) | 16.09 dB | 0.7794 |
+| Real-ESRGAN (neural) | 11.81 dB | 0.6795 |
 
-## The interface
+Both neural models lose decisively on this content (it is made of
+patterns learned models hallucinate over). The chart is a torture test,
+not this demo's case; the real capture below is.
 
-- `vr/native-demo-upscale.hpp`: `demo_upscale()` (planar f32 RGB in/out)
-  and `demo_upscale_label()` (the mandatory label).
-- `vr/native-host.h`: `dlss5_nr_set_demo_transform(handle, scale)`
-  (0 = off), `dlss5_nr_set_demo_kernel(handle, kernel)` (the A/B:
-  Lanczos3 or the bilinear baseline at the same capture geometry;
-  stored while off and applied when enabled) and
-  `dlss5_nr_label_for(handle)` (the label for the handle's current
-  mode).
-- Centre Stage: `Dlss5Pipeline.SetDemoTransform` / `SetDemoKernel` /
-  `LabelFor`; the seam enables the demo transform at the x2 half-window
-  capture by default with the A/B toggle (F10) at the same capture;
-  the presented frame carries the label in-band.
+**On the real capture** (the evidence run, `report.txt` per view; full
+frame PSNR/SSIM, then the pre-declared centre crop (central 50%), then
+the detail energy = mean squared Laplacian of the luminance x1000 in the
+centre crop; ground truth = 198,570):
 
-## Honest limits
+| View | Full frame | Centre crop | Detail energy | Evaluate |
+|---|---|---|---|---|
+| **EDSR (neural)** | PSNR 36.98 dB, SSIM 0.9812 | PSNR 31.92 dB, SSIM 0.9539 | **186,684** | 11.2 s |
+| Real-ESRGAN (neural) | PSNR 37.68 dB, SSIM 0.9877 | PSNR 33.78 dB, SSIM 0.9638 | 70,393 | 35.2 s |
+| bilinear | PSNR 40.41 dB, SSIM 0.9920 | PSNR 35.10 dB, SSIM 0.9731 | 17,195 | instant |
+| Lanczos3 | PSNR 40.18 dB, SSIM 0.9923 | PSNR 34.98 dB, SSIM 0.9748 | 38,100 | instant |
 
-- The quality claim is exactly the tables above: measured on one
-  deterministic generated source (x2 and x4 ratios) against one
-  baseline. It is not a photographic or perceptual study.
-- The transform is classical resampling (documented weights), not a
-  learned upscaler. A genuinely learned open-weights model (e.g. an
-  ncnn-distributed Real-ESRGAN variant) would slot behind the same ABI
-  as a future slice; nothing here prevents or claims that.
-- The demo mode is STATELESS: the ABI's frames-since-reset counter stays
-  0 and the `reset` argument has no effect while the mode is on
-  (documented in NATIVE-HOST.md).
-- The harness scores the unclamped f32 result; the presented path clamps
-  to [0,1] before the u8 conversion. Since the source is in [0,1],
-  clamping can only reduce error, so the measured numbers are a
-  conservative lower bound on the presented quality.
-- The kernel weights are computed with libm sin/exp: identical within a
-  build (pinned by tests), but the PSNR/SSIM numbers are build-specific
-  measurements rather than cross-toolchain constants.
-- The demo mode's evaluate allocates working buffers per call (simple
-  and correct; the transform's milliseconds hide it at this geometry).
+**The honest two-metric story** (both rows are real measurements; the
+demo's claim is the detail row, and the fidelity row is reported against
+it, not hidden):
+
+1. **Detail recovery - the demo's claim - is supported.** The ground
+   truth carries fine structure (198,570); the classical scalers smooth
+   81-91% of it away (17,195 / 38,100 - the softness that reads as
+   "pixelated"). The neural views reconstruct it: EDSR recovers 94%
+   (186,684 - the visibly textured choice) and Real-ESRGAN 35% (70,393 -
+   a gentler result). This is what the F10 A/B shows: the neural views
+   are textured where the classical views are soft.
+2. **Pixel fidelity still favours the classical scalers** (PSNR/SSIM
+   2.7-3.4 dB / ~0.01-0.02 higher than the best neural row).
+   Reconstruction detail close in magnitude is not pixel-exact; a
+   pristine-render ground truth rewards smoothing. The gap to the best
+   neural row is 0.004-0.011 SSIM and 2.7-3.4 dB. The two neural models
+   also trade against each other (Real-ESRGAN: higher fidelity, less
+   detail; EDSR: more detail, lower fidelity). Both metrics are stated;
+   neither is oversold.
+
+Earlier in this phase a layout defect (the neural branch read the planar
+buffer as interleaved) silently degraded every neural measurement; the
+independent review caught it, the layout is now pinned bit-exactly
+against a direct forward in the smoke, and the numbers above are from the
+corrected path. The earlier scrambled-path rows (EDSR 32.61, Real-ESRGAN
+34.05) are superseded by the corrected per-model evidence runs kept in
+`.evidence/dlss-demo-edsr/` and `.evidence/dlss-demo-realesrgan/`; on the
+chart-content family - the chart remains aliasing-dominated (every
+row lands at 5-8 dB) and is a trend only: on it EDSR scores 5.56 and
+Real-ESRGAN 7.58 vs bilinear 7.29 - the chart content decides nothing.
+
+## Verified implementation
+
+- The EDSR forward (head -> 16 ResBlocks -> body conv -> global residual
+  -> conv+PixelShuffle -> conv) matches the upstream super-image
+  implementation; the MeanShift buffers exist in the checkpoint and the
+  upstream forward does not call them (verified against the source); the
+  output is mean-preserving (measured deltas < 0.015).
+- Deterministic (bit-identical repeated forwards at 1/2/8 threads).
+- Analytic smooth-gradient target: PSNR 30.6 dB (implementation check
+  with the upstream zero-padding semantics, not a quality claim; a broken
+  sub-pixel shuffle scores under 20 dB).
+- Loader rejection coverage: the host test covers the missing-file and
+  NULL-pointer paths (`vr/test-native-host.sh`); the EDSR smoke covers
+  truncated and wrong-magic files with named errors and asserts the
+  loaded model SURVIVES a failed reload. A deliberate
+  topology-mismatched file (correct container, wrong tensors) is
+  rejected by name in code but has no dedicated test.
+
+## Evidence (unattended runs)
+
+`CentreStage-dlss5/.evidence/dlss-demo-edsr/`: `live.png`, `processing.png`
+(latency visible in-band), `processed.png` (neural), `baseline.png`
+(bilinear), `lanczos3.png`, and `report.txt` (per-view PSNR/SSIM full
+frame + centre crop, detail energy, timings, labels). The prior
+Real-ESRGAN run is kept at `.evidence/dlss-demo-neural/` for comparison.

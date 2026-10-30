@@ -21,6 +21,9 @@
 #include "native-network.hpp"
 
 // The opaque handle (the C header's forward declaration).
+// A file-scope alias for the demonstration transform namespace.
+namespace demoup = dlss5_nr::demoup;
+
 struct dlss5_nr_handle {
     // The demonstration-transform mode (0 = off, else the upscale factor).
     int demo_scale = 0;
@@ -171,11 +174,37 @@ dlss5_nr_status dlss5_nr_set_demo_kernel(dlss5_nr_handle* handle,
     if (handle == nullptr) {
         return DLSS5_NR_NULL_POINTER;
     }
-    if (kernel != DLSS5_NR_DEMO_LANCZOS3 && kernel != DLSS5_NR_DEMO_BILINEAR) {
+    if (kernel != DLSS5_NR_DEMO_LANCZOS3 &&
+        kernel != DLSS5_NR_DEMO_BILINEAR &&
+        kernel != DLSS5_NR_DEMO_NEURAL) {
+        return DLSS5_NR_INVALID_VALUES;
+    }
+    if (kernel == DLSS5_NR_DEMO_NEURAL && !demoup::demo_model_loaded()) {
+        // The neural demonstration needs its real weights loaded first.
         return DLSS5_NR_INVALID_VALUES;
     }
     handle->demo_kernel = static_cast<int>(kernel);
     return DLSS5_NR_OK;
+}
+
+dlss5_nr_status dlss5_nr_demo_model_load(const char* path) {
+    if (path == nullptr) {
+        return DLSS5_NR_NULL_POINTER;
+    }
+    if (!demoup::demo_model_load(path)) {
+        fprintf(stderr, "error: demonstration model: %s\n",
+                demoup::demo_model_error().c_str());
+        return DLSS5_NR_INVALID_VALUES;
+    }
+    return DLSS5_NR_OK;
+}
+
+int dlss5_nr_demo_model_loaded(void) {
+    return demoup::demo_model_loaded() ? 1 : 0;
+}
+
+const char* dlss5_nr_demo_model_label(void) {
+    return demoup::demo_model_label();
 }
 
 dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
@@ -192,7 +221,12 @@ dlss5_nr_status dlss5_nr_set_demo_transform(dlss5_nr_handle* handle,
 
 const char* dlss5_nr_label_for(const dlss5_nr_handle* handle) {
     if (handle != nullptr && handle->demo_scale != 0) {
-        return dlss5_nr::demoup::demo_upscale_label();
+        const auto k = handle->demo_kernel == DLSS5_NR_DEMO_NEURAL
+                           ? demoup::DemoKernel::Neural
+                           : (handle->demo_kernel == DLSS5_NR_DEMO_BILINEAR
+                                  ? demoup::DemoKernel::Bilinear
+                                  : demoup::DemoKernel::Lanczos3);
+        return demoup::demo_upscale_label_for(k);
     }
     return dlss5_nr_label();
 }
@@ -234,10 +268,15 @@ dlss5_nr_status dlss5_nr_evaluate(dlss5_nr_handle* handle,
             }
         }
         demoup::DemoUpscaleParams p;
-        p.kernel = handle->demo_kernel == DLSS5_NR_DEMO_BILINEAR
-                       ? demoup::DemoKernel::Bilinear
-                       : demoup::DemoKernel::Lanczos3;
+        p.kernel = handle->demo_kernel == DLSS5_NR_DEMO_NEURAL
+                       ? demoup::DemoKernel::Neural
+                       : (handle->demo_kernel == DLSS5_NR_DEMO_BILINEAR
+                              ? demoup::DemoKernel::Bilinear
+                              : demoup::DemoKernel::Lanczos3);
         p.scale = scale;
+        // The neural path uses the demo params' thread default (8); the
+        // handle's evaluator parallelism belongs to the synthetic path.
+        p.threads = 8;
         if (!demoup::demo_upscale(in.data(), handle->width, handle->height,
                                   out.data(), ow, oh, p)) {
             return DLSS5_NR_INVALID_VALUES;

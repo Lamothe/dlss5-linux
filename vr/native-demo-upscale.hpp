@@ -1,22 +1,29 @@
-// native-demo-upscale.hpp — the demonstration transform (NOT DLSS5).
+// native-demo-upscale.hpp — the demonstration transforms (NOT DLSS5).
 //
-// A real, openly documented upscaling transform with real parameters:
-// Lanczos3 resampling (the analytic windowed-sinc kernel, a = 3) followed
-// by an unsharp enhancement pass (a small Gaussian blur and a documented
-// gain). The "weights" are the published kernel and enhancement
-// coefficients recorded in `DemoUpscaleParams` - openly licensed by
-// construction (the mathematical definitions), obtained openly, and
-// entirely independent of any vendor.
+// Two transform families share this entry point:
 //
-// THIS IS NOT DLSS5. It is a demonstration transform with real weights
-// whose only claim is the measured one (vr/tests/native-demo-upscale-test.cpp:
-// PSNR/SSIM against the source and against a bilinear baseline). Every
-// artefact, UI label and report must carry:
-//   "not DLSS5 - demonstration transform with real weights"
+//  * The CLASSICAL demonstration scalers: Lanczos3 resampling (the
+//    analytic windowed-sinc kernel, a = 3, optionally followed by a
+//    documented unsharp pass) and a bilinear baseline. These are FIXED
+//    KERNELS with no learned weights - Lanczos3 is a mathematical
+//    resampler and is never described as having "weights".
 //
-// Determinism: f32 arithmetic in a fixed order; no threading inside the
-// transform; identical inputs give identical outputs bit for bit within a
-// build (the tests pin it). The kernel weights are built with libm
+//  * The NEURAL demonstration transform: a real learned upscaler with
+//    real, openly licensed weights (EDSR-base x2, Apache-2.0; or
+//    Real-ESRGAN x2, BSD-3 - see vr/NATIVE-DEMO-UPSCALE.md).
+//
+// THIS IS NOT DLSS5. Every artefact, UI label and report must carry
+// "not DLSS5" in-band, with the per-path honesty label:
+//   neural:     "not DLSS5 - demonstration transform with real weights
+//                (<model>, <license>)"
+//   classical:  "not DLSS5 - classical demonstration scaler (Lanczos3)"
+//               "not DLSS5 - classical demonstration scaler (bilinear baseline)"
+// The phrase "real weights" is reserved for the neural path.
+//
+// Determinism: f32 arithmetic in a fixed order. The classical kernels
+// are single-threaded; the neural forwards thread over output channels
+// with a fixed per-element accumulation order. Identical inputs give
+// identical outputs bit for bit within a build (the tests pin it). The kernel weights are built with libm
 // sin/exp, so cross-toolchain bit-identity is not claimed (the documented
 // PSNR/SSIM numbers are build-specific measurements).
 
@@ -25,6 +32,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include "native-demo-rrdbnet.hpp"
+#include "native-demo-edsr.hpp"
 #include <vector>
 
 namespace dlss5_nr {
@@ -43,7 +52,25 @@ namespace demoup {
 enum class DemoKernel : int {
     Lanczos3 = 0,
     Bilinear = 1,
+    // The neural demonstration transform (Real-ESRGAN x2, real open
+    // weights): a learned upscaler behind the identical resampling entry.
+    Neural = 2,
 };
+
+// --- the demonstration model (process-global, loaded once) -----------------
+// Real-ESRGAN x2 (RRDBNet): openly licensed (BSD-3-Clause) and openly
+// obtained weights; see vr/NATIVE-DEMO-UPSCALE.md for provenance. This
+// is a demonstration transform with real weights - NOT DLSS5.
+
+demo_rrdb::RRDBNet& demo_model();
+demo_edsr::EDSR& demo_model_edsr();
+bool demo_model_load(const std::string& path);
+bool demo_model_loaded();
+const std::string& demo_model_error();
+// The loaded model's kind: 0 = none, 1 = Real-ESRGAN x2 (RRDBNet,
+// safetensors), 2 = EDSR-base x2 (torch-save).
+int demo_model_kind();
+const char* demo_model_label();
 
 struct DemoUpscaleParams {
     int scale = 4;
@@ -54,8 +81,11 @@ struct DemoUpscaleParams {
     float sharpen = 0.0f;
     float sigma = 1.0f;
     float lanczos_a = 3.0f;
-    // The resampling kernel: Lanczos3 (default) or the bilinear baseline.
+    // The resampling kernel: Lanczos3 (default), the bilinear baseline or
+    // the neural demonstration transform.
     DemoKernel kernel = DemoKernel::Lanczos3;
+    // CPU threads for the neural path (ignored by the classical kernels).
+    int threads = 8;
 };
 
 // The Lanczos kernel: sinc(x) * sinc(x / a) for |x| < a, else 0.
@@ -150,6 +180,46 @@ inline bool demo_upscale(const float* in_rgb, int lw, int lh, float* out_rgb,
     }
     const std::size_t in_plane = static_cast<std::size_t>(lw) * lh;
     const std::size_t out_plane = static_cast<std::size_t>(ow) * oh;
+    if (p.kernel == DemoKernel::Neural) {
+        // The neural demonstration transform (the model's fixed x2
+        // ratio), evaluated on CPU, deterministic. The RRDBNet
+        // pixel-unshuffle path requires even extents >= 2 (odd extents
+        // would overflow its staging buffer); the seam geometry is
+        // always even.
+        if (p.scale != 2 || !demo_model_loaded()
+            || lw < 2 || lh < 2 || (lw & 1) || (lh & 1)) {
+            return false;
+        }
+        // PLANAR contract (the same layout as the classical path and the
+        // host boundary): 3 planes of lw*lh / ow*oh.
+        std::vector<float> pr(in_plane), pg(in_plane), pb(in_plane);
+        for (std::size_t i = 0; i < in_plane; ++i) {
+            pr[i] = in_rgb[0 * in_plane + i];
+            pg[i] = in_rgb[1 * in_plane + i];
+            pb[i] = in_rgb[2 * in_plane + i];
+        }
+        std::vector<float> orr(out_plane), og(out_plane), ob(out_plane);
+        if (demo_model_kind() == 2) {
+            demo_model_edsr().forward_x2(pr.data(), pg.data(), pb.data(), lw,
+                                         lh, orr.data(), og.data(), ob.data(),
+                                         p.threads);
+        } else {
+            demo_model().forward_x2(pr.data(), pg.data(), pb.data(), lw, lh,
+                                    orr.data(), og.data(), ob.data(),
+                                    p.threads);
+        }
+        for (std::size_t i = 0; i < out_plane; ++i) {
+            // Clamp at the f32 seam (the contract is [0, 1] out for
+            // every kernel).
+            const float rr = orr[i] < 0.0f ? 0.0f : (orr[i] > 1.0f ? 1.0f : orr[i]);
+            const float gg = og[i] < 0.0f ? 0.0f : (og[i] > 1.0f ? 1.0f : og[i]);
+            const float bb = ob[i] < 0.0f ? 0.0f : (ob[i] > 1.0f ? 1.0f : ob[i]);
+            out_rgb[0 * out_plane + i] = rr;
+            out_rgb[1 * out_plane + i] = gg;
+            out_rgb[2 * out_plane + i] = bb;
+        }
+        return true;
+    }
     // The bilinear kernel has unit support; Lanczos3 honours lanczos_a.
     const float a = p.kernel == DemoKernel::Bilinear ? 1.0f : p.lanczos_a;
     const int taps = 2 * static_cast<int>(std::ceil(a));
@@ -244,9 +314,106 @@ inline bool demo_upscale(const float* in_rgb, int lw, int lh, float* out_rgb,
     return true;
 }
 
-// The mandatory label for anything this transform produces.
+// The mandatory label for anything this transform produces - per kernel,
+// honestly (a fixed-kernel classical scaler is not "real weights"; that
+// claim belongs to the neural transform). "not DLSS5" is mandatory in
+// every variant.
+inline const char* demo_upscale_label_for(DemoKernel k) {
+    switch (k) {
+        case DemoKernel::Neural:
+            return demo_model_label();
+        case DemoKernel::Bilinear:
+            return "not DLSS5 - classical demonstration scaler "
+                   "(bilinear baseline)";
+        case DemoKernel::Lanczos3:
+        default:
+            return "not DLSS5 - classical demonstration scaler (Lanczos3)";
+    }
+}
+
+// The default label (the Lanczos3 kernel).
 inline const char* demo_upscale_label() {
-    return "not DLSS5 - demonstration transform with real weights";
+    return demo_upscale_label_for(DemoKernel::Lanczos3);
+}
+
+// --- the process-global demonstration model --------------------------------
+
+inline demo_rrdb::RRDBNet& demo_model() {
+    static demo_rrdb::RRDBNet model;
+    return model;
+}
+
+inline std::string& demo_model_err() {
+    static std::string err;
+    return err;
+}
+
+inline int& demo_model_kind_ref() {
+    static int kind = 0;
+    return kind;
+}
+
+inline demo_edsr::EDSR& demo_model_edsr() {
+    static demo_edsr::EDSR model;
+    return model;
+}
+
+inline bool demo_model_load(const std::string& path) {
+    // Container detection: a torch-save ZIP is the EDSR checkpoint; a
+    // safetensors file is the Real-ESRGAN weights. Each loader verifies
+    // its own topology and rejects mismatches by name.
+    std::ifstream f(path, std::ios::binary);
+    char magic[4] = {0, 0, 0, 0};
+    if (f) {
+        f.read(magic, 4);
+    }
+    const bool is_zip = f && magic[0] == 'P' && magic[1] == 'K';
+    // A failed load must leave any previously loaded model active: the
+    // loaders restore their own state, so only the kind changes on
+    // success.
+    const int prev_kind = demo_model_kind_ref();
+    if (is_zip) {
+        if (!demo_model_edsr().load(path)) {
+            demo_model_err() = demo_model_edsr().error();
+            demo_model_kind_ref() = prev_kind;
+            return false;
+        }
+        demo_model_kind_ref() = 2;
+    } else {
+        if (!demo_model().load(path)) {
+            demo_model_err() = demo_model().error();
+            demo_model_kind_ref() = prev_kind;
+            return false;
+        }
+        demo_model_kind_ref() = 1;
+    }
+    demo_model_err().clear();
+    return true;
+}
+
+inline int demo_model_kind() {
+    return demo_model_kind_ref();
+}
+
+inline const char* demo_model_label() {
+    switch (demo_model_kind_ref()) {
+        case 2:
+            return "not DLSS5 - demonstration transform with real weights "
+                   "(EDSR-base x2, Apache-2.0)";
+        case 1:
+            return "not DLSS5 - demonstration transform with real weights "
+                   "(Real-ESRGAN x2, BSD-3)";
+        default:
+            return "not DLSS5 - demonstration transform (no model loaded)";
+    }
+}
+
+inline bool demo_model_loaded() {
+    return demo_model_kind_ref() != 0;
+}
+
+inline const std::string& demo_model_error() {
+    return demo_model_err();
 }
 
 }  // namespace demoup

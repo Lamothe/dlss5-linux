@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <vector>
 
@@ -44,18 +45,18 @@ constexpr int kLw = kW / kScale;
 constexpr int kLh = kH / kScale;
 
 // The deterministic high-resolution source: planar RGB in [0, 1].
-void make_source(std::vector<float>& rgb) {
-    rgb.assign(3 * static_cast<std::size_t>(kW) * kH, 0.0f);
-    const std::size_t plane = static_cast<std::size_t>(kW) * kH;
-    for (int y = 0; y < kH; ++y) {
-        for (int x = 0; x < kW; ++x) {
-            const float fx = static_cast<float>(x) / kW;
-            const float fy = static_cast<float>(y) / kH;
+void make_source(std::vector<float>& rgb, int w = kW, int h = kH) {
+    rgb.assign(3 * static_cast<std::size_t>(w) * h, 0.0f);
+    const std::size_t plane = static_cast<std::size_t>(w) * h;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const float fx = static_cast<float>(x) / w;
+            const float fy = static_cast<float>(y) / h;
             // Mixed frequencies + a gradient + hard edges + a chart block.
             float r = 0.5f + 0.5f * std::sin(6.2831853f * (3.0f * fx + fy));
             float g = 0.2f + 0.8f * fx * fy;
             float b = 0.5f + 0.5f * std::sin(6.2831853f * (fx - 2.0f * fy));
-            if (x > kW / 2 && y > kH / 2) {
+            if (x > w / 2 && y > h / 2) {
                 // Chart-like hard edges (the resampler's honest case).
                 const int cell = ((x / 8) + (y / 8)) & 1;
                 r = g = b = cell ? 1.0f : 0.0f;
@@ -65,18 +66,18 @@ void make_source(std::vector<float>& rgb) {
                 g = 0.0f;
                 b = 0.0f;
             }
-            rgb[0 * plane + static_cast<std::size_t>(y) * kW + x] = r;
-            rgb[1 * plane + static_cast<std::size_t>(y) * kW + x] = g;
-            rgb[2 * plane + static_cast<std::size_t>(y) * kW + x] = b;
+            rgb[0 * plane + static_cast<std::size_t>(y) * w + x] = r;
+            rgb[1 * plane + static_cast<std::size_t>(y) * w + x] = g;
+            rgb[2 * plane + static_cast<std::size_t>(y) * w + x] = b;
         }
     }
 }
 
 // The downscale that produces the "low-resolution capture": box average
 // of scale x scale blocks (the standard capture model).
-void downscale(const std::vector<float>& hi, std::vector<float>& lo, int lw,
-               int lh, int s) {
-    const std::size_t plane_hi = static_cast<std::size_t>(kW) * kH;
+void downscale(const std::vector<float>& hi, std::vector<float>& lo, int hw,
+               int hh, int lw, int lh, int s) {
+    const std::size_t plane_hi = static_cast<std::size_t>(hw) * hh;
     const std::size_t plane_lo = static_cast<std::size_t>(lw) * lh;
     lo.assign(3 * plane_lo, 0.0f);
     const float n = static_cast<float>(s * s);
@@ -87,7 +88,7 @@ void downscale(const std::vector<float>& hi, std::vector<float>& lo, int lw,
                 for (int dy = 0; dy < s; ++dy) {
                     for (int dx = 0; dx < s; ++dx) {
                         acc += hi[c * plane_hi
-                                  + static_cast<std::size_t>(y * s + dy) * kW
+                                  + static_cast<std::size_t>(y * s + dy) * hw
                                   + (x * s + dx)];
                     }
                 }
@@ -100,16 +101,16 @@ void downscale(const std::vector<float>& hi, std::vector<float>& lo, int lw,
 
 // The bilinear baseline (the honest comparison floor).
 void bilinear(const std::vector<float>& lo, std::vector<float>& up, int lw,
-              int lh, int s) {
+              int lh, int ow, int oh, int s) {
     const std::size_t plane_lo = static_cast<std::size_t>(lw) * lh;
-    const std::size_t plane_hi = static_cast<std::size_t>(kW) * kH;
+    const std::size_t plane_hi = static_cast<std::size_t>(ow) * oh;
     up.assign(3 * plane_hi, 0.0f);
     for (int c = 0; c < 3; ++c) {
-        for (int y = 0; y < kH; ++y) {
+        for (int y = 0; y < oh; ++y) {
             const float fy = (static_cast<float>(y) + 0.5f) / s - 0.5f;
             const int y0 = static_cast<int>(std::floor(fy));
             const float ty = fy - static_cast<float>(y0);
-            for (int x = 0; x < kW; ++x) {
+            for (int x = 0; x < ow; ++x) {
                 const float fx = (static_cast<float>(x) + 0.5f) / s - 0.5f;
                 const int x0 = static_cast<int>(std::floor(fx));
                 const float tx = fx - static_cast<float>(x0);
@@ -121,7 +122,7 @@ void bilinear(const std::vector<float>& lo, std::vector<float>& up, int lw,
                 const float v10 = lo[c * plane_lo + ya * lw + xb];
                 const float v01 = lo[c * plane_lo + yb * lw + xa];
                 const float v11 = lo[c * plane_lo + yb * lw + xb];
-                up[c * plane_hi + static_cast<std::size_t>(y) * kW + x] =
+                up[c * plane_hi + static_cast<std::size_t>(y) * ow + x] =
                     (1 - ty) * ((1 - tx) * v00 + tx * v10)
                     + ty * ((1 - tx) * v01 + tx * v11);
             }
@@ -144,19 +145,20 @@ double psnr(const std::vector<float>& a, const std::vector<float>& b) {
 
 // SSIM (Wang et al.) on the luma-weighted sum of the planes, 8x8 windows
 // over the interior (the standard constants C1 = 0.01^2, C2 = 0.03^2).
-double ssim(const std::vector<float>& a, const std::vector<float>& b) {
-    const std::size_t plane = static_cast<std::size_t>(kW) * kH;
+double ssim(const std::vector<float>& a, const std::vector<float>& b, int w,
+            int h) {
+    const std::size_t plane = static_cast<std::size_t>(w) * h;
     const double C1 = 0.01 * 0.01;
     const double C2 = 0.03 * 0.03;
     double total = 0.0;
     int windows = 0;
-    for (int wy = 0; wy + 8 <= kH; wy += 4) {
-        for (int wx = 0; wx + 8 <= kW; wx += 4) {
+    for (int wy = 0; wy + 8 <= h; wy += 4) {
+        for (int wx = 0; wx + 8 <= w; wx += 4) {
             double ma = 0.0, mb = 0.0;
             for (int y = 0; y < 8; ++y) {
                 for (int x = 0; x < 8; ++x) {
                     const std::size_t idx =
-                        static_cast<std::size_t>(wy + y) * kW + (wx + x);
+                        static_cast<std::size_t>(wy + y) * w + (wx + x);
                     const double va = 0.299 * a[idx]
                         + 0.587 * a[plane + idx] + 0.114 * a[2 * plane + idx];
                     const double vb = 0.299 * b[idx]
@@ -171,7 +173,7 @@ double ssim(const std::vector<float>& a, const std::vector<float>& b) {
             for (int y = 0; y < 8; ++y) {
                 for (int x = 0; x < 8; ++x) {
                     const std::size_t idx =
-                        static_cast<std::size_t>(wy + y) * kW + (wx + x);
+                        static_cast<std::size_t>(wy + y) * w + (wx + x);
                     const double da_ = 0.299 * a[idx]
                         + 0.587 * a[plane + idx] + 0.114 * a[2 * plane + idx];
                     const double db_ = 0.299 * b[idx]
@@ -195,13 +197,27 @@ double ssim(const std::vector<float>& a, const std::vector<float>& b) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    // Every model path on the command line is measured (each with its
+    // own honest label); with no arguments the known paths are probed.
+    std::vector<std::string> model_paths;
+    for (int i = 1; i < argc; ++i) {
+        model_paths.push_back(argv[i]);
+    }
+    if (model_paths.empty()) {
+        for (const char* probe : {".tools/models/edsr-base-x2.pt",
+                                  ".tools/models/RealESRGAN_x2plus.safetensors"}) {
+            if (std::ifstream(probe).good()) {
+                model_paths.push_back(probe);
+            }
+        }
+    }
     using namespace dlss5_nr::demoup;
 
     std::vector<float> source, low, up_bilinear, up_demo;
     make_source(source);
-    downscale(source, low, kLw, kLh, kScale);
-    bilinear(low, up_bilinear, kLw, kLh, kScale);
+    downscale(source, low, kW, kH, kLw, kLh, kScale);
+    bilinear(low, up_bilinear, kLw, kLh, kW, kH, kScale);
 
     DemoUpscaleParams p;
     p.scale = kScale;
@@ -222,7 +238,7 @@ int main() {
             demo_upscale(low.data(), kLw, kLh, u.data(), kW, kH, ps);
             std::printf("  sweep sharpen=%.2f sigma=%.1f: PSNR %.2f dB, "
                         "SSIM %.4f\n", sh, sg, psnr(source, u),
-                        ssim(source, u));
+                        ssim(source, u, kW, kH));
         }
     }
 
@@ -230,14 +246,15 @@ int main() {
     {
         const int lw2 = kW / 2, lh2 = kH / 2;
         std::vector<float> low2, up2b, up2d;
-        downscale(source, low2, lw2, lh2, 2);
-        bilinear(low2, up2b, lw2, lh2, 2);
+        downscale(source, low2, kW, kH, lw2, lh2, 2);
+        bilinear(low2, up2b, lw2, lh2, kW, kH, 2);
         up2d.assign(up2b.size(), 0.0f);
         DemoUpscaleParams p2;
         p2.scale = 2;
         CHECK_(demo_upscale(low2.data(), lw2, lh2, up2d.data(), kW, kH, p2));
         const double pb = psnr(source, up2b), pd = psnr(source, up2d);
-        const double sb = ssim(source, up2b), sd = ssim(source, up2d);
+        const double sb = ssim(source, up2b, kW, kH),
+                     sd = ssim(source, up2d, kW, kH);
         std::printf("x2 ratio (the demo default: half-window capture):\n");
         std::printf("  bilinear baseline: PSNR %.2f dB, SSIM %.4f\n", pb, sb);
         std::printf("  demonstration transform: PSNR %.2f dB, SSIM %.4f\n",
@@ -288,11 +305,11 @@ int main() {
     // ---- The historical x4 measurement (the recorded claim) ----
     const double psnr_bilinear = psnr(source, up_bilinear);
     const double psnr_demo = psnr(source, up_demo);
-    const double ssim_bilinear = ssim(source, up_bilinear);
-    const double ssim_demo = ssim(source, up_demo);
+    const double ssim_bilinear = ssim(source, up_bilinear, kW, kH);
+    const double ssim_demo = ssim(source, up_demo, kW, kH);
 
-    std::printf("quality (NOT DLSS5 - demonstration transform with real "
-                "weights):\n");
+    std::printf("quality (NOT DLSS5 - classical demonstration scaler, "
+                "Lanczos3):\n");
     std::printf("  source: %dx%d generated test image; capture: %dx%d box "
                 "downscale x%d\n", kW, kH, kLw, kLh, kScale);
     std::printf("  bilinear baseline: PSNR %.2f dB, SSIM %.4f\n",
@@ -347,6 +364,68 @@ int main() {
         CHECK_(out[0] == -1.0f);
         CHECK_(!demo_upscale(nullptr, kLw, kLh, out.data(), kW, kH, p));
         CHECK_(out[0] == -1.0f);
+    }
+
+    // ---- The seam geometry measurement (the demo's real numbers) ----
+    // Exactly the seam's capture geometry: a 1280x800 source, a 640x400
+    // box capture, x2 upscales compared against the source ground truth
+    // and BOTH baselines (bilinear, Lanczos3). The neural row runs only
+    // when the real open weights are present (the model is fetched by
+    // vr/fetch-demo-model.sh; tests must never bundle binaries).
+    {
+        const int sw = 1280, sh = 800;
+        std::vector<float> src_img;
+        make_source(src_img, sw, sh);
+        std::vector<float> cap;
+        downscale(src_img, cap, sw, sh, sw / 2, sh / 2, 2);
+        std::vector<float> up_b(3 * sw * sh), up_l(3 * sw * sh);
+        DemoUpscaleParams pb, pl;
+        pb.scale = 2;
+        pb.kernel = DemoKernel::Bilinear;
+        pl.scale = 2;
+        pl.kernel = DemoKernel::Lanczos3;
+        CHECK_(demo_upscale(cap.data(), sw / 2, sh / 2, up_b.data(), sw, sh,
+                            pb));
+        CHECK_(demo_upscale(cap.data(), sw / 2, sh / 2, up_l.data(), sw, sh,
+                            pl));
+        const double p_b = psnr(src_img, up_b),
+                     s_b = ssim(src_img, up_b, sw, sh);
+        const double p_l = psnr(src_img, up_l),
+                     s_l = ssim(src_img, up_l, sw, sh);
+        std::printf("seam geometry (1280x800 source, 640x400 capture, x2):\n");
+        std::printf("  bilinear baseline: PSNR %.2f dB, SSIM %.4f\n", p_b,
+                    s_b);
+        std::printf("  Lanczos3 (classical): PSNR %.2f dB, SSIM %.4f\n", p_l,
+                    s_l);
+        if (model_paths.empty()) {
+            std::printf("  neural: SKIPPED (no model paths; run "
+                        "vr/fetch-demo-model.sh)\n");
+        }
+        for (const auto& model : model_paths) {
+            if (!demo_model_load(model)) {
+                std::printf("  neural: SKIPPED (%s: %s)\n", model.c_str(),
+                            demo_model_error().c_str());
+                continue;
+            }
+            std::vector<float> up_n(3 * sw * sh);
+            DemoUpscaleParams pn;
+            pn.scale = 2;
+            pn.kernel = DemoKernel::Neural;
+            pn.threads = 16;
+            CHECK_(demo_upscale(cap.data(), sw / 2, sh / 2, up_n.data(), sw,
+                                sh, pn));
+            const double p_n = psnr(src_img, up_n),
+                         s_n = ssim(src_img, up_n, sw, sh);
+            std::printf("  neural [%s]\n", demo_model_label());
+            std::printf("    PSNR %.2f dB, SSIM %.4f\n", p_n, s_n);
+            std::printf("    vs bilinear: PSNR %+.2f dB, SSIM %+.4f\n",
+                        p_n - p_b, s_n - s_b);
+            std::printf("    vs Lanczos3: PSNR %+.2f dB, SSIM %+.4f\n",
+                        p_n - p_l, s_n - s_l);
+        }
+        std::printf("  (measured on generated chart content - aliasing-"
+                    "dominated at this geometry, a trend only; the evidence "
+                    "report measures the real capture)\n");
     }
 
     std::printf("native-demo-upscale: %d checks passed\n", g_checks);

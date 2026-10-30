@@ -188,10 +188,33 @@ int main(void) {
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, 5),
                      DLSS5_NR_INVALID_DIMENSIONS);
         CHECK_STATUS(dlss5_nr_set_demo_transform(demo, scale), DLSS5_NR_OK);
-        /* The label must be EXACTLY the mandatory demonstration label. */
+        /* The labels are per-kernel and mandatory EXACTLY (honesty: the
+           classical scaler does not claim "real weights"; the neural
+           demonstration does). */
         CHECK(strcmp(dlss5_nr_label_for(demo),
-                     "not DLSS5 - demonstration transform with real weights")
+                     "not DLSS5 - classical demonstration scaler (Lanczos3)")
               == 0);
+        /* The neural demonstration requires real weights loaded first. */
+        CHECK(dlss5_nr_demo_model_loaded() == 0);
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_NEURAL),
+                     DLSS5_NR_INVALID_VALUES);
+        CHECK_STATUS(dlss5_nr_demo_model_load("does-not-exist.safetensors"),
+                     DLSS5_NR_INVALID_VALUES);
+        CHECK(dlss5_nr_demo_model_loaded() == 0);
+        CHECK_STATUS(dlss5_nr_demo_model_load(NULL), DLSS5_NR_NULL_POINTER);
+        /* The model label: a no-model placeholder that still carries the
+           in-band "not DLSS5" honesty text. */
+        CHECK(dlss5_nr_demo_model_label() != NULL);
+        CHECK(strstr(dlss5_nr_demo_model_label(), "not DLSS5") != NULL);
+        CHECK(strstr(dlss5_nr_demo_model_label(),
+                     "demonstration transform") != NULL);
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_BILINEAR),
+                     DLSS5_NR_OK);
+        CHECK(strcmp(dlss5_nr_label_for(demo),
+                     "not DLSS5 - classical demonstration scaler "
+                     "(bilinear baseline)") == 0);
+        CHECK_STATUS(dlss5_nr_set_demo_kernel(demo, DLSS5_NR_DEMO_LANCZOS3),
+                     DLSS5_NR_OK);
         CHECK(dlss5_nr_label_for(NULL) == dlss5_nr_label());
         /* One frame: the low-res capture in, scale*w x scale*h out. */
         {

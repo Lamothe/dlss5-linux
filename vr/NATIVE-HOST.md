@@ -31,14 +31,19 @@ code and no vendor correspondence.
   transformation arbitrary; the boundary is honest about it in-band, not
   just in documentation.
 * `dlss5_nr_set_demo_transform(handle, scale)` — the demonstration-
-  transform mode (NOT DLSS5, vr/NATIVE-DEMO-UPSCALE.md): a real openly
-  documented Lanczos3 upscaler with real weights writes scale*width x
-  scale*height output behind this same ABI. scale 2..4; 0 restores the
-  synthetic pipeline. The mode is stateless: the counter stays 0 and the
-  `reset` argument has no effect while it is on.
+  transform mode (NOT DLSS5, vr/NATIVE-DEMO-UPSCALE.md): a real
+  upscaler writes scale*width x scale*height output behind this same
+  ABI (the learned model with real open weights when loaded, or the
+  classical Lanczos3 scaler). scale 2..4; 0 restores the synthetic
+  pipeline. The mode is stateless: the counter stays 0 and the `reset`
+  argument has no effect while it is on.
 * `dlss5_nr_label_for(handle)` — the label for the handle's current
-  mode; in demo mode the host MUST display exactly "not DLSS5 -
-  demonstration transform with real weights".
+  mode; in demo mode the host MUST display exactly what this returns,
+  which names the actual path: "not DLSS5 - demonstration transform with
+  real weights (<model>, <license>)" for the neural path or "not DLSS5 -
+  classical demonstration scaler (Lanczos3 / bilinear baseline)" for the
+  fixed kernels. The phrase "real weights" is reserved for the neural
+  path.
 * `dlss5_nr_status_name(status)` — stable status strings for logs and
   overlays. The status values are pinned to `Status`'s exact numbers.
 
