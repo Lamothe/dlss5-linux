@@ -16,7 +16,7 @@ captures or binaries, no runtime probes.
 | Model | Class | License | Source | Parameters | Timings at 640x400 (CPU) |
 |---|---|---|---|---|---|
 | **EDSR-base x2** (default) | classical super-resolution (trained on clean degradation, DIV2K, L1) | Apache-2.0 (Lim et al., CVPRW 2017) | `huggingface.co/eugenesiow/edsr-base` (`pytorch_model_2x.pt`) | 1,369,883 (16 ResBlocks x 64 feats, measured and pinned by the smoke) | **10-11 s/frame** (8 threads; measured 10.2-11.2 across runs) |
-| Real-ESRGAN x2 | blind restoration (GAN-trained) | BSD-3-Clause (Wang et al., ICCVW 2021) | `huggingface.co/mlx-community/Real-ESRGAN-x2plus` (`model.safetensors`) | 16,703,171 (RRDBNet, F16) | 43.2 s/frame (8 threads) |
+| Real-ESRGAN x2 | blind restoration (GAN-trained) | BSD-3-Clause (Wang et al., ICCVW 2021) | `huggingface.co/mlx-community/Real-ESRGAN-x2plus` (`model.safetensors`) | 16,703,171 (RRDBNet, F16) | **35 s/frame** (8 threads; measured 35.2 s) |
 
 CPU inference is accepted for frame-by-frame F9; the timings above are
 measured worker wall clock around the native call (they vary with load;
