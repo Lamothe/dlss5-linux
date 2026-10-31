@@ -1,0 +1,67 @@
+cmake_minimum_required(VERSION 3.20)
+project(scene_train LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(TORCH_ROOT "" CACHE PATH "Root of the libtorch distribution")
+if(NOT TORCH_ROOT)
+  message(FATAL_ERROR "Set -DTORCH_ROOT to the installed torch directory")
+endif()
+# The installed CUDA wheel's TorchConfig requires a matching CUDA development
+# toolkit even for CPU-only C++ compilation. Link its shipped libraries directly.
+find_path(TORCH_INCLUDE torch/torch.h PATHS "${TORCH_ROOT}/include/torch/csrc/api/include" NO_DEFAULT_PATH REQUIRED)
+find_library(TORCH_LIBRARY torch PATHS "${TORCH_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+find_library(TORCH_CPU_LIBRARY torch_cpu PATHS "${TORCH_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+find_library(C10_LIBRARY c10 PATHS "${TORCH_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+add_library(scene_train_lib model.cpp data.cpp trainer.cpp checkpoint.cpp)
+target_include_directories(scene_train_lib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(scene_train_lib SYSTEM PUBLIC "${TORCH_ROOT}/include" "${TORCH_INCLUDE}")
+target_link_libraries(scene_train_lib PUBLIC stdc++ "${TORCH_LIBRARY}" "${TORCH_CPU_LIBRARY}" "${C10_LIBRARY}")
+target_compile_options(scene_train_lib PRIVATE -Wall -Wextra -Wpedantic)
+set(CMAKE_BUILD_RPATH "${TORCH_ROOT}/lib")
+add_executable(scene-train main.cpp)
+target_link_libraries(scene-train PRIVATE scene_train_lib)
+target_compile_options(scene-train PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(scene-train-tests tests.cpp)
+target_link_libraries(scene-train-tests PRIVATE scene_train_lib)
+target_compile_options(scene-train-tests PRIVATE -Wall -Wextra -Wpedantic)
+# Build only the model and host ABI into the shared library; keep the trainer
+# implementation out of the native inference interface.
+add_library(scene_host SHARED host.cpp model.cpp)
+target_include_directories(scene_host PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(scene_host SYSTEM PRIVATE "${TORCH_ROOT}/include" "${TORCH_INCLUDE}")
+target_link_libraries(scene_host PRIVATE stdc++ "${TORCH_LIBRARY}" "${TORCH_CPU_LIBRARY}" "${C10_LIBRARY}")
+target_compile_options(scene_host PRIVATE -Wall -Wextra -Wpedantic)
+# Compile the C-only section of host-tests.cpp with the C compiler.
+# A separate compiler invocation avoids changing the source language for the C++ test.
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/host-c-consumer.o"
+  COMMAND "${CMAKE_C_COMPILER}" -x c -std=c11 -DHOST_C_CONSUMER -I"${CMAKE_CURRENT_SOURCE_DIR}"
+          -c "${CMAKE_CURRENT_SOURCE_DIR}/host-tests.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/host-c-consumer.o"
+  DEPENDS host-tests.cpp host.h VERBATIM)
+add_executable(scene-host-c-consumer "${CMAKE_CURRENT_BINARY_DIR}/host-c-consumer.o")
+set_target_properties(scene-host-c-consumer PROPERTIES LINKER_LANGUAGE C)
+target_link_libraries(scene-host-c-consumer PRIVATE scene_host)
+add_executable(scene-host-tests host-tests.cpp)
+target_link_libraries(scene-host-tests PRIVATE scene_host scene_train_lib)
+target_compile_options(scene-host-tests PRIVATE -Wall -Wextra -Wpedantic)
+enable_testing()
+add_test(NAME scene-host-c-consumer COMMAND scene-host-c-consumer)
+add_test(NAME scene-host-tests COMMAND scene-host-tests)
+add_test(NAME scene-train-tests COMMAND scene-train-tests)
+add_test(NAME scene-train-cli COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/cli-test.sh" "$<TARGET_FILE:scene-train>")
+# The CLI consumes the public C ABI; it does not link the trainer or model.
+add_executable(scene-infer infer.cpp)
+target_link_libraries(scene-infer PRIVATE scene_host)
+target_compile_options(scene-infer PRIVATE -Wall -Wextra -Wpedantic)
+add_executable(scene-infer-tests infer-tests.cpp)
+target_link_libraries(scene-infer-tests PRIVATE scene_train_lib)
+target_compile_options(scene-infer-tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME scene-infer-tests COMMAND scene-infer-tests "$<TARGET_FILE:scene-infer>")
+# Exercise the actual CPU CLIs and the standalone metrics implementation together.
+add_executable(scene-integration-metrics ../scene-demo/metrics.cpp)
+target_compile_options(scene-integration-metrics PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion)
+add_executable(scene-integration-tests integration-tests.cpp)
+target_link_libraries(scene-integration-tests PRIVATE scene_train_lib)
+target_compile_options(scene-integration-tests PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME scene-integration-tests COMMAND scene-integration-tests
+  "$<TARGET_FILE:scene-train>" "$<TARGET_FILE:scene-infer>" "$<TARGET_FILE:scene-integration-metrics>")
