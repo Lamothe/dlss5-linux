@@ -18,3 +18,15 @@ if "$exe" --train "$dir/train.tsv" --val "$dir/train.tsv" --checkpoint "$dir/inv
 test ! -e "$dir/invalid.pt"
 if "$exe" --train "$dir/train.tsv" --val "$dir/val.tsv" --checkpoint "$dir/model.pt" --patch 4 > /dev/null 2>&1; then exit 1; fi
 if "$exe" --help unexpected > /dev/null 2>&1; then exit 1; fi
+# Log-alias refusal: a log stream naming a manifest input must exit 2 without
+# corrupting the input and without creating a checkpoint.
+before=$(cksum < "$dir/vcheap.ppm")
+rc=0
+"$exe" --train "$dir/train.tsv" --val "$dir/val.tsv" --checkpoint "$dir/alias.pt" --patch 4 --epochs 1 2>> "$dir/vcheap.ppm" || rc=$?
+[ "$rc" -eq 2 ]
+after=$(cksum < "$dir/vcheap.ppm")
+[ "$before" = "$after" ]
+test ! -e "$dir/alias.pt"
+# Unverifiable regular streams are fail-closed: usage is not written into them.
+"$exe" --help > "$dir/usage.txt" 2>/dev/null
+test ! -s "$dir/usage.txt"
