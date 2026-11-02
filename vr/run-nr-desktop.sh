@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Launch the windowed DLSSNR desktop demo under Proton inside the same containment
-# boundary the probes use. The window appears on the host display through XWayland.
+# Launch a DLSSNR Windows binary under Proton inside the same containment boundary the
+# probes use. Defaults to the windowed desktop demo; NR_EXE/NR_OUT select another.
 set -euo pipefail
 ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 if [[ "${NR_DESKTOP_CONTAINED:-0}" != 1 ]]; then
@@ -26,7 +26,11 @@ flock -n 9 || { echo "Probe already running" >&2; exit 1; }
 # cmd redirection into the working directory, exactly as run-feature-probe.sh does.
 arguments=""
 for argument in "$@"; do arguments+=" $argument"; done
-rm -f nr-desktop-output.txt
+# The binary and its output file are overridable so the same containment boundary
+# and prefix serve the cost measurement (nr-bench.exe) as well as the demo.
+EXE="${NR_EXE:-nr-desktop.exe}"
+OUT="${NR_OUT:-nr-desktop-output.txt}"
+rm -f "$OUT"
 exec timeout --kill-after=5s "${NR_DESKTOP_TIMEOUT:-300}"s \
   "$ROOT/runtime-copy/run" -- "$ROOT/proton-copy/proton" waitforexitandrun \
-  cmd /c "nr-desktop.exe$arguments > nr-desktop-output.txt 2>&1"
+  cmd /c "$EXE$arguments > $OUT 2>&1"

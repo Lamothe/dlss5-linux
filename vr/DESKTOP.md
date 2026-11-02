@@ -78,9 +78,10 @@ Git.
 - One scene, one resolution (720×720 per panel), one model build
   (`sha256 4b8d19bc…`, 165,840,496 bytes — not the build the upstream add-on documents
   as tested).
-- No frame-time measurement. The heartbeat shows the loop running well above
-  interactive rates at this resolution, but it is a diagnostic loop with a CPU fence
-  wait per frame, not a timing harness.
+- ~~No frame-time measurement.~~ Measured separately: [NR-COST.md](NR-COST.md) reports
+  the serialised cost of an evaluation across a resolution ladder and concludes that a
+  native-resolution stereo pair does not fit a 72–90 Hz budget on a 4070 Ti SUPER. The
+  demonstration loop itself is still a diagnostic loop, not a timing harness.
 - No HDR, no tone mapping, no UI, no temporal reset policy beyond frame 0.
 - The model is NVIDIA's and is not redistributed by this repository; the demonstration
   consumes a locally present copy.
