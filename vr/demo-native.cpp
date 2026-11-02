@@ -468,7 +468,14 @@ int main(int argc, char** argv) {
     context.scratch = arena;
     context.scratch_capacity = arena_floats;
 #if DLSS5_DEMO_HAS_VULKAN
+    // The G9 download-volume audit (split-family classes; the executor site
+    // totals every call's actual copy bytes). Accumulated over the run and
+    // reported per frame after the GPU totals.
+    static dlss5_nr::EvalDownloadAudit download_audit;
     context.projection = opt.gpu_spirv != nullptr ? &gpu_executor : nullptr;
+    if (opt.gpu_spirv != nullptr) {
+        context.download_audit = &download_audit;
+    }
 #endif
     if (opt.gpu_swin >= 0) {
         context.swin_gpu = opt.gpu_swin != 0;
@@ -640,6 +647,107 @@ int main(int argc, char** argv) {
                     static_cast<unsigned long long>(gpu_site.calls),
                     gpu_site.kernel_ms, gpu_site.decode_ms,
                     gpu_site.upload_ms, gpu_site.download_ms);
+        // The G9 measurement: the f32 product download volume partitioned by
+        // the post chain's residual rule. The bytes are the executor's actual
+        // copy sizes (never a shape model); the split classes are counted by
+        // the rows that own the post chain (EvalDownloadAudit).
+        const double frames = static_cast<double>(opt.frames > 0 ? opt.frames : 1);
+        const std::uint64_t total_bytes = gpu_site.download_bytes;
+        const std::uint64_t f32_bytes = gpu_site.download_bytes_f32;
+        const std::uint64_t e4m3_bytes = total_bytes - f32_bytes;
+        const std::uint64_t skip_bytes = download_audit.split_skip.bytes;
+        const std::uint64_t noskip_bytes = download_audit.split_noskip.bytes;
+        const std::uint64_t qkv_bytes = download_audit.split_qkv.bytes;
+        const std::uint64_t classified = skip_bytes + noskip_bytes + qkv_bytes;
+        const auto pct = [&](std::uint64_t part) {
+            return total_bytes == 0
+                ? 0.0
+                : 100.0 * static_cast<double>(part)
+                      / static_cast<double>(total_bytes);
+        };
+        const std::uint64_t residual_bytes =
+            e4m3_bytes - (classified <= e4m3_bytes ? classified : e4m3_bytes);
+        const std::uint64_t e4m3_calls =
+            gpu_site.calls - gpu_site.calls_f32;
+        const std::uint64_t classified_calls =
+            download_audit.split_skip.calls
+            + download_audit.split_noskip.calls
+            + download_audit.split_qkv.calls;
+        const std::uint64_t per_frame_calls =
+            static_cast<std::uint64_t>(frames);
+        std::printf(
+            "download audit: total %.3f MiB/frame (f32/swin seam %.3f = "
+            "%.2f%%, e4m3 rows %.3f = %.2f%%)\n",
+            static_cast<double>(total_bytes) / frames / 1048576.0,
+            static_cast<double>(f32_bytes) / frames / 1048576.0,
+            pct(f32_bytes),
+            static_cast<double>(e4m3_bytes) / frames / 1048576.0,
+            pct(e4m3_bytes));
+        std::printf(
+            "download audit: split post skip %.3f MiB (%.2f%%, %llu "
+            "calls/frame), no-skip %.3f MiB (%.2f%%, %llu calls/frame), "
+            "qkv hoist %.3f MiB (%.2f%%, %llu calls/frame), vit rows %.3f "
+            "MiB (%.2f%%, %llu calls/frame)\n",
+            static_cast<double>(skip_bytes) / frames / 1048576.0,
+            pct(skip_bytes),
+            static_cast<unsigned long long>(download_audit.split_skip.calls
+                                            / per_frame_calls),
+            static_cast<double>(noskip_bytes) / frames / 1048576.0,
+            pct(noskip_bytes),
+            static_cast<unsigned long long>(
+                download_audit.split_noskip.calls / per_frame_calls),
+            static_cast<double>(qkv_bytes) / frames / 1048576.0,
+            pct(qkv_bytes),
+            static_cast<unsigned long long>(download_audit.split_qkv.calls
+                                            / per_frame_calls),
+            static_cast<double>(residual_bytes) / frames / 1048576.0,
+            pct(residual_bytes),
+            static_cast<unsigned long long>(
+                (e4m3_calls - (classified_calls <= e4m3_calls
+                                   ? classified_calls
+                                   : e4m3_calls))
+                / per_frame_calls));
+        if (classified > e4m3_bytes || classified_calls > e4m3_calls) {
+            std::fprintf(stderr,
+                         "download audit: INCONSISTENT - the classified "
+                         "split share exceeds the e4m3 download total "
+                         "(bytes %llu > %llu, calls %llu > %llu)\n",
+                         static_cast<unsigned long long>(classified),
+                         static_cast<unsigned long long>(e4m3_bytes),
+                         static_cast<unsigned long long>(classified_calls),
+                         static_cast<unsigned long long>(e4m3_calls));
+            dlss5_nr::vulkan_weight_cache_destroy(gpu_device, gpu_cache);
+            dlss5_nr::vulkan_projection_close(gpu_site);
+            dlss5_nr::vulkan_close(gpu_device);
+            return 1;
+        }
+        if (gpu_site.download_ms > 0.0 && total_bytes > 0) {
+            const double rate_mb_s = static_cast<double>(total_bytes)
+                / (gpu_site.download_ms * 1000.0);
+            const std::uint64_t saving_bytes = noskip_bytes / 2;
+            const double saving_ms = static_cast<double>(saving_bytes)
+                * gpu_site.download_ms / static_cast<double>(total_bytes);
+            const double frame_ms = total_ms / frames;
+            std::printf(
+                "download audit: calls reconcile %llu e4m3 = %llu split + "
+                "%llu vit; measured %.1f MB/s; resident-post upper bound "
+                "%.3f MiB/frame = %.2f%% of the download = %.2f ms/frame = "
+                "%.3f%% of the frame (the skip class is a net loss: its f32 "
+                "skip upload costs what the f16 download saves)\n",
+                static_cast<unsigned long long>(e4m3_calls / per_frame_calls),
+                static_cast<unsigned long long>(classified_calls
+                                                / per_frame_calls),
+                static_cast<unsigned long long>(
+                    (e4m3_calls - (classified_calls <= e4m3_calls
+                                       ? classified_calls
+                                       : e4m3_calls))
+                    / per_frame_calls),
+                rate_mb_s,
+                static_cast<double>(saving_bytes) / frames / 1048576.0,
+                pct(saving_bytes), saving_ms / frames,
+                frame_ms > 0.0 ? 100.0 * saving_ms / frames / frame_ms
+                               : 0.0);
+        }
         dlss5_nr::vulkan_weight_cache_destroy(gpu_device, gpu_cache);
         dlss5_nr::vulkan_projection_close(gpu_site);
         dlss5_nr::vulkan_close(gpu_device);

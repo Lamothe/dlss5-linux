@@ -908,6 +908,199 @@ int main(void) {
         CHECK(eval_arena_used(ctx) > 0);
     }
 
+    // ---- the G9 download-volume audit (split-family classification) --------------------------------
+    // The audit classifies each split row's executor download by the post
+    // chain's residual rule and counts the exact copy bytes (tokens * c_out *
+    // 4). A recording executor is the independent second channel: the audit's
+    // per-class sums must equal the bytes that executor itself saw. The
+    // expected values are hand-derived from the row shapes below (4x4 = 16
+    // tokens, c_out 512 / 1024 / 1536).
+    {
+        struct Recorder {
+            std::uint64_t calls = 0;
+            std::uint64_t bytes = 0;
+        };
+        static Recorder recorder;
+        ProjectionExecutor ex;
+        ex.ctx = &recorder;
+        ex.matmul = +[](void* c, const float* in, int tokens, int c_in,
+                        const E4m3Matrix& w, float* out) -> Status {
+            auto* r = static_cast<Recorder*>(c);
+            if (r == nullptr || in == nullptr || out == nullptr
+                || w.bits == nullptr || tokens < 1 || w.rows < 1) {
+                return Status::kNullPointer;
+            }
+            ++r->calls;
+            r->bytes += static_cast<std::uint64_t>(tokens)
+                * static_cast<std::uint64_t>(w.rows) * sizeof(float);
+            // The zero-signal fixtures make the true products zero; writing
+            // zeros keeps the pipeline in the same regime.
+            const std::size_t elements = static_cast<std::size_t>(tokens)
+                * static_cast<std::size_t>(w.rows);
+            for (std::size_t i = 0; i < elements; ++i) {
+                out[i] = 0.0f;
+            }
+            (void)c_in;
+            return Status::kOk;
+        };
+        static float audit_map[512 * 4 * 4];
+        static float audit_residual[512 * 4 * 4];
+        static float audit_pooled[512 * 4 * 4];
+        static float audit_expected[512 * 4 * 4];
+        FeatureBatchView audit_x = make_view(audit_map, 512, 4, 4);
+        FeatureBatchView audit_skip = make_view(audit_residual, 512, 4, 4);
+        FeatureBatchView audit_pooled_view = make_view(audit_pooled, 512, 4, 4);
+        LayerCall call;
+        LayerValue out;
+
+        EvalDownloadAudit audit;
+        big_ctx.projection = &ex;
+        big_ctx.download_audit = &audit;
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+
+        // SplitFfwdProj: has_skip (the block input is the residual).
+        call.x = &audit_x;
+        call.aux = &audit_skip;
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 1, LayerKind::kSplitFfwdProj, 512,
+                                    512, 4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(audit.split_skip.calls == 1);
+        CHECK(audit.split_skip.bytes == 16u * 512u * 4u);
+        // SplitProj: has_skip.
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProj, 512, 512,
+                                    4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(audit.split_skip.calls == 2);
+        CHECK(audit.split_skip.bytes == 2u * 16u * 512u * 4u);
+        // SplitProjPool: has_skip (the residual feeds the pooled copy too).
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProjPool, 512,
+                                    512, 4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(audit.split_skip.calls == 3);
+        CHECK(audit.split_skip.bytes == 3u * 16u * 512u * 4u);
+        // SplitFinalHead: has_skip == false (the only halvable row).
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        call.x = nullptr;
+        call.aux = &audit_pooled_view;
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 4, LayerKind::kSplitFinalHead, 512,
+                                    1024, 4, 4, 512, 8),
+                                call, out),
+                     Status::kOk);
+        CHECK(audit.split_noskip.calls == 1);
+        CHECK(audit.split_noskip.bytes == 16u * 1024u * 4u);
+        CHECK(audit.split_skip.calls == 3);
+        CHECK(audit.split_skip.bytes == 3u * 16u * 512u * 4u);
+        // SplitQKVAttn: the hoisted projection is neither post class.
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        call.x = &audit_x;
+        call.aux = nullptr;
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 2, LayerKind::kSplitQKVAttn, 512,
+                                    512, 4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(audit.split_qkv.calls == 1);
+        CHECK(audit.split_qkv.bytes == 16u * 1536u * 4u);
+        // The independent channel: five calls, and every byte the executor
+        // copied is classified exactly once.
+        CHECK(recorder.calls == 5);
+        CHECK(recorder.bytes
+              == audit.split_skip.bytes + audit.split_noskip.bytes
+                     + audit.split_qkv.bytes);
+
+        // The audit changes no arithmetic: the same row's output is
+        // byte-identical with the audit detached.
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        call.x = &audit_x;
+        call.aux = &audit_skip;
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProj, 512, 512,
+                                    4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        std::memcpy(audit_expected, out.main.data,
+                    sizeof(float) * 512u * 4u * 4u);
+        EvalDownloadAudit detached;
+        big_ctx.download_audit = &detached;
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProj, 512, 512,
+                                    4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        // The audit recorded this call, and the output is unchanged.
+        CHECK(detached.split_skip.calls == 1);
+        CHECK(std::memcmp(audit_expected, out.main.data,
+                          sizeof(float) * 512u * 4u * 4u)
+              == 0);
+
+        // A null audit records nothing (default path).
+        EvalDownloadAudit never_wired;
+        big_ctx.download_audit = &never_wired;
+        big_ctx.projection = nullptr;
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProj, 512, 512,
+                                    4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(never_wired.split_skip.calls == 0
+              && never_wired.split_skip.bytes == 0
+              && never_wired.split_noskip.calls == 0
+              && never_wired.split_qkv.calls == 0);
+        // A row that never calls the executor records nothing either.
+        big_ctx.projection = &ex;
+        static float dec_in[1024 * 2 * 2];
+        static float dec_skip[512 * 2 * 2];
+        FeatureBatchView dec_x = make_view(dec_in, 1024, 2, 2);
+        FeatureBatchView dec_skip_view = make_view(dec_skip, 512, 2, 2);
+        LayerCall dec_call;
+        dec_call.x = &dec_x;
+        dec_call.aux = &dec_skip_view;
+        const std::uint64_t calls_before = recorder.calls;
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 5, 0, LayerKind::kDecInputUpsample,
+                                    1024, 512, 2, 2, 512, 1),
+                                dec_call, out),
+                     Status::kOk);
+        CHECK(never_wired.split_skip.calls == 0
+              && never_wired.split_noskip.calls == 0
+              && never_wired.split_qkv.calls == 0);
+        CHECK(recorder.calls == calls_before);
+        // The audit is optional: a null pointer with a live GPU executor
+        // records nothing and leaves the row's arithmetic byte-identical.
+        big_ctx.download_audit = nullptr;
+        CHECK_STATUS(eval_reset(big_ctx), Status::kOk);
+        call.x = &audit_x;
+        call.aux = &audit_skip;
+        CHECK_STATUS(eval_layer(&big_ctx,
+                                row(0, 1, 3, LayerKind::kSplitProj, 512, 512,
+                                    4, 4, 512, 4),
+                                call, out),
+                     Status::kOk);
+        CHECK(std::memcmp(audit_expected, out.main.data,
+                          sizeof(float) * 512u * 4u * 4u)
+              == 0);
+        CHECK(never_wired.split_skip.calls == 0
+              && never_wired.split_skip.bytes == 0
+              && never_wired.split_noskip.calls == 0
+              && never_wired.split_noskip.bytes == 0
+              && never_wired.split_qkv.calls == 0
+              && never_wired.split_qkv.bytes == 0);
+        big_ctx.projection = nullptr;
+        big_ctx.download_audit = nullptr;
+    }
+
     // ---- the end-to-end zero-signal invariant ------------------------------------------------------
     {
         static LayerSpec specs[kPlanMaxLayers];

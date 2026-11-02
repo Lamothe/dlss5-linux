@@ -166,6 +166,26 @@ struct EvalWeights {
                             const char* name) = nullptr;
 };
 
+// The G9 download-volume audit (NATIVE-PERFORMANCE.md): the executor reports
+// the bytes it actually copied; the split rows classify their own share by
+// the post chain's residual rule. `split_projection_post` rounds
+// `f16(product + gain*skip)` and pays for post-residency only where
+// `has_skip == false` — a skip row would need its f32 skip uploaded, costing
+// what the f16 download saves. SplitFinalHead is the split family's only
+// residual-free projection, so it is the only row this class can halve.
+// Caller-owned and optional: a null `EvalContext::download_audit` records
+// nothing and changes no arithmetic.
+struct EvalAuditClass {
+    std::uint64_t bytes = 0;
+    std::uint64_t calls = 0;
+};
+
+struct EvalDownloadAudit {
+    EvalAuditClass split_skip;    // ffwd/proj/pool: has_skip == true
+    EvalAuditClass split_noskip;  // final head: has_skip == false
+    EvalAuditClass split_qkv;     // the hoisted attention projection
+};
+
 // One evaluation context: the records, the caller-provided scratch (the
 // feature-map arena plus every working buffer), the lift controls and the
 // output intensity.
@@ -203,6 +223,9 @@ struct EvalContext {
     // batched scratch raises the caller's arena requirement (about 345 MiB
     // high-water for the 64x72 small plan; see NATIVE-PERFORMANCE.md G8).
     bool swin_gpu = true;
+    // The G9 download-volume audit for the split family (see
+    // EvalDownloadAudit). Null records nothing.
+    EvalDownloadAudit* download_audit = nullptr;
 };
 
 // ---- vocabulary ---------------------------------------------------------------------------------
@@ -1476,6 +1499,20 @@ inline Status eval_split_ffwd(EvalContext& ctx, const LayerSpec& spec,
     return Status::kOk;
 }
 
+// Records one classified split-family executor call in the G9 download audit:
+// the call downloaded `out_count` f32 products, i.e. out_count * 4 bytes.
+// Null audit records nothing (the default path).
+inline void eval_audit_split(EvalContext& ctx,
+                             EvalAuditClass EvalDownloadAudit::*which,
+                             std::size_t out_count) {
+    if (ctx.download_audit == nullptr) {
+        return;
+    }
+    (ctx.download_audit->*which).bytes +=
+        static_cast<std::uint64_t>(out_count) * sizeof(float);
+    ++(ctx.download_audit->*which).calls;
+}
+
 // SplitFfwdProj / SplitProj (the same projection, different residual).
 inline Status eval_split_projection(EvalContext& ctx, const LayerSpec& spec,
                                     const LayerCall& call, LayerValue& out) {
@@ -1533,6 +1570,10 @@ inline Status eval_split_projection(EvalContext& ctx, const LayerSpec& spec,
                               gpu_projection ? &site : nullptr)
             : split_proj(in_tokens, residual_tokens, x.rows, x.cols, weight,
                          out_tokens, gpu_projection ? &site : nullptr);
+        if (status == Status::kOk && gpu_projection) {
+            eval_audit_split(ctx, &EvalDownloadAudit::split_skip,
+                             out_count);
+        }
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out, x.rows,
@@ -1687,6 +1728,10 @@ inline Status eval_split_qkv_attn(EvalContext& ctx, const LayerSpec& spec,
             status = ctx.projection->matmul(
                 ctx.projection->ctx, in_tokens,
                 static_cast<int>(tokens), kSplitChannels, qkv, hoist_products);
+            if (status == Status::kOk) {
+                eval_audit_split(ctx, &EvalDownloadAudit::split_qkv,
+                                 qkv_map);
+            }
         } else {
             status = split_matmul(in_tokens,
                                   static_cast<long long>(tokens),
@@ -1785,6 +1830,10 @@ inline Status eval_split_proj_pool(EvalContext& ctx, const LayerSpec& spec,
                                  weight, out_tokens, pooled_tokens, &pooled_rows,
                                  &pooled_cols,
                                  gpu_projection ? &site : nullptr);
+        if (status == Status::kOk && gpu_projection) {
+            eval_audit_split(ctx, &EvalDownloadAudit::split_skip,
+                             out_count);
+        }
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out, x.rows,
@@ -1856,6 +1905,12 @@ inline Status eval_split_final_head(EvalContext& ctx, const LayerSpec& spec,
                                                       spec.c_in}, nullptr};
         status = split_final_head(in_tokens, pooled.rows, pooled.cols, weight,
                                   out_tokens, gpu_projection ? &site : nullptr);
+        if (status == Status::kOk && gpu_projection) {
+            // The final head is the split family's only residual-free
+            // projection: it is the one row a resident post halves.
+            eval_audit_split(ctx, &EvalDownloadAudit::split_noskip,
+                             out_count);
+        }
     }
     if (status == Status::kOk) {
         status = eval_tokens_to_planar(out_tokens, out_count, spec.c_out,

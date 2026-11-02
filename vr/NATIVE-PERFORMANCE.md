@@ -381,3 +381,45 @@ Parity contract for the next slice unchanged: the G2/G8 byte-identical
 artefact gates are the arbiter; any f16-resident path must either stay
 bit-identical (the post is exactly `f16(product + gain*skip)` in the same
 order) or declare a measured tolerance the way G1's denormal class does.
+
+### G9 measurement landed: the split rows are 1.5% of the download (02/11/2026)
+
+The "measured split of download volume" the previous slice asked for now
+exists, as instrumentation rather than an estimate. `EvalDownloadAudit`
+(`vr/native-eval.hpp`) is a caller-owned, optional accumulator: the
+executor reports the bytes it actually copied (`VulkanMatmulTiming::
+download_bytes`, the `out_bytes` of the successful host copy — never a
+shape model), and each split-family site classifies its own copy by the
+post chain's residual rule (`split_skip` for `has_skip` rows,
+`split_noskip` for the residual-free final head, `split_qkv` for the
+hoisted attention projection). A null audit records nothing and changes no
+arithmetic; the demo prints the partition after the GPU totals.
+
+Measured (`demo-native --gpu`, 64x72 small plan, 8 threads, RTX 4070 Ti
+SUPER, two frames, seeded preset — synthetic weights, so this is a
+transfer-volume measurement and says nothing about image quality):
+
+| class | MiB/frame | share of download | calls/frame |
+|---|---|---|---|
+| f32 / swin seam | 361.812 | **93.81%** | — |
+| e4m3 rows, total | 23.875 | 6.19% | 61 |
+| — split post, skip | 2.250 | 0.58% | 8 |
+| — split post, no skip | 0.250 | 0.06% | 1 |
+| — split qkv hoist | 3.375 | 0.88% | 4 |
+| — vit rows | 18.000 | 4.67% | 48 |
+
+Two conclusions, both negative for the resident-post plan:
+
+1. **The target was the wrong one.** 93.81% of the download is the swin
+   f32 seam, not the split post. Residency for the split family can at
+   most halve 6.19% of the transfer.
+2. **Within that 6.19%, the halving is 0.125 MiB/frame = 0.03% of the
+   download, about 0.38 ms/frame = 0.006% of a 6,264 ms frame.** The
+   skip class is a net loss: its f32 skip upload costs exactly what the
+   f16 download would save.
+
+Download is still 2,353.644 ms of a 6,264.19 ms frame (37.6%), so the
+ceiling is real but it belongs to the swin seam: any further work must
+attack the f32 products of the swin rows themselves or accept the bound.
+The calls reconcile exactly (61 e4m3 = 13 split + 48 vit), which is the
+routing evidence that the classification is complete.

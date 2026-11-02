@@ -428,6 +428,9 @@ struct VulkanMatmulTiming {
     double upload_ms = 0.0;
     double kernel_ms = 0.0;
     double download_ms = 0.0;
+    // The exact host-copy size of the call's download (NATIVE-PERFORMANCE.md
+    // G9's download-volume audit): bytes actually memcpy'd, not a shape model.
+    std::uint64_t download_bytes = 0;
 };
 
 inline void vulkan_matmul_destroy(const VulkanDevice& d, VulkanMatmul& m) {
@@ -1010,6 +1013,7 @@ inline Status vulkan_matmul_run_resident(const VulkanDevice& d, VulkanMatmul& m,
         const auto t1 = std::chrono::steady_clock::now();
         timing.download_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
+        timing.download_bytes = static_cast<std::uint64_t>(out_bytes);
     }
     return Status::kOk;
 }
@@ -1186,6 +1190,7 @@ inline Status vulkan_matmul_run(const VulkanDevice& d, VulkanMatmul& m,
         const auto t1 = std::chrono::steady_clock::now();
         timing.download_ms =
             std::chrono::duration<double, std::milli>(t1 - t0).count();
+        timing.download_bytes = static_cast<std::uint64_t>(out_bytes);
     }
     return Status::kOk;
 }
@@ -1206,10 +1211,17 @@ struct VulkanProjectionSite {
     std::size_t spirv_words = 0;
     std::vector<float> decoded;
     std::uint64_t calls = 0;       // executor entries (routing evidence)
+    std::uint64_t calls_f32 = 0;   // of which the float (swin) entry point
     double decode_ms = 0.0;
     double kernel_ms = 0.0;
     double upload_ms = 0.0;
     double download_ms = 0.0;
+    // The G9 download-volume audit: bytes actually copied by successful
+    // calls (exact copy sizes, never a shape model), split by executor
+    // entry point. The float form is the swin family's batched seam; every
+    // e4m3 call is a vit or split row.
+    std::uint64_t download_bytes = 0;
+    std::uint64_t download_bytes_f32 = 0;
 };
 
 inline void vulkan_projection_close(VulkanProjectionSite& site) {
@@ -1239,6 +1251,7 @@ inline Status vulkan_projection_matmul_f32(void* ctx, const float* in,
         return Status::kInvalidDimensions;
     }
     ++site->calls;
+    ++site->calls_f32;
     if (tokens > 65535 || rows > 65535 * 128
         || static_cast<std::uint64_t>(tokens) * rows > UINT32_MAX
         || static_cast<std::uint64_t>(tokens) * c_in > UINT32_MAX
@@ -1293,6 +1306,8 @@ inline Status vulkan_projection_matmul_f32(void* ctx, const float* in,
         site->kernel_ms += timing.kernel_ms;
         site->upload_ms += timing.upload_ms;
         site->download_ms += timing.download_ms;
+        site->download_bytes += timing.download_bytes;
+        site->download_bytes_f32 += timing.download_bytes;
     }
     return st;
 }
@@ -1435,6 +1450,7 @@ inline Status vulkan_projection_matmul(void* ctx, const float* in, int tokens,
         site->kernel_ms += timing.kernel_ms;
         site->upload_ms += timing.upload_ms;
         site->download_ms += timing.download_ms;
+        site->download_bytes += timing.download_bytes;
     }
     return st;
 }
